@@ -1,0 +1,6 @@
+# fpvOS additions to Buildroot's busybox configuration.
+#
+# udhcpd: hands out addresses on the WiFi access point (usr/sbin/fpvos-wifi)
+# and on the USB network link (etc/init.d/S41udhcpd, which skipped itself
+# while the applet was missing).
+CONFIG_UDHCPD=y

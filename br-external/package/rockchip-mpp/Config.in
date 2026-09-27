@@ -1,0 +1,19 @@
+config BR2_PACKAGE_ROCKCHIP_MPP
+	bool "rockchip-mpp"
+	depends on BR2_aarch64 || BR2_arm
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	select BR2_PACKAGE_LIBDRM
+	help
+	  Rockchip Media Process Platform - the userspace library for the
+	  hardware video encoder/decoder (VPU) found on Rockchip SoCs.
+	  Provides librockchip_mpp and the <rockchip/rk_mpi.h> API that
+	  kestrel's hardware decode path is built on.
+
+	  Built from source rather than taken from the vendor firmware, so
+	  it is not one of the proprietary blobs.
+
+	  https://github.com/rockchip-linux/mpp
+
+comment "rockchip-mpp needs a toolchain w/ threads"
+	depends on BR2_aarch64 || BR2_arm
+	depends on !BR2_TOOLCHAIN_HAS_THREADS

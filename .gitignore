@@ -1,0 +1,19 @@
+# Vendor blobs — extracted from your own device firmware, never committed.
+/vendor/rootfs/
+/vendor/boot/
+/vendor/stock/
+
+# Buildroot's build output (the checkout itself is a submodule, tracked).
+/buildroot/output/
+/br-external/board/*/rootfs-overlay/**/output/
+
+# Build artifacts
+/sdcard.img
+*.o
+*.so
+build/
+xbuild/
+__pycache__/
+
+# assembled SD images
+/out/

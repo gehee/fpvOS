@@ -1,0 +1,27 @@
+#!/bin/sh
+# Serve DHCP to whatever host is plugged into the USB gadget link.
+# Runs after S40network so usb0 already carries its static 192.168.3.1.
+DAEMON=/usr/sbin/udhcpd
+CONF=/etc/udhcpd.conf
+PIDF=/var/run/udhcpd.pid
+
+case "$1" in
+  start|"")
+    [ -x "$DAEMON" ] || { echo "udhcpd: not built into busybox, skipping"; exit 0; }
+    # udhcpd refuses to start if the interface has no address yet.
+    ifconfig usb0 >/dev/null 2>&1 || { echo "udhcpd: usb0 absent, skipping"; exit 0; }
+    mkdir -p /var/lib/misc
+    [ -f /var/lib/misc/udhcpd.leases ] || : > /var/lib/misc/udhcpd.leases
+    printf "Starting udhcpd on usb0: "
+    $DAEMON $CONF && echo "OK" || echo "FAIL"
+    ;;
+  stop)
+    printf "Stopping udhcpd: "
+    [ -f "$PIDF" ] && kill "$(cat $PIDF)" 2>/dev/null
+    killall udhcpd 2>/dev/null
+    echo "OK"
+    ;;
+  restart|reload) "$0" stop; sleep 1; "$0" start ;;
+  *) echo "usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

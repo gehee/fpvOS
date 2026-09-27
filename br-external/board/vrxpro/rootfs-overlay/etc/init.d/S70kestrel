@@ -1,0 +1,127 @@
+#!/bin/sh
+# Start kestrel-gnd at boot, once the baseband is actually ready.
+#
+# Two things make this more than a one-liner:
+#
+# 1. S60ar8030 backgrounds the bring-up, so "S60 has run" does not mean the
+#    daemon exists yet, let alone that the baseband is ready. We poll for the
+#    daemon and then allow a settle margin.
+#
+# 2. bb_socket_open() in the vendor client library waits with no timeout, so
+#    a lost reply from the daemon hangs the process forever with no video and
+#    no error.
+#    The binary now recovers from that itself; this retry remains for the
+#    case where it could not.
+#
+# Success is "the video socket opened", not "the process is still alive" - a
+# wedged kestrel-gnd stays alive indefinitely doing nothing.
+
+# The system clock runs in UTC (S36rtc converts the pcf8563's Beijing wall
+# clock), so the OSD clock and the timestamps on recordings only come out local
+# if TZ is exported here - kestrel-gnd inherits this environment. There is no
+# tzdata on this rootfs, so TZ has to be a POSIX rules string, not a zone name.
+[ -r /etc/kestrel/time.conf ] && . /etc/kestrel/time.conf
+[ -n "$TZ" ] && export TZ
+
+BIN=/usr/bin/kestrel-gnd
+LOG=/var/log/kestrel-gnd.log
+DAEMON_WAIT=120     # max seconds to wait for /ar8030soc/daemon to appear
+SETTLE=20           # worst-case cap while polling for its RPC port below -
+                    # a live boot log showed the port listening within
+                    # seconds of the process existing, so this used to be a
+                    # blind sleep of the same length on every single boot
+# kestrel-gnd now carries its own bring-up watchdog (artosyn/bb_watchdog.cpp),
+# which notices a wedged bb_socket_open within ~14s and recovers by restarting
+# the daemon and re-execing itself - four attempts with a growing settle, about
+# 160s of budget in total. This wait has to outlast that, or the two fight over
+# the same fault and the slower, cruder remedy wins. What is left here is the
+# last resort: the process is still not up after it has exhausted its own.
+OPEN_WAIT=200       # seconds to wait for "video socket open" before retrying
+TRIES=3
+
+start() {
+    [ -x "$BIN" ] || { echo "kestrel: $BIN missing"; exit 0; }
+    (
+        i=0
+        while [ $i -lt $DAEMON_WAIT ]; do
+            pidof daemon >/dev/null 2>&1 && break
+            sleep 2; i=$((i + 2))
+        done
+        if ! pidof daemon >/dev/null 2>&1; then
+            echo "kestrel: daemon never appeared after ${DAEMON_WAIT}s" >> $LOG
+            exit 1
+        fi
+
+        # The process existing doesn't mean it's actually ready - bb_only.sh's
+        # own diagnostics already confirm the RPC port comes up within a few
+        # seconds in practice, so poll for that instead of always waiting the
+        # full worst-case margin.
+        s=0
+        while [ $s -lt $SETTLE ]; do
+            netstat -ltn 2>/dev/null | grep -q ':50000 ' && break
+            sleep 1; s=$((s + 1))
+        done
+
+        # Only one process can hold the DRM master, and the splash (S12splash)
+        # still has it. SIGUSR1 tells it to drop master and hold its current
+        # frame rather than exit outright - exiting would free its
+        # framebuffers immediately, which used to blank the screen for
+        # however long kestrel-gnd's own setup took. kestrel-gnd sends the
+        # splash the SIGTERM that actually ends it, itself, right after its
+        # own first successful modeset (drm/drm.c's notify_splash_done()) -
+        # so the on-screen hand-off is one atomic swap with nothing shown in
+        # between, not splash-exits-then-black-then-kestrel-gnd-appears.
+        [ -f /var/run/kestrel-splash.pid ] && \
+            kill -USR1 "$(cat /var/run/kestrel-splash.pid)" 2>/dev/null
+
+        try=1
+        while [ $try -le $TRIES ]; do
+            [ -f $LOG ] && mv -f $LOG $LOG.prev
+            echo "kestrel: start attempt $try/$TRIES" > $LOG
+            $BIN >> $LOG 2>&1 &
+            kp=$!
+
+            j=0
+            ok=0
+            while [ $j -lt $OPEN_WAIT ]; do
+                sleep 2; j=$((j + 2))
+                kill -0 $kp 2>/dev/null || break     # died on its own
+                grep -q "video socket open" $LOG && { ok=1; break; }
+            done
+
+            if [ $ok -eq 1 ]; then
+                echo "kestrel: up after ${j}s (attempt $try)" >> $LOG
+                exit 0
+            fi
+
+            echo "kestrel: no video socket in ${j}s - baseband wedged, restarting" >> $LOG
+            kill -9 $kp 2>/dev/null
+            sleep 2
+            /root/bb-restart.sh >> $LOG 2>&1
+            try=$((try + 1))
+        done
+        echo "kestrel: giving up after $TRIES attempts" >> $LOG
+    ) &
+}
+
+stop() {
+    if pidof kestrel-gnd >/dev/null 2>&1; then
+        kill -INT "$(pidof kestrel-gnd)" 2>/dev/null
+        sleep 6
+        pidof kestrel-gnd >/dev/null 2>&1 && kill -9 "$(pidof kestrel-gnd)" 2>/dev/null
+    fi
+}
+
+case "$1" in
+    start|"") start ;;
+    stop)     stop ;;
+    restart)  stop; sleep 2; start ;;
+    status)
+        if pidof kestrel-gnd >/dev/null 2>&1; then
+            echo "kestrel-gnd running (pid $(pidof kestrel-gnd))"
+        else
+            echo "kestrel-gnd not running"; exit 1
+        fi ;;
+    *) echo "usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
+exit 0

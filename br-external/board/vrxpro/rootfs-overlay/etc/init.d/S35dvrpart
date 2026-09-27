@@ -1,0 +1,97 @@
+#!/bin/sh
+# Create and mount the DVR recordings partition.
+#
+# The image only carries p1/p2/p3 (~1.1 GB) so it can be flashed to any card;
+# the rest of the card is unallocated. On first boot we give the largest free
+# region to a fourth partition for recordings, so the space adapts to whatever
+# card is fitted. It has to happen here rather than in the image: a partition
+# baked into a fixed-size image could never be grown to fill a larger card, and
+# exFAT has no resize tool at all.
+#
+# The filesystem is exFAT so recordings can be pulled off the card on Windows
+# and macOS without extra drivers. The stock kernel has exFAT built in, and
+# mkfs.exfat comes from buildroot's exfatprogs package. The partition is given
+# the Microsoft basic data GPT type for the same reason - a Linux-filesystem
+# type code makes other systems ignore the partition even when they can read
+# exFAT perfectly well.
+#
+# NB "sfdisk --append" alone is not safe here: this layout also has a 15 MB gap
+# BEFORE p1 (sectors 2048-32767), and a blind append can land there. So the
+# largest free region is selected explicitly and passed as start,size.
+DEV=/dev/mmcblk1
+PART=${DEV}p4
+MNT=/media/dvr
+MIN_SECTORS=2097152          # 1 GiB - refuse to bother below this
+
+mkdir -p "$MNT"
+
+case "$1" in
+  start|"")
+    [ -b "$DEV" ] || exit 0
+
+    # Phase 2 (and steady state): the node exists - format it if it is blank,
+    # then mount.
+    if [ -b "$PART" ]; then
+        # Probe with exfatlabel rather than by reading a label: it exits 0
+        # only on a real exFAT filesystem, so "already formatted" is a positive
+        # test. Reformatting is therefore reachable only when the partition is
+        # genuinely not exFAT - a newly carved region, or one still holding
+        # whatever the card had before (this one still had an ext4 signature
+        # from a Radxa image). A wrong label on a good filesystem is corrected
+        # in place, never by mkfs; getting that backwards would silently
+        # destroy every recording on the card, once per boot.
+        if exfatlabel "$PART" >/dev/null 2>&1; then
+            # exfatlabel prints a version banner, then "label: <name>".
+            LBL=$(exfatlabel "$PART" 2>/dev/null | tail -1 | sed 's/^label: *//')
+            if [ "$(echo "$LBL" | tr 'A-Z' 'a-z')" != "dvr" ]; then
+                echo "dvrpart: relabelling $PART (was: ${LBL:-unlabelled})"
+                exfatlabel "$PART" dvr >/dev/null 2>&1
+            fi
+        else
+            echo "dvrpart: formatting $PART exFAT (no exFAT filesystem found)"
+            mkfs.exfat -L dvr "$PART" >/dev/null 2>&1 || { echo "dvrpart: mkfs failed"; exit 0; }
+        fi
+        mount -t exfat -o noatime "$PART" "$MNT" 2>/dev/null && echo "dvrpart: $MNT ready" \
+            || echo "dvrpart: mount of $PART failed"
+        exit 0
+    fi
+
+    # Phase 1: no node. If the table already describes p4 the kernel simply has
+    # not re-read it - it cannot, while the rootfs is mounted from p2, and this
+    # image has no partx to add the node live. It will be there next boot.
+    if sfdisk -l "$DEV" 2>/dev/null | grep -q "^${PART} "; then
+        echo "dvrpart: $PART is in the table; reboot to use it for recordings"
+        exit 0
+    fi
+
+    # The image is ~1.1 GB, so a freshly flashed card still carries that
+    # image's GPT: the backup header and the last-usable-LBA both describe a
+    # 1.1 GB disk, and every sector past it looks out of bounds. sfdisk -F
+    # would report a few dozen spare megabytes instead of the rest of the card,
+    # and the MIN_SECTORS check below would then decline to create anything.
+    #
+    # Moving the backup header to its standard place at the true end of the
+    # device fixes the geometry in-place and is what makes "fills whatever card
+    # it was flashed to" work without a manual sgdisk -e after every flash. It
+    # is a no-op once correct, so it costs nothing on later boots.
+    sfdisk --relocate gpt-bak-std "$DEV" >/dev/null 2>&1
+
+    # Otherwise carve the largest free region out for it.
+    set -- $(sfdisk -F "$DEV" 2>/dev/null | awk '
+        /^[[:space:]]*[0-9]+[[:space:]]/ { if ($3+0 > best) { best=$3+0; s=$1; n=$3 } }
+        END { if (best > 0) print s, n }')
+    START=$1; SECTORS=$2
+    if [ -z "$START" ] || [ "${SECTORS:-0}" -lt "$MIN_SECTORS" ]; then
+        echo "dvrpart: no usable free space on $DEV"; exit 0
+    fi
+    echo "dvrpart: creating $PART at sector $START ($SECTORS sectors)"
+    echo "$START,$SECTORS,EBD0A0A2-B9E5-4433-87C0-68B6B72699C7" \
+        | sfdisk --append --force "$DEV" >/dev/null 2>&1 || {
+        echo "dvrpart: sfdisk failed"; exit 0; }
+    echo "dvrpart: created; reboot to format and mount it"
+    ;;
+  stop)   umount "$MNT" 2>/dev/null ;;
+  restart|reload) "$0" stop; "$0" start ;;
+  *) echo "usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

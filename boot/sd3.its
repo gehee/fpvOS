@@ -1,0 +1,11 @@
+/dts-v1/;
+/ {
+	description = "VRX Pro SD FIT (neutralized U-Boot + kernel DTB)";
+	#address-cells = <1>;
+	images {
+		fdt   { data = /incbin/("fdt-sd2.dtb");     type = "flat_dt"; arch = "arm64"; compression = "none"; load = <0xffffff00>; hash { algo = "sha256"; }; };
+		kernel{ data = /incbin/("kernel.lz4");       type = "kernel";  arch = "arm64"; os = "linux"; compression = "lz4"; entry = <0xffffff01>; load = <0xffffff01>; hash { algo = "sha256"; }; };
+		resource { data = /incbin/("resource-sd.img"); type = "multi"; arch = "arm64"; compression = "none"; hash { algo = "sha256"; }; };
+	};
+	configurations { default = "conf"; conf { rollback-index = <0x0>; fdt = "fdt"; kernel = "kernel"; multi = "resource"; }; };
+};

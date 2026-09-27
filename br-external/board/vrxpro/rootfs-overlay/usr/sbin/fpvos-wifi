@@ -1,0 +1,178 @@
+#!/bin/sh
+# fpvos-wifi - the goggle's WiFi access point.    start | stop | status
+#
+# The VRX Pro carries a Realtek RTL8188FU-family USB WiFi chip (0bda:f179),
+# powered by GPIO 105 and off unless something turns it on. Its driver is the
+# stock firmware's RTL8189FU.ko, extracted like the other vendor blobs.
+#
+# kestrel's SYSTEM > WiFi AP setting runs this - at startup when the setting is
+# on, and whenever it is toggled. Nothing else starts it, and it is off by
+# default: it is a 2.4 GHz transmitter sitting next to the RC link.
+#
+# Network: SSID fpvOS-XXXX (the chip's MAC), WPA2 with the passphrase 12345678 -
+# the shortest WPA2 allows, and what stock uses. It keeps nobody out and is not
+# meant to: this is an open platform on the pilot's own bench. Both live in
+# /etc/fpvos/wifi-ap, written the first time the AP starts, and can be edited
+# there. The goggle is 192.168.4.1 and hands out .100-.120.
+#
+# SSH is not reachable over this network: dropbear listens on the USB link
+# only (see /etc/default/dropbear), so the published root password is not a
+# way in for anyone who joins the AP.
+#
+# Channel: 1, 6 or 11, whichever is quietest in a scan taken just before the AP
+# starts. hostapd's own automatic selection (channel=0) cannot work here - this
+# driver reports no survey data - so the choice is made from the scan instead.
+
+GPIO=105
+MOD=/lib/modules/RTL8189FU.ko
+MODNAME=RTL8189FU
+IDENT=/etc/fpvos/wifi-ap
+RUN=/run/fpvos-wifi
+ADDR=192.168.4.1
+
+log() { echo "fpvos-wifi: $*"; }
+
+# Our udhcpd, found by its config path: this busybox has no pidfile support,
+# so the "pidfile" line in its config is ignored. (The other udhcpd, on the USB
+# link, has its own config and is left alone.)
+our_udhcpd() {
+    for p in $(pidof udhcpd); do
+        grep -q "$RUN/udhcpd.conf" /proc/$p/cmdline 2>/dev/null && echo $p
+    done
+}
+
+running() { [ -f "$RUN/hostapd.pid" ] && kill -0 "$(cat "$RUN/hostapd.pid")" 2>/dev/null; }
+
+power() {
+    [ -d /sys/class/gpio/gpio$GPIO ] || echo $GPIO > /sys/class/gpio/export
+    echo out > /sys/class/gpio/gpio$GPIO/direction
+    echo "$1" > /sys/class/gpio/gpio$GPIO/value
+}
+
+# The network's name and passphrase, written the first time the AP starts and
+# left alone after that, so an edit to the file sticks.
+identity() {
+    [ -f "$IDENT" ] && return 0
+    mac=$(tr -d ':' < /sys/class/net/wlan0/address | tr 'a-f' 'A-F')
+    mkdir -p "$(dirname "$IDENT")"
+    printf 'SSID=fpvOS-%s\nPASSPHRASE=12345678\n' "$(echo "$mac" | cut -c9-12)" > "$IDENT.new"
+    chmod 600 "$IDENT.new" && mv "$IDENT.new" "$IDENT" && sync
+}
+
+# Score 1, 6 and 11 by what the scan heard: each network adds its strength
+# (dBm above -100), scaled by how much its channel overlaps the candidate.
+# Lowest score wins; with nothing heard at all, 6.
+pick_channel() {
+    iw dev wlan0 scan 2>/dev/null | awk '
+        /^BSS / { if (f) seen(); f = 0; s = -100 }
+        /freq:/ { f = $2 }
+        /signal:/ { s = $2 }
+        function seen(  ch, c, d) {
+            if (f < 2412 || f > 2484) return
+            ch = (f == 2484) ? 14 : (f - 2407) / 5
+            for (c = 1; c <= 11; c += 5) {
+                d = ch - c; if (d < 0) d = -d
+                if (d < 5) score[c] += (s + 100) * (5 - d) / 5
+            }
+            n++
+        }
+        END {
+            if (f) seen()
+            if (!n) { print 6; exit }
+            best = 1
+            for (c = 6; c <= 11; c += 5) if (score[c] < score[best]) best = c
+            print best
+        }'
+}
+
+start() {
+    if running; then log "already running"; return 0; fi
+    [ -f "$MOD" ] || { log "no driver at $MOD - re-run scripts/extract-vendor.py"; return 1; }
+    command -v hostapd >/dev/null || { log "hostapd missing from this image"; return 1; }
+    mkdir -p "$RUN"
+
+    power 1
+    grep -q "^$MODNAME " /proc/modules || insmod "$MOD" || { log "insmod failed"; power 0; return 1; }
+    i=0
+    while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 50 ]; do usleep 100000; i=$((i + 1)); done
+    [ -e /sys/class/net/wlan0 ] || { log "wlan0 never appeared"; stop; return 1; }
+
+    identity
+    . "$IDENT"
+    ifconfig wlan0 up
+    ch=$(pick_channel)
+    [ -n "$ch" ] || ch=6
+
+    cat > "$RUN/hostapd.conf" <<EOF
+interface=wlan0
+driver=nl80211
+ctrl_interface=$RUN/ctl
+ssid=$SSID
+hw_mode=g
+channel=$ch
+ieee80211n=1
+wmm_enabled=1
+wpa=2
+wpa_key_mgmt=WPA-PSK
+rsn_pairwise=CCMP
+wpa_passphrase=$PASSPHRASE
+max_num_sta=4
+EOF
+    chmod 600 "$RUN/hostapd.conf"
+    ifconfig wlan0 $ADDR netmask 255.255.255.0 up
+    hostapd -B -P "$RUN/hostapd.pid" -f /var/log/hostapd.log "$RUN/hostapd.conf" ||
+        { log "hostapd failed, see /var/log/hostapd.log"; stop; return 1; }
+
+    cat > "$RUN/udhcpd.conf" <<EOF
+interface wlan0
+start 192.168.4.100
+end 192.168.4.120
+max_leases 21
+lease_file $RUN/udhcpd.leases
+option subnet 255.255.255.0
+option lease 3600
+EOF
+    touch "$RUN/udhcpd.leases"
+    for p in $(our_udhcpd); do kill $p; done
+    udhcpd "$RUN/udhcpd.conf" || log "udhcpd failed - clients will need a static address"
+
+    echo "channel $ch" > "$RUN/state"
+    log "on: $SSID, channel $ch, $ADDR"
+}
+
+stop() {
+    # hostapd takes a moment to tear the AP down; unload the driver only once
+    # it has gone (up to 2 s), not out from under it.
+    if [ -f "$RUN/hostapd.pid" ]; then
+        hp=$(cat "$RUN/hostapd.pid")
+        kill "$hp" 2>/dev/null
+        i=0
+        while kill -0 "$hp" 2>/dev/null && [ $i -lt 20 ]; do usleep 100000; i=$((i + 1)); done
+        kill -9 "$hp" 2>/dev/null
+        rm -f "$RUN/hostapd.pid"
+    fi
+    for p in $(our_udhcpd); do kill $p; done
+    i=0
+    while [ -n "$(our_udhcpd)" ] && [ $i -lt 10 ]; do usleep 100000; i=$((i + 1)); done
+    [ -e /sys/class/net/wlan0 ] && ifconfig wlan0 down
+    grep -q "^$MODNAME " /proc/modules && rmmod $MODNAME
+    power 0
+    rm -f "$RUN/state"
+    log "off"
+}
+
+status() {
+    if running; then
+        . "$IDENT"
+        echo "on $SSID $(cat "$RUN/state" 2>/dev/null)"
+    else
+        echo "off"
+    fi
+}
+
+case "$1" in
+    start)  start ;;
+    stop)   stop ;;
+    status) status ;;
+    *) echo "usage: $0 {start|stop|status}" >&2; exit 1 ;;
+esac

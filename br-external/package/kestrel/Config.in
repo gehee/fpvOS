@@ -1,0 +1,13 @@
+config BR2_PACKAGE_KESTREL
+	bool "kestrel"
+	depends on BR2_PACKAGE_HAS_LIBEGL
+	depends on BR2_PACKAGE_HAS_LIBGLES
+	select BR2_PACKAGE_FFMPEG
+	select BR2_PACKAGE_CAIRO
+	select BR2_PACKAGE_CAIRO_PNG
+	select BR2_PACKAGE_LIBDRM
+	select BR2_PACKAGE_FREETYPE
+	select BR2_PACKAGE_PIXMAN
+	select BR2_PACKAGE_LIBPNG
+	help
+	  kestrel-gnd: the fpvOS ground/goggle FPV application.

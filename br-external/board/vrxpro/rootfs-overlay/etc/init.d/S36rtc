@@ -1,0 +1,152 @@
+#!/bin/sh
+# Set the system clock the way the stock firmware does, so stock and this
+# firmware can be booted one after another without either disturbing the
+# other's idea of time.
+#
+# The board carries two RTCs, and only one of them keeps time:
+#
+#   rk808-rtc  in the PMIC. This is the one the kernel binds, and it sets the
+#              system clock at boot (hctosys). It has no working backup supply,
+#              so every cold boot it comes up at 2017-08-04 09:00 - which is
+#              where the 2017 timestamps on recordings came from.
+#   pcf8563    on i2c-1 at 0x51, battery backed and free running. This is the
+#              one that actually holds the date, and the one stock reads.
+#
+# Stock has no NTP - there is no time daemon anywhere in its rootfs. ar_ldy_gnd
+# opens /dev/i2c-1, reads the pcf8563 directly, and applies it with
+#   date -s '%04d-%02d-%02d %02d:%02d:%02d'
+# taking the registers as wall clock with no timezone conversion. This does the
+# same, deliberately.
+#
+# The chip is set to UTC+8 from the factory. That is NOT corrected here: the
+# point is to agree with stock about what the chip means, and "fixing" the
+# offset would put the two firmwares eight hours apart.
+#
+# Nothing here WRITES the chip except the explicit Ascent_time.txt path at the
+# bottom, which is stock's own mechanism for setting the clock without a
+# network. A plain boot only ever reads.
+
+# Offset and timezone live in one place, shared with S70kestrel.
+CONF=/etc/kestrel/time.conf
+RTC_UTC_OFFSET_MIN=480
+[ -r "$CONF" ] && . "$CONF"
+
+BUS=1
+ADDR=0x51
+DVR_DIR=/media/dvr
+STOCK_DIR=/usrdata/record
+TIME_FILE=Ascent_time.txt
+
+rd() { i2cget -y "$BUS" "$ADDR" "$1" 2>/dev/null; }
+bcd2dec() { v=$(($1)); echo $(( (v >> 4) * 10 + (v & 0x0F) )); }
+dec2bcd() { v=$(dec10 "$1"); printf "0x%02x" $(( (v / 10) * 16 + (v % 10) )); }
+# Shell arithmetic reads a leading zero as octal, so "09" from a zero-padded
+# date is not the number nine, it is a syntax error - which silently turned
+# September into month 0 and wrote it to the chip. Strip the padding first.
+dec10() { x=$(echo "$1" | sed 's/^0*//'); [ -z "$x" ] && x=0; echo "$x"; }
+
+# Chip wall clock -> UTC, as "YYYY-MM-DD HH:MM:SS". Empty if date cannot parse.
+wall_to_utc() {
+    e=$(date -u -d "$1" +%s 2>/dev/null) || return 1
+    [ -n "$e" ] || return 1
+    date -u -d "@$(( e - RTC_UTC_OFFSET_MIN * 60 ))" +'%Y-%m-%d %H:%M:%S' 2>/dev/null
+}
+
+read_rtc() {
+    s=$(rd 0x02); [ -z "$s" ] && return 1
+    # Bit 7 of the seconds register is the chip's own clock-integrity flag: set
+    # means the oscillator stopped at some point and the time is meaningless.
+    # Trusting it anyway would overwrite a good kernel clock with garbage.
+    if [ $(( $(($s)) & 0x80 )) -ne 0 ]; then
+        echo "rtc: pcf8563 reports low voltage - time not reliable, leaving clock alone"
+        return 1
+    fi
+    SEC=$(bcd2dec $(( $(($s)) & 0x7F )))
+    MIN=$(bcd2dec $(( $(rd 0x03) & 0x7F )))
+    HOUR=$(bcd2dec $(( $(rd 0x04) & 0x3F )))
+    DAY=$(bcd2dec $(( $(rd 0x05) & 0x3F )))
+    MON=$(bcd2dec $(( $(rd 0x07) & 0x1F )))
+    YEAR=$(( 2000 + $(bcd2dec $(rd 0x08)) ))
+    # A plausible date is not proof the chip is right, but an implausible one is
+    # proof it is wrong - and applying that would be worse than doing nothing.
+    [ "$MON"  -ge 1 ] && [ "$MON"  -le 12 ] || return 1
+    [ "$DAY"  -ge 1 ] && [ "$DAY"  -le 31 ] || return 1
+    [ "$HOUR" -le 23 ] && [ "$MIN" -le 59 ] && [ "$SEC" -le 59 ] || return 1
+    [ "$YEAR" -ge 2020 ] || return 1
+    return 0
+}
+
+write_rtc() {   # write_rtc YYYY MM DD HH MM SS - only from the file path below
+    i2cset -y "$BUS" "$ADDR" 0x02 "$(dec2bcd $6)" || return 1
+    i2cset -y "$BUS" "$ADDR" 0x03 "$(dec2bcd $5)"
+    i2cset -y "$BUS" "$ADDR" 0x04 "$(dec2bcd $4)"
+    i2cset -y "$BUS" "$ADDR" 0x05 "$(dec2bcd $3)"
+    i2cset -y "$BUS" "$ADDR" 0x06 "$(date -u -d "$1-$2-$3" +%w 2>/dev/null || echo 0)"
+    # Century bit (0x80 of the month register) stays clear: the factory value
+    # reads back as 20xx with it clear, so clearing it keeps our encoding and
+    # stock's decoding agreeing.
+    i2cset -y "$BUS" "$ADDR" 0x07 "$(dec2bcd $2)"
+    i2cset -y "$BUS" "$ADDR" 0x08 "$(dec2bcd $(( $1 % 100 )))"
+}
+
+apply_time_file() {
+    for d in "$DVR_DIR" "$STOCK_DIR"; do
+        f="$d/$TIME_FILE"
+        [ -f "$f" ] || continue
+        # Stock parses "%d-%d-%d %d:%d:%d", i.e. YYYY-MM-DD HH:MM:SS.
+        set -- $(sed -n '1s/[-:]/ /gp' "$f")
+        [ $# -ge 6 ] || { echo "rtc: $f is not YYYY-MM-DD HH:MM:SS"; continue; }
+        Y=$(dec10 "$1"); M=$(dec10 "$2"); D=$(dec10 "$3")
+        h=$(dec10 "$4"); m=$(dec10 "$5"); s=$(dec10 "$6")
+        [ "$M" -ge 1 ] && [ "$M" -le 12 ] && [ "$D" -ge 1 ] && [ "$D" -le 31 ] \
+            && [ "$h" -le 23 ] && [ "$m" -le 59 ] && [ "$s" -le 59 ] && [ "$Y" -ge 2000 ] || {
+            echo "rtc: $f has an out-of-range date, ignoring"; continue; }
+        printf "rtc: %s -> %04d-%02d-%02d %02d:%02d:%02d\n" "$f" "$Y" "$M" "$D" "$h" "$m" "$s"
+        # The file is in the CHIP's convention, not local time - stock parses it
+        # and writes it straight to the registers, so reinterpreting it here
+        # would make the same file mean two different things on the two
+        # firmwares.
+        WALL=$(printf '%04d-%02d-%02d %02d:%02d:%02d' "$Y" "$M" "$D" "$h" "$m" "$s")
+        UTC=$(wall_to_utc "$WALL")
+        # Only touch the chip once the kernel has accepted the value. Writing
+        # it regardless is how a failed parse reached the battery-backed clock
+        # and left stock looking at the wrong month.
+        if [ -n "$UTC" ] && date -u -s "$UTC" >/dev/null 2>&1; then
+            write_rtc "$Y" "$M" "$D" "$h" "$m" "$s" >/dev/null 2>&1 \
+                && echo "rtc: pcf8563 updated" || echo "rtc: WARNING pcf8563 write failed"
+        else
+            echo "rtc: refusing to write pcf8563 - the kernel rejected that date"
+            continue
+        fi
+        # Stock keeps a copy under keep_ and removes the original, so the file
+        # is applied once rather than on every boot.
+        cp "$f" "$d/keep_$TIME_FILE" 2>/dev/null
+        rm -f "$f"
+        return 0
+    done
+    return 1
+}
+
+case "$1" in
+  start|"")
+    [ -e /dev/i2c-$BUS ] || exit 0
+    if read_rtc; then
+        WALL=$(printf '%04d-%02d-%02d %02d:%02d:%02d' "$YEAR" "$MON" "$DAY" "$HOUR" "$MIN" "$SEC")
+        # The registers are wall clock in the chip's own zone. The system clock
+        # runs in UTC, so take the offset off here; TZ puts it back for display.
+        UTC=$(wall_to_utc "$WALL")
+        if [ -n "$UTC" ] && date -u -s "$UTC" >/dev/null 2>&1; then
+            echo "rtc: pcf8563 reads $WALL (UTC+$((RTC_UTC_OFFSET_MIN / 60))h) -> system UTC $UTC"
+        else
+            echo "rtc: could not apply '$WALL' from pcf8563"
+        fi
+    fi
+    # A dropped time file wins over the chip, and updates the chip - that is how
+    # stock lets you set the clock from a PC with no network.
+    apply_time_file
+    ;;
+  stop) ;;
+  restart|reload) "$0" start ;;
+  *) echo "usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

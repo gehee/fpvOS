@@ -1,0 +1,42 @@
+#!/bin/sh
+# Boot splash: put the product art on screen as early as DRM allows, instead
+# of a blank panel or scrolling console text, while the baseband and
+# kestrel-gnd (S60/S70 - the AR8030 daemon alone can take minutes to come up)
+# are still starting.
+#
+# Numbered right after S11modules: the display driver just needs its module
+# loaded, not the baseband or network, so this is the earliest safe slot.
+#
+# Only one process can hold the DRM master at a time, so the hand-off to
+# kestrel-gnd is a two-signal handshake, not a plain kill: S70kestrel sends
+# SIGUSR1 (via the pidfile below) right before starting kestrel-gnd, which
+# tells kestrel-splash to drop master and hold its current frame rather than
+# exit - exiting there would free its framebuffers immediately and blank the
+# screen for however long kestrel-gnd's own setup takes. kestrel-gnd sends
+# the SIGTERM that actually ends it, itself, right after its own first
+# successful modeset (drm/drm.c's notify_splash_done()), so the on-screen
+# hand-off is one atomic buffer swap - kestrel-gnd's idle screen uses the
+# same background image, so it reads as one continuous frame throughout.
+
+BIN=/usr/bin/kestrel-splash
+PIDFILE=/var/run/kestrel-splash.pid
+
+start() {
+    [ -x "$BIN" ] || exit 0
+    [ -e /dev/dri/card0 ] || exit 0
+    "$BIN" >/var/log/kestrel-splash.log 2>&1 &
+    echo $! > "$PIDFILE"
+}
+
+stop() {
+    [ -f "$PIDFILE" ] && kill "$(cat "$PIDFILE")" 2>/dev/null
+    rm -f "$PIDFILE"
+}
+
+case "$1" in
+    start|"") start ;;
+    stop)     stop ;;
+    restart)  stop; sleep 1; start ;;
+    *) echo "usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

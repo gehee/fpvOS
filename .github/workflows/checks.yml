@@ -1,0 +1,41 @@
+name: checks
+
+# Fast checks that need neither Buildroot nor the vendor blobs. A full image
+# build takes the cross-toolchain from scratch and the proprietary files from
+# firmware we do not ship, so it is not run here.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No vendor files tracked
+        # Everything under vendor/ except the MANIFEST comes from Caddx's
+        # firmware and must never be committed.
+        run: |
+          tracked=$(git ls-files vendor | grep -v '^vendor/MANIFEST$' || true)
+          if [ -n "$tracked" ]; then
+            echo "vendor files are tracked - remove them:"; echo "$tracked"; exit 1
+          fi
+
+      - name: Shell syntax
+        run: |
+          for f in build.sh boot/mk-sd-image.sh scripts/release.sh \
+                   br-external/board/vrxpro/post-build.sh \
+                   $(git ls-files 'br-external/board/vrxpro/rootfs-overlay/etc/init.d/*') \
+                   br-external/board/vrxpro/rootfs-overlay/usr/sbin/fpvos-wifi \
+                   br-external/board/vrxpro/rootfs-overlay/root/bb-restart.sh \
+                   br-external/board/vrxpro/rootfs-overlay/ar8030soc/bb_only.sh; do
+            head -1 "$f" | grep -q bash && sh=bash || sh=sh
+            $sh -n "$f" || { echo "syntax error: $f"; exit 1; }
+          done
+
+      - name: Python
+        run: |
+          python3 -m py_compile scripts/extract-vendor.py boot/mkbootchain.py
+          python3 scripts/extract-vendor.py --help >/dev/null

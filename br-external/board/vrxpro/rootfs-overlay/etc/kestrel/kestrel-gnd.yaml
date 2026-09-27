@@ -1,0 +1,80 @@
+# kestrel-gnd defaults shipped on the SD card.
+# Runtime/per-air-unit state (the sky_<MAC>_* camera settings, pinned_chan,
+# chan_hop, ...) is written here by the app as you change it in the menu - it is
+# deliberately NOT shipped, so a fresh card starts clean and learns your VTX.
+
+# --- link -------------------------------------------------------------------
+link: ar8030
+
+# --- display ----------------------------------------------------------------
+# screen_mode is deliberately unset: with no override, drm.c auto-selects
+# the highest refresh rate the connected panel actually advertises (ties
+# broken by resolution) instead of assuming what this one card's panel
+# happened to report. kestrel-splash mirrors the exact same fallback, so the
+# two agree on a mode without either needing to know the other picked it.
+# Set "WIDTHxHEIGHT@REFRESH" (e.g. 1920x1080@120) here only to force a
+# specific mode - both programs then require an exact match before falling
+# back to auto-select, so an override that isn't real is silently ignored,
+# never fabricated.
+# vsync ON is the low-latency setting on this board, despite the name.
+# Measured: FrontBuffer (vsync off) has to memcpy every 1080p frame into the
+# scanout buffer because it bypasses the decoder's DMA-BUF - 22.6ms per frame,
+# three quarters of the display latency. Atomic (vsync on) imports the DMA-BUF
+# zero-copy and only waits for a vblank. disp: ~27ms -> ~7ms.
+vsync: true
+enable_osd: true
+
+# --- recording --------------------------------------------------------------
+dvr_dir: /media/dvr
+# false = record the FPV stream as it arrives from the air unit (H.265, the
+# camera's own rate, no HUD). true = record the screen: video and HUD as the
+# pilot sees them, re-encoded to H.264.
+dvr_screen: false
+# Screen recording: how many times a second the screen is captured (1-60;
+# the menu offers 30 and 60). Each capture is an extra display commit, so the
+# video's next frame waits a moment for it. Measured on the live feed while
+# recording: +0.5-0.7 ms average latency at 30, +1.5 ms at 60. Recording FPV
+# (dvr_screen: false) has no latency cost. The file is always written at a
+# constant 60 fps (repeat frames fill the gaps), so it plays in real time.
+dvr_screen_fps: 30
+# fmp4 (default): fragmented MP4 - a recording cut short by a power loss
+# still plays up to about its last second. mp4 writes its index only when
+# the recording is stopped, so a cut file will not open. raw: the H.265
+# bitstream as received, FPV source only.
+dvr_format: fmp4
+
+# --- decode -----------------------------------------------------------------
+decoder_name: rkmpp
+
+# --- OSD --------------------------------------------------------------------
+bg_video_enabled: false
+show_drone_model: false
+show_latency_graph: false
+hud_reactivity: false
+
+# Clock: when it shows (0 off, 1 idle only, 2 always) and in what format
+# (1 = 12H, 2 = 24H).
+# HUD colour theme: 0 KESTREL, 1 EMBER, 2 ICE, 3 MONO, 4 VIOLET.
+hud_theme: 0
+
+# HUD overlay: 0 OFF, 1 CANOPY, 2 ARENA, 3 ARENA FULL.
+hud_overlay: 1
+# Betaflight's own OSD canvas, drawn over whichever overlay above is on.
+bf_osd: 1
+
+# 4x MSAA (antialiasing) on the HUD. Keep it off - it is expensive here.
+# Measured on this goggle's one-core Mali-G52:
+#   GPU time per HUD frame   4.6 ms off  ->  17-30 ms on (4-6x)
+#   GPU clock in flight      200 MHz     ->  800 MHz, 100% of the time
+#   GPU busy in flight       15%         ->  56%
+# i.e. a steady extra battery drain for smoother edges on a few thin lines.
+# hud_feather gives most of that smoothing (a 1 px alpha fade on the canopy's
+# rails, blocks and panel edges) at no measurable GPU cost.
+hud_msaa: false
+hud_feather: true
+
+clock_show: 1
+clock_mode: 2
+
+bb_watchdog: 0
+demo_mode: 0

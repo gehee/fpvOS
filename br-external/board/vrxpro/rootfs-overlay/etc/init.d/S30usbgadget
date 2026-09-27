@@ -1,0 +1,29 @@
+#!/bin/sh
+G=/sys/kernel/config/usb_gadget/vrx
+start(){
+  modprobe libcomposite 2>/dev/null
+  mountpoint -q /sys/kernel/config 2>/dev/null || mount -t configfs none /sys/kernel/config 2>/dev/null
+  [ -d "$G" ] && { echo "" > "$G/UDC" 2>/dev/null; rm -rf "$G"; }
+  mkdir -p "$G"; cd "$G" || exit 1
+  echo 0x1d77 > idVendor; echo 0xa4a2 > idProduct
+  echo 0x0100 > bcdDevice; echo 0x0200 > bcdUSB
+  mkdir -p strings/0x409
+  echo 2020 > strings/0x409/serialnumber
+  echo fpvOS > strings/0x409/manufacturer
+  echo "fpvOS VRX Pro (ECM+ACM)" > strings/0x409/product
+  mkdir -p configs/c.1/strings/0x409
+  echo "ECM+ACM" > configs/c.1/strings/0x409/configuration
+  echo 500 > configs/c.1/MaxPower
+  mkdir -p functions/ecm.usb0
+  echo 02:00:de:ad:be:ef > functions/ecm.usb0/dev_addr
+  echo 02:00:de:ad:be:ed > functions/ecm.usb0/host_addr
+  ln -s functions/ecm.usb0 configs/c.1/ 2>/dev/null
+  mkdir -p functions/acm.usb0
+  ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
+  ls /sys/class/udc | head -n1 > UDC
+  sleep 1
+  for i in 1 2 3 4 5 6 7 8; do ifconfig usb0 192.168.3.1 netmask 255.255.255.0 up 2>/dev/null && break; sleep 1; done
+  echo "usbgadget: ECM+ACM up, usb0=192.168.3.1"
+}
+stop(){ [ -d "$G" ] && { echo "" > "$G/UDC" 2>/dev/null; rm -rf "$G"; }; }
+case "$1" in start|"") start;; stop) stop;; restart) stop; start;; esac

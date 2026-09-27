@@ -1,0 +1,19 @@
+#!/bin/sh
+# Bring up the AR8030 baseband + daemon at boot, so kestrel-gnd --link ar8030 can
+# connect. Runs the bring-up in the background (it waits up to ~30s for the
+# chip to re-enumerate in HS mode) so boot isn't delayed.
+case "$1" in
+  start|"")
+    [ -x /ar8030soc/bb_only.sh ] || exit 0
+    echo "AR8030: baseband bring-up (background)"
+    /ar8030soc/bb_only.sh > /var/log/ar8030-boot.log 2>&1 &
+    ;;
+  stop)
+    killall -9 daemon 2>/dev/null
+    ;;
+  restart)
+    "$0" stop; sleep 1; "$0" start
+    ;;
+  *) echo "usage: $0 {start|stop|restart}"; exit 1 ;;
+esac
+exit 0

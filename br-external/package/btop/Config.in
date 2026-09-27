@@ -1,0 +1,19 @@
+config BR2_PACKAGE_BTOP
+	bool "btop"
+	depends on BR2_INSTALL_LIBSTDCPP
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_TOOLCHAIN_GCC_AT_LEAST_11 # C++20
+	depends on BR2_ENABLE_LOCALE
+	help
+	  Resource monitor: CPU per core, memory, disks, network and
+	  processes, in the terminal. Handy over the USB ssh link to see
+	  what kestrel, the decoder and the baseband daemon cost.
+
+	  Needs a UTF-8 locale to draw its boxes; the defconfig generates
+	  en_US.UTF-8 and /etc/profile.d/locale.sh selects it.
+
+	  https://github.com/aristocratos/btop
+
+comment "btop needs a toolchain w/ C++, threads, gcc >= 11, locale"
+	depends on !BR2_INSTALL_LIBSTDCPP || !BR2_TOOLCHAIN_HAS_THREADS || \
+		!BR2_TOOLCHAIN_GCC_AT_LEAST_11 || !BR2_ENABLE_LOCALE

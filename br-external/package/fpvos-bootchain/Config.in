@@ -1,0 +1,10 @@
+config BR2_PACKAGE_FPVOS_BOOTCHAIN
+	bool "fpvos-bootchain"
+	select BR2_PACKAGE_HOST_DTC
+	help
+	  The SD card's boot chain, made from the user's own stock
+	  firmware (vendor/stock/uboot.img and boot.img, which
+	  scripts/extract-vendor.py saves) by boot/mkbootchain.py:
+	  a patched U-Boot, the kernel FIT with an SD-card device tree,
+	  and the p1 fallback's kernel and device tree. Written to the
+	  images directory for boot/mk-sd-image.sh.

@@ -1,0 +1,91 @@
+BR2_aarch64=y
+BR2_cortex_a55=y
+BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+BR2_TARGET_GENERIC_HOSTNAME="vrxpro"
+BR2_TARGET_GENERIC_ISSUE="fpvOS VRX Pro (RK3568)"
+BR2_TARGET_GENERIC_ROOT_PASSWD="fpvos"
+BR2_TARGET_GENERIC_GETTY_PORT="ttyFIQ0"
+BR2_INIT_BUSYBOX=y
+BR2_PACKAGE_BUSYBOX_SHOW_OTHERS=y
+BR2_PACKAGE_DROPBEAR=y
+BR2_PACKAGE_E2FSPROGS=y
+BR2_PACKAGE_UTIL_LINUX=y
+BR2_PACKAGE_UTIL_LINUX_BINARIES=y
+# S35dvrpart formats the p4 recordings partition as exFAT; without this the
+# mkfs.exfat call it depends on doesn't exist, the format silently fails, and
+# every recording falls through to the tiny rootfs instead.
+BR2_PACKAGE_EXFATPROGS=y
+BR2_PACKAGE_HTOP=y
+BR2_TARGET_ROOTFS_EXT2=y
+BR2_TARGET_ROOTFS_EXT2_4=y
+BR2_TARGET_ROOTFS_EXT2_SIZE="200M"
+BR2_TARGET_ROOTFS_TAR=y
+BR2_PACKAGE_BASH=y
+BR2_PACKAGE_JQ=y
+BR2_PACKAGE_EVTEST=y
+BR2_PACKAGE_LIBDRM=y
+BR2_PACKAGE_FFMPEG=y
+BR2_PACKAGE_FFMPEG_SWSCALE=y
+BR2_PACKAGE_FFMPEG_AVFORMAT=y
+BR2_PACKAGE_CAIRO=y
+BR2_PACKAGE_CAIRO_PNG=y
+# GL/EGL/GBM come from the Mali userspace driver, not mesa: this hardware has
+# a Mali GPU and kestrel renders the HUD on it. rockchip-mali PROVIDES libegl,
+# libgles and libgbm (satisfying kestrel's egl/glesv2/gbm pkg-config deps) and
+# installs the libEGL/libGLESv2/libgbm -> libmali.so.1 symlinks. The blob it
+# bundles is the G31 variant; post-build.sh replaces libmali.so.1 with the
+# G52 one extracted from this board, which is what RK3568 actually has.
+# This board's libmali is the wayland-gbm variant: it has undefined refs to
+# wl_* symbols and needs libwayland at link time, even though fpvOS runs no
+# Wayland compositor (the stock rootfs ships libwayland-client/server too).
+BR2_PACKAGE_WAYLAND=y
+BR2_PACKAGE_ROCKCHIP_MALI=y
+BR2_PACKAGE_LIBPNG=y
+BR2_PACKAGE_FREETYPE=y
+BR2_PACKAGE_PIXMAN=y
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/post-build.sh"
+BR2_PACKAGE_ROCKCHIP_MPP=y
+BR2_PACKAGE_FPVOS_VENDOR_LIBS=y
+BR2_PACKAGE_KESTREL=y
+# mtd-utils: only what S50factory needs to read stock's pairing list off the
+# NAND. Everything that can erase or write flash stays out of the image.
+BR2_PACKAGE_MTD=y
+BR2_PACKAGE_MTD_MTDPART=y
+BR2_PACKAGE_MTD_UBIATTACH=y
+BR2_PACKAGE_MTD_UBIDETACH=y
+# BR2_PACKAGE_MTD_FLASHCP is not set
+# BR2_PACKAGE_MTD_FLASH_ERASE is not set
+# BR2_PACKAGE_MTD_FLASH_LOCK is not set
+# BR2_PACKAGE_MTD_FLASH_UNLOCK is not set
+# BR2_PACKAGE_MTD_MTD_DEBUG is not set
+# BR2_PACKAGE_MTD_NANDDUMP is not set
+# BR2_PACKAGE_MTD_NANDTEST is not set
+# BR2_PACKAGE_MTD_NANDWRITE is not set
+# BR2_PACKAGE_MTD_MTDINFO is not set
+# BR2_PACKAGE_MTD_UBICRC32 is not set
+# BR2_PACKAGE_MTD_UBIFORMAT is not set
+# BR2_PACKAGE_MTD_UBIHEALTHD is not set
+# BR2_PACKAGE_MTD_UBIMKVOL is not set
+# BR2_PACKAGE_MTD_UBINFO is not set
+# BR2_PACKAGE_MTD_UBINIZE is not set
+# BR2_PACKAGE_MTD_UBIRENAME is not set
+# BR2_PACKAGE_MTD_UBIRMVOL is not set
+# BR2_PACKAGE_MTD_UBIRSVOL is not set
+# BR2_PACKAGE_MTD_UBIUPDATEVOL is not set
+# BR2_PACKAGE_MTD_UBIBLOCK is not set
+# btop, and the UTF-8 locale it needs to draw
+BR2_GENERATE_LOCALE="en_US.UTF-8"
+BR2_PACKAGE_BTOP=y
+# WiFi access point (usr/sbin/fpvos-wifi, toggled from kestrel's SYSTEM tab):
+# hostapd for the AP, iw for the scan that picks the channel, and busybox's
+# udhcpd for addresses.
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/busybox.fragment"
+BR2_PACKAGE_HOSTAPD=y
+# BR2_PACKAGE_HOSTAPD_DRIVER_HOSTAP is not set
+# BR2_PACKAGE_HOSTAPD_ACS is not set
+# BR2_PACKAGE_HOSTAPD_VLAN is not set
+BR2_PACKAGE_IW=y
+# The SD boot chain, made from the stock boot images (boot/mkbootchain.py).
+BR2_PACKAGE_FPVOS_BOOTCHAIN=y

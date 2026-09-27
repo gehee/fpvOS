@@ -1,0 +1,13 @@
+# Read by Buildroot's /etc/init.d/S50dropbear, which adds -R itself.
+#
+# SSH answers on the USB link only. The root password is the published
+# default "fpvos", and the WiFi access point's passphrase is just as public,
+# so listening on every interface would hand a root shell to anyone in WiFi
+# range whenever the AP is on. Bound to usb0's address instead: the port
+# simply does not exist on wlan0.
+#
+# S30usbgadget brings usb0 up with 192.168.3.1 before this starts. If the
+# gadget failed, dropbear fails to bind and there is no SSH - closed, not open.
+# The serial console (ttyFIQ0, and the ACM function on the same USB port) is
+# unaffected.
+DROPBEAR_ARGS="-p 192.168.3.1:22"

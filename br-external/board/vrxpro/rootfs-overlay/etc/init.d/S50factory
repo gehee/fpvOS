@@ -1,0 +1,167 @@
+#!/bin/sh
+# Carry the air units paired under stock into fpvOS.
+#
+# The goggle's pairing list lives in /factory/user_cfg.json: a 100-entry ring
+# of air-unit MACs ("bb_mac_addr_0".."bb_mac_addr_99", each four "0xNN"
+# strings) and "save_candidate_position", the next slot to write. Stock keeps
+# its copy in the NAND "factory" partition; fpvOS keeps its own on the SD
+# rootfs, which is what kestrel reads and what its bind menu writes. The
+# goggle's own AR8030 MAC is not in there - the chip supplies it - so this
+# list is the only pairing state there is to carry over.
+#
+# At boot, every MAC in the NAND ring that the SD ring lacks is added to the
+# SD ring, in the first empty slot from save_candidate_position. Unlike a bind
+# it never overwrites a slot, so no unit already paired is ever evicted; a full
+# ring (100) skips the rest. With no SD copy yet, the NAND file is copied as
+# is. Nothing is ever removed, and the NAND is only read.
+#
+# How it reaches the NAND without writing it:
+#
+#  * Our kernel command line comes from the vendor FIT and declares no MTD
+#    partitions, so the whole flash is one mtd0. The factory range is added
+#    as a partition at runtime (BLKPG), and removed again afterwards.
+#  * Before UBI is allowed near it, every eraseblock must start with the UBI
+#    erase-counter magic. UBI treats an empty or foreign range as something to
+#    initialise, i.e. to write - a wrong offset must stop here, not there.
+#  * Same kernel, same UBI stack stock mounts this partition with read-write
+#    on every boot. Fastmap is not built, so attaching writes no fastmap; the
+#    UBIFS volume is mounted read-only. What remains is UBI's own upkeep
+#    (e.g. scrubbing a block with bitflips), which stock would do anyway.
+#  * Deliberately NOT stock's factory_mount.sh: when a mount fails, that
+#    script runs ubiformat + ubimkvol and wipes the partition. Here any
+#    failure just leaves the SD copy as it was.
+
+NAND=spi-nand0              # /proc/mtd name of the whole flash
+OFF=0xe00000                # factory partition, from stock's mtdparts
+SIZE=0x1000000
+PEB=131072                  # eraseblock size
+NAME=fpvos-factory
+UBI_NUM=10                  # the number stock uses for this volume
+MNT=/tmp/nand-factory
+SD=/factory/user_cfg.json
+LOG=/var/log/factory-merge.log
+
+log() { echo "factory: $*"; echo "$*" >>"$LOG"; }
+
+mtd_num() { sed -n "s/^mtd\([0-9]*\): .* \"$1\"\$/\1/p" /proc/mtd; }
+
+cleanup() {
+    mountpoint -q "$MNT" && umount "$MNT"
+    [ -e "/sys/class/ubi/ubi$UBI_NUM" ] && ubidetach -d "$UBI_NUM" >/dev/null 2>&1
+    p=$(mtd_num "$NAME")
+    [ -n "$p" ] && [ -n "$master" ] && mtdpart del "/dev/mtd$master" "$p" >/dev/null 2>&1
+}
+
+# Every eraseblock in the range starts with "UBI#".
+all_ubi() {
+    i=0
+    n=$(( SIZE / PEB ))
+    while [ "$i" -lt "$n" ]; do
+        m=$(dd if="/dev/mtd$1" bs=4 count=1 skip=$(( i * PEB / 4 )) 2>/dev/null)
+        [ "$m" = "UBI#" ] || { log "eraseblock $i is not UBI ('$m') - leaving the NAND alone"; return 1; }
+        i=$(( i + 1 ))
+    done
+}
+
+# Print the SD ring with every NAND MAC it lacks added. Exit 3 when there is
+# nothing to add. Output matches kestrel's save_paired_mac() byte for byte.
+merge() {
+    awk -v sd="$(tr -d ' \t\r\n' <"$1")" -v nand="$(tr -d ' \t\r\n' <"$2")" '
+    function load(s, ring, have,   rest, m, idx, arr, hx, i, h, mac, ok) {
+        rest = s
+        while (match(rest, /"bb_mac_addr_[0-9]+":\[[^]]*\]/)) {
+            m = substr(rest, RSTART, RLENGTH)
+            rest = substr(rest, RSTART + RLENGTH)
+            idx = m; sub(/^"bb_mac_addr_/, "", idx); sub(/".*/, "", idx); idx += 0
+            arr = m; sub(/^[^[]*\[/, "", arr); sub(/\]$/, "", arr); gsub(/"/, "", arr)
+            if (idx < 0 || idx >= 100 || split(arr, hx, ",") != 4) continue
+            mac = ""; ok = 1
+            for (i = 1; i <= 4; i++) {
+                h = toupper(hx[i]); sub(/^0X/, "", h)
+                if (length(h) == 1) h = "0" h
+                if (h !~ /^[0-9A-F][0-9A-F]$/) ok = 0
+                mac = mac (i > 1 ? ":" : "") h
+            }
+            if (ok) { ring[idx] = mac; have[idx] = 1 }
+        }
+    }
+    function num(s, key,   v) {
+        if (!match(s, "\"" key "\":-?[0-9]+")) return 0
+        v = substr(s, RSTART, RLENGTH); sub(/.*:/, "", v); return v + 0
+    }
+    BEGIN {
+        load(sd, R, H); load(nand, N, NH)
+        pos = num(sd, "save_candidate_position")
+        if (pos < 0 || pos >= 100) pos = 0
+        # Walk the NAND ring oldest first, so its order survives the merge.
+        np = num(nand, "save_candidate_position")
+        if (np < 0 || np >= 100) np = 0
+        added = 0
+        for (k = 0; k < 100; k++) {
+            j = (np + k) % 100
+            if (!NH[j]) continue
+            known = 0
+            for (i = 0; i < 100; i++) if (H[i] && R[i] == N[j]) known = 1
+            if (known) continue
+            # Into the next EMPTY slot from save_candidate_position. A bind
+            # overwrites whatever sits there, as stock does; a merge running
+            # unasked at boot must not, or wrapping past 99 would evict a unit
+            # bound here - from slot 0, the one kestrel links with by default.
+            for (t = 0; t < 100 && H[pos]; t++) pos = (pos + 1) % 100
+            if (H[pos]) { print "ring full, not added " N[j] >"/dev/stderr"; continue }
+            R[pos] = N[j]; H[pos] = 1; pos = (pos + 1) % 100; added++
+            print "added " N[j] >"/dev/stderr"
+        }
+        if (!added) exit 3
+        printf "{\n    \"gnd_power_cal_dbm\": %d,\n    \"save_candidate_position\": %d", num(sd, "gnd_power_cal_dbm"), pos
+        for (i = 0; i < 100; i++) {
+            if (!H[i]) continue
+            split(R[i], b, ":")
+            printf ",\n    \"bb_mac_addr_%d\": [\n        \"0x%s\",\n        \"0x%s\",\n        \"0x%s\",\n        \"0x%s\"\n    ]", i, b[1], b[2], b[3], b[4]
+        }
+        printf "\n}\n"
+    }'
+}
+
+start() {
+    master=$(mtd_num "$NAND")
+    [ -n "$master" ] || { log "no $NAND in /proc/mtd - skipping"; return 0; }
+    for t in mtdpart ubiattach ubidetach; do
+        command -v "$t" >/dev/null || { log "$t missing - skipping"; return 0; }
+    done
+    trap cleanup EXIT
+
+    mtdpart add "/dev/mtd$master" "$NAME" "$OFF" "$SIZE" || { log "mtdpart add failed"; return 0; }
+    part=$(mtd_num "$NAME")
+    [ -n "$part" ] || { log "partition did not appear"; return 0; }
+    all_ubi "$part" || return 0
+
+    ubiattach -m "$part" -d "$UBI_NUM" >/dev/null 2>&1 || { log "ubiattach failed"; return 0; }
+    mkdir -p "$MNT"
+    mount -t ubifs -o ro "/dev/ubi${UBI_NUM}_0" "$MNT" || { log "mount failed"; return 0; }
+
+    nand="$MNT/user_cfg.json"
+    [ -f "$nand" ] || { log "stock has no pairing list yet"; return 0; }
+
+    mkdir -p /factory
+    if [ ! -f "$SD" ]; then
+        cp "$nand" "$SD.new" && chmod 600 "$SD.new" && sync && mv "$SD.new" "$SD" && sync
+        log "no SD pairing list - copied stock's"
+        return 0
+    fi
+
+    merge "$SD" "$nand" >"$SD.new" 2>>"$LOG"
+    case $? in
+        0) chmod 600 "$SD.new" && sync && mv "$SD.new" "$SD" && sync
+           log "merged stock's pairings into $SD" ;;
+        3) rm -f "$SD.new"; log "pairings already up to date" ;;
+        *) rm -f "$SD.new"; log "merge failed - $SD left as it was" ;;
+    esac
+}
+
+case "$1" in
+    start) start ;;
+    stop|restart|reload) ;;
+    *) echo "usage: $0 start" >&2; exit 1 ;;
+esac
+exit 0

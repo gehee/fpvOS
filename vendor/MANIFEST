@@ -1,0 +1,46 @@
+# Vendor-origin files fpvOS needs but does not distribute.
+# Populate this directory with: scripts/extract-vendor.py (see --help).
+# Paths on the left are where the file lands under vendor/; paths on the
+# right are where it lives in the stock Caddx/Ascent VRX Pro firmware.
+#
+# rootfs/ is merged into the target rootfs by br-external/board/vrxpro/post-build.sh.
+# boot/ feeds boot/mk-sd-image.sh.
+
+# --- AR8030 baseband userland (stock rootfs: /ar8030soc) ---
+rootfs/ar8030soc/daemon                  /ar8030soc/daemon
+rootfs/ar8030soc/artosyn_drv.ko          /ar8030soc/artosyn_drv.ko
+rootfs/ar8030soc/libar8030_client.so     /ar8030soc/libar8030_client.so
+rootfs/ar8030soc/cmd_dbg                 /ar8030soc/cmd_dbg
+rootfs/ar8030soc/fpv_boardtype           /ar8030soc/fpv_boardtype
+rootfs/ar8030soc/fpv_cmd                 /ar8030soc/fpv_cmd
+rootfs/ar8030soc/autoload                /ar8030soc/autoload
+rootfs/ar8030soc/conf.json               /ar8030soc/conf.json
+rootfs/ar8030soc/pwm_ctl.sh              /ar8030soc/pwm_ctl.sh
+rootfs/ar8030soc/app_monitor.sh          /ar8030soc/app_monitor.sh
+rootfs/ar8030soc/modules_install.sh      /ar8030soc/modules_install.sh
+rootfs/ar8030soc/inv-mpu6509.ko          /ar8030soc/inv-mpu6509.ko
+rootfs/ar8030soc/inv-mpu6509-spi.ko      /ar8030soc/inv-mpu6509-spi.ko
+
+# --- WiFi driver (stock rootfs: /usr/lib/modules), for usr/sbin/fpvos-wifi ---
+rootfs/lib/modules/RTL8189FU.ko          /usr/lib/modules/RTL8189FU.ko
+
+# --- Baseband firmware + config (stock rootfs: /ar8030soc or /lib/firmware) ---
+rootfs/lib/firmware/bb_demo_cx485_2PA.img    /usr/lib/firmware/bb_demo_cx485_2PA.img
+rootfs/lib/firmware/bb_config_gnd_pro.json   /usr/lib/firmware/bb_config_gnd_pro.json
+
+# --- Proprietary GPU / media libraries (stock rootfs: /usr/lib) ---
+rootfs/usr/lib/libmali.so.1              /usr/lib/libmali.so.1
+rootfs/usr/lib/libmali-hook.so.1         /usr/lib/libmali-hook.so.1
+rootfs/usr/lib/librga.so.2               /usr/lib/librga.so.2
+rootfs/usr/lib/librockchip_mpp.so.1      /usr/lib/librockchip_mpp.so.1
+rootfs/usr/lib/libar8030_client.so       /ar8030soc/libar8030_client.so  (device /usr/lib copy is a symlink)
+
+# --- Device-specific identity (stock rootfs: /factory) - NEVER share these ---
+rootfs/factory/fact_env.json             /factory/fact_env.json
+rootfs/factory/user_cfg.json             /factory/user_cfg.json
+
+# --- Stock boot images (firmware update image partitions), unmodified ---
+# boot/mkbootchain.py (the fpvos-bootchain package) makes the SD boot chain
+# from these; nothing prebuilt is needed.
+stock/uboot.img                          uboot.img  (U-Boot + ATF + OP-TEE FIT)
+stock/boot.img                           boot.img   (kernel FIT: dtb, kernel, resource)

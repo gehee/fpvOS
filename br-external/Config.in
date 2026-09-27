@@ -1,0 +1,5 @@
+source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-vendor-libs/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/rockchip-mpp/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/kestrel/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/btop/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-bootchain/Config.in"

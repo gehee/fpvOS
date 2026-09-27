@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: HUD, video, menus or DVR (kestrel-gnd)
+    url: https://github.com/gehee/kestrel-gnd/issues
+    about: Anything on screen is the ground application, which lives in its own repository.
+  - name: Discord
+    url: https://discord.gg/kWZA5WcMZ
+    about: Questions, new hardware, and help getting set up.
