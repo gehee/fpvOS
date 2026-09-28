@@ -15,6 +15,12 @@
 # type code makes other systems ignore the partition even when they can read
 # exFAT perfectly well.
 #
+# All of it happens on the first boot, before kestrel starts: the kernel cannot
+# re-read the table of the card it runs from while the rootfs on p2 is mounted,
+# but partx can hand it the one new partition, and the recordings partition is
+# formatted and mounted straight away. Should that ever fail, the boot that
+# created the partition reboots once to pick it up.
+#
 # NB "sfdisk --append" alone is not safe here: this layout also has a 15 MB gap
 # BEFORE p1 (sectors 2048-32767), and a blind append can land there. So the
 # largest free region is selected explicitly and passed as start,size.
@@ -25,9 +31,69 @@ MIN_SECTORS=2097152          # 1 GiB - refuse to bother below this
 
 mkdir -p "$MNT"
 
+# Give the running kernel p4 from the table - partx adds that one partition,
+# where re-reading the whole table would fail with the rootfs mounted - and wait
+# for its node. True once the node is there.
+add_live() {
+    [ -b "$PART" ] && return 0
+    partx -a --nr 4 "$DEV" >/dev/null 2>&1
+    n=0
+    while [ ! -b "$PART" ] && [ "$n" -lt 20 ]; do
+        usleep 100000
+        n=$((n + 1))
+    done
+    [ -b "$PART" ]
+}
+
+# Carve the largest free region of the card out for p4, in the table only.
+create() {
+    # The image is ~1.1 GB, so a freshly flashed card still carries that
+    # image's GPT: the backup header and the last-usable-LBA both describe a
+    # 1.1 GB disk, and every sector past it looks out of bounds. sfdisk -F
+    # would report a few dozen spare megabytes instead of the rest of the card,
+    # and the MIN_SECTORS check below would then decline to create anything.
+    #
+    # Moving the backup header to its standard place at the true end of the
+    # device fixes the geometry in-place and is what makes "fills whatever card
+    # it was flashed to" work without a manual sgdisk -e after every flash. It
+    # is a no-op once correct, so it costs nothing on later boots.
+    sfdisk --relocate gpt-bak-std "$DEV" >/dev/null 2>&1
+
+    # Then carve the largest free region out for it.
+    set -- $(sfdisk -F "$DEV" 2>/dev/null | awk '
+        /^[[:space:]]*[0-9]+[[:space:]]/ { if ($3+0 > best) { best=$3+0; s=$1; n=$3 } }
+        END { if (best > 0) print s, n }')
+    START=$1; SECTORS=$2
+    if [ -z "$START" ] || [ "${SECTORS:-0}" -lt "$MIN_SECTORS" ]; then
+        echo "dvrpart: no usable free space on $DEV"; return 1
+    fi
+    echo "dvrpart: creating $PART at sector $START ($SECTORS sectors)"
+    echo "$START,$SECTORS,EBD0A0A2-B9E5-4433-87C0-68B6B72699C7" \
+        | sfdisk --append --force "$DEV" >/dev/null 2>&1 || {
+        echo "dvrpart: sfdisk failed"; return 1; }
+}
+
 case "$1" in
   start|"")
     [ -b "$DEV" ] || exit 0
+
+    # Phase 1: no node yet - a card booting for the first time.
+    if [ ! -b "$PART" ]; then
+        if sfdisk -l "$DEV" 2>/dev/null | grep -q "^${PART} "; then
+            # In the table, not in the kernel: created on a boot that was cut
+            # short before the node appeared.
+            add_live || { echo "dvrpart: $PART is in the table; reboot to use it for recordings"; exit 0; }
+        else
+            create || exit 0
+            if ! add_live; then
+                echo "dvrpart: created $PART; rebooting once to use it"
+                sync
+                reboot
+                exit 0
+            fi
+        fi
+        echo "dvrpart: $PART is live"
+    fi
 
     # Phase 2 (and steady state): the node exists - format it if it is blank,
     # then mount.
@@ -55,40 +121,6 @@ case "$1" in
             || echo "dvrpart: mount of $PART failed"
         exit 0
     fi
-
-    # Phase 1: no node. If the table already describes p4 the kernel simply has
-    # not re-read it - it cannot, while the rootfs is mounted from p2, and this
-    # image has no partx to add the node live. It will be there next boot.
-    if sfdisk -l "$DEV" 2>/dev/null | grep -q "^${PART} "; then
-        echo "dvrpart: $PART is in the table; reboot to use it for recordings"
-        exit 0
-    fi
-
-    # The image is ~1.1 GB, so a freshly flashed card still carries that
-    # image's GPT: the backup header and the last-usable-LBA both describe a
-    # 1.1 GB disk, and every sector past it looks out of bounds. sfdisk -F
-    # would report a few dozen spare megabytes instead of the rest of the card,
-    # and the MIN_SECTORS check below would then decline to create anything.
-    #
-    # Moving the backup header to its standard place at the true end of the
-    # device fixes the geometry in-place and is what makes "fills whatever card
-    # it was flashed to" work without a manual sgdisk -e after every flash. It
-    # is a no-op once correct, so it costs nothing on later boots.
-    sfdisk --relocate gpt-bak-std "$DEV" >/dev/null 2>&1
-
-    # Otherwise carve the largest free region out for it.
-    set -- $(sfdisk -F "$DEV" 2>/dev/null | awk '
-        /^[[:space:]]*[0-9]+[[:space:]]/ { if ($3+0 > best) { best=$3+0; s=$1; n=$3 } }
-        END { if (best > 0) print s, n }')
-    START=$1; SECTORS=$2
-    if [ -z "$START" ] || [ "${SECTORS:-0}" -lt "$MIN_SECTORS" ]; then
-        echo "dvrpart: no usable free space on $DEV"; exit 0
-    fi
-    echo "dvrpart: creating $PART at sector $START ($SECTORS sectors)"
-    echo "$START,$SECTORS,EBD0A0A2-B9E5-4433-87C0-68B6B72699C7" \
-        | sfdisk --append --force "$DEV" >/dev/null 2>&1 || {
-        echo "dvrpart: sfdisk failed"; exit 0; }
-    echo "dvrpart: created; reboot to format and mount it"
     ;;
   stop)   umount "$MNT" 2>/dev/null ;;
   restart|reload) "$0" stop; "$0" start ;;

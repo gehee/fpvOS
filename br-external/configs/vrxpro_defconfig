@@ -12,6 +12,9 @@ BR2_PACKAGE_DROPBEAR=y
 BR2_PACKAGE_E2FSPROGS=y
 BR2_PACKAGE_UTIL_LINUX=y
 BR2_PACKAGE_UTIL_LINUX_BINARIES=y
+# partx: S35dvrpart hands the new recordings partition to the running kernel,
+# so the first boot formats and mounts it instead of waiting for a second one.
+BR2_PACKAGE_UTIL_LINUX_PARTX=y
 # S35dvrpart formats the p4 recordings partition as exFAT; without this the
 # mkfs.exfat call it depends on doesn't exist, the format silently fails, and
 # every recording falls through to the tiny rootfs instead.
