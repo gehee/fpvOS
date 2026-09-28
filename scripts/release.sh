@@ -1,19 +1,24 @@
 #!/bin/sh
 # Assemble a flashable fpvOS release image.
 #
-# Pulls the vendor runtime + boot chain from the PRIVATE vendor-blobs
-# repository, merges them into the build, and emits a card image plus
-# checksums:
+# Extracts the vendor runtime and the stock boot chain from Caddx's own
+# firmware release (scripts/extract-vendor.py), builds, and emits a card image
+# plus checksums:
 #
 #   out/fpvos-vrxpro-<version>.img.xz
 #   out/SHA256SUMS
 #
-# The blobs are proprietary and are never committed to this repository. This
-# script only knows *where* to fetch them from; access is a credential the
-# release runner holds (a deploy key / token), not anything stored here.
+# The vendor files are proprietary and are never committed to this repository;
+# extract-vendor.py downloads the stock firmware (cached under ~/.cache/fpvos)
+# the same way anyone building fpvOS does. A release pins it: the download must
+# match the known-good release zip below, so a Caddx update behind the same
+# link cannot slip different blobs into a release unnoticed.
 #
-#   VENDOR_BLOBS   git URL or local path of the private vendor-blobs repo
-#                  (required - it is private, so there is no default)
+#   FPVOS_FIRMWARE_SHA256  the release zip's SHA-256 (default: the known-good
+#                          one, see extract-vendor.py)
+#   FIRMWARE_OTA           extract from this VRX Pro image instead of the
+#                          download - checked against FIRMWARE_OTA_SHA256
+#                          (default: the known-good Ascent_VRX_Pro_18_21_10.img)
 #
 # It also cuts the release itself, and does so LAST - only once the image has
 # been built and assembled - so a tag never names something that did not
@@ -23,7 +28,8 @@
 #      the kestrel this fpvOS tree was built and tested with - or
 #      KESTREL_COMMIT=<sha> to choose another. There is no release branch;
 #      the tag is the release
-#   1-3. fetch blobs, build with exactly that commit, assemble, compress
+#   1-3. extract the vendor files, build with exactly that commit, assemble,
+#      compress
 #   4. tag kestrel-gnd at that commit with VERSION and push the tag - it has
 #      to be on the remote for anyone building the fpvOS tag to fetch it -
 #      then write the tag into KESTREL_PIN in br-external/package/kestrel/
@@ -37,7 +43,6 @@
 # never moved: Buildroot caches downloads by name, so a moved tag would be
 # served stale to everyone who already built it.
 #
-#   VENDOR_BLOBS     git URL or local path of the private vendor-blobs repo
 #   KESTREL_COMMIT   release this kestrel commit instead of the branch head
 #   DRY_RUN=1        do everything except push, commit and tag; prints what
 #                    step 4 would do. Use it to rehearse a release.
@@ -45,17 +50,19 @@
 # Usage:
 #   scripts/release.sh v0.1.0
 #   DRY_RUN=1 scripts/release.sh v0.1.0
-#   VENDOR_BLOBS=/path/to/vendor-blobs scripts/release.sh v0.1.0
+#   FIRMWARE_OTA=~/.cache/fpvos/Ascent_VRX_Pro_18_21_10.img scripts/release.sh v0.1.0
 #
 # NOTE ON WHAT YOU ARE PUBLISHING: the resulting image contains the vendor
 # runtime, which is extractable by anyone who downloads it. Publishing it is a
-# public redistribution of that code regardless of the blobs being private
-# here. See the vendor-blobs README before shipping a release.
+# public redistribution of that code, even though this repository never
+# carries it.
 set -e
 
 VERSION=${1:?usage: release.sh VERSION   (e.g. 2026.09.alpha1)}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BLOBS=${VENDOR_BLOBS:?set VENDOR_BLOBS to the git URL or local path of the private vendor-blobs repo}
+# Known-good stock firmware, as recorded in extract-vendor.py.
+export FPVOS_FIRMWARE_SHA256=${FPVOS_FIRMWARE_SHA256:-833dc686a71e8e834096bdd97d8fc1392eee550e04bd219d1d6e04dd435a7997}
+FIRMWARE_OTA_SHA256=${FIRMWARE_OTA_SHA256:-8e06ee54db882ac8d8c84a96f94bbaf87e245ddb0cc8e59dab460e10cd898389}
 OUT="$ROOT/out"
 
 mkdir -p "$OUT"
@@ -97,26 +104,29 @@ fi
 # The build below uses exactly this commit, whatever the pin currently says.
 export KESTREL_VERSION="$KCOMMIT"
 
-# --- 1. vendor runtime + boot chain ---------------------------------------
+# --- 1. vendor runtime + stock boot chain -----------------------------------
+# From scratch every time: nothing left from an earlier extraction - a
+# --from-device one in particular, which can carry one goggle's pairing - may
+# end up in a release. extract-vendor.py fills vendor/rootfs (the runtime) and
+# vendor/stock (the unmodified uboot.img and boot.img the fpvos-bootchain
+# package turns into the boot chain).
 work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
-if [ -d "$BLOBS" ]; then
-    echo ">>> using local vendor blobs: $BLOBS"
-    src=$BLOBS
-else
-    echo ">>> fetching vendor blobs: $BLOBS"
-    git clone --depth 1 -q "$BLOBS" "$work/blobs"
-    src=$work/blobs
-fi
-# rootfs/ is the vendor runtime; stock/ the unmodified stock uboot.img and
-# boot.img, which the fpvos-bootchain package turns into the boot chain.
-for d in rootfs stock; do
-    [ -d "$src/$d" ] || { echo "vendor blobs missing $d/" >&2; exit 1; }
-done
 rm -rf "$ROOT/vendor/rootfs" "$ROOT/vendor/stock" "$ROOT/vendor/boot"
-mkdir -p "$ROOT/vendor"
-cp -a "$src/rootfs" "$src/stock" "$ROOT/vendor/"
+if [ -n "$FIRMWARE_OTA" ]; then
+    got=$(sha256sum "$FIRMWARE_OTA" | cut -d' ' -f1)
+    [ "$got" = "$FIRMWARE_OTA_SHA256" ] ||
+        { echo "$FIRMWARE_OTA: SHA-256 $got, expected $FIRMWARE_OTA_SHA256" >&2; exit 1; }
+    echo ">>> vendor: extracting from $FIRMWARE_OTA"
+    python3 "$ROOT/scripts/extract-vendor.py" --from-ota "$FIRMWARE_OTA"
+else
+    echo ">>> vendor: extracting from the stock firmware release (pinned $FPVOS_FIRMWARE_SHA256)"
+    python3 "$ROOT/scripts/extract-vendor.py" --download
+fi
+for d in rootfs stock; do
+    [ -d "$ROOT/vendor/$d" ] || { echo "extract-vendor.py left no vendor/$d" >&2; exit 1; }
+done
 # Per-unit identity never goes into a release - see step 2 for why. Drop it
-# here, before the build can see it, whatever the blobs repo carries.
+# here, before the build can see it, whatever the extraction carried.
 if [ -e "$ROOT/vendor/rootfs/factory" ]; then
     rm -rf "$ROOT/vendor/rootfs/factory"
     echo ">>> dropped vendor/rootfs/factory (per-unit identity, never published)"

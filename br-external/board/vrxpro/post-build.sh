@@ -24,8 +24,8 @@ VENDOR="$(cd "$(dirname "$0")/../../.." && pwd)/vendor/rootfs"
 #                      if a from-source MPP ever regresses hardware decode.
 SKIP='librockchip_mpp'
 
-# Vendor files fpvOS does not ship at all, even when an older extraction or the
-# vendor-blobs repo still carries them (dropped by the case in the loop below):
+# Vendor files fpvOS does not ship at all, even when an extraction carries them
+# (dropped by the case in the loop below):
 #
 #   ar_fpv_upgrade   - stock's firmware upgrade agent, which writes the NAND.
 #                      fpvOS upgrades by reflashing the card.
