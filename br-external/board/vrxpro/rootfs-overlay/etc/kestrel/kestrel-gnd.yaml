@@ -1,7 +1,8 @@
 # kestrel-gnd defaults shipped on the SD card.
-# Runtime/per-air-unit state (the sky_<MAC>_* camera settings, pinned_chan,
-# chan_hop, ...) is written here by the app as you change it in the menu - it is
-# deliberately NOT shipped, so a fresh card starts clean and learns your VTX.
+# Runtime state - each air unit's sky_<MAC>_* camera settings and TX power,
+# each screen's screen_mode_<ID> - is written here by the app as you change it
+# in the menu. It is deliberately NOT shipped, so a fresh card starts clean
+# and learns your VTX and screen. No channel is kept: the air unit decides it.
 
 # --- link -------------------------------------------------------------------
 link: ar8030
