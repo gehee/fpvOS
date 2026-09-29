@@ -10,7 +10,7 @@
 
 [Compatibility](#compatibility) · [Quick start](#quick-start) · [Building](docs/BUILD.md) · [How it works](docs/ARCHITECTURE.md) · [Discord](https://discord.gg/kWZA5WcMZ) · [Contributing](#contributing)
 
-`GPLv3` · `RK3568 / AR8030` · `status: alpha, flies today`
+`GPLv3` · `RK3568 / AR8030` · `status: beta, flies today`
 
 </div>
 
@@ -163,7 +163,7 @@ AR8030-class gear, [come talk to us on Discord](https://discord.gg/kWZA5WcMZ).
 
 ## Before you fly
 
-fpvOS is **alpha** software, and it runs the video link you fly by. Treat it
+fpvOS is **beta** software, and it runs the video link you fly by. Treat it
 that way:
 
 - **A freeze or a dropout mid-flight can cost you the aircraft, or worse.**
