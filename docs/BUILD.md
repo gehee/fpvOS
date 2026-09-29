@@ -10,7 +10,7 @@ A Linux host. On Debian / Ubuntu, everything except the one Python package:
 
 ```sh
 sudo apt install -y build-essential git wget cpio unzip rsync bc file \
-    libncurses-dev libssl-dev python3 python3-pip mtools gdisk fdisk
+    libncurses-dev libssl-dev python3 python3-pip mtools gdisk fdisk xz-utils
 pip install ubi_reader          # or: pip install --break-system-packages ubi_reader
 ```
 
@@ -23,6 +23,7 @@ What each group is for:
   `sgdisk`, `sfdisk`; `sfdisk` left util-linux for its own `fdisk` package in
   Debian 11 / Ubuntu 22.04). The image is built **rootless** — no loop mounts, no
   sudo. (sudo is only needed to `dd` the finished image onto a card.)
+- **xz-utils** — compresses the image to `sdcard.img.xz` for balenaEtcher.
 - **python3 + `ubi_reader`** — vendor-blob extraction. `ubi_reader` unpacks the
   UBIFS rootfs out of the Caddx firmware. If it gives you trouble, `ubidump`
   is a lighter single-file UBIFS reader; the kernel route (`nandsim` +
@@ -126,15 +127,21 @@ Sub-commands for iterating:
 ```sh
 ./build.sh config     # (re)generate the Buildroot .config from the defconfig
 ./build.sh kestrel    # rebuild only kestrel into the sysroot
-./build.sh image      # re-assemble sdcard.img (rootfs already built)
+./build.sh image      # re-assemble the image (rootfs already built)
 ```
 
-The result is `sdcard.img` in the repo root.
+The result, in the repo root, is the image twice:
+
+- `sdcard.img` — the raw image, for `dd`
+- `sdcard.img.xz` — the same image compressed, for balenaEtcher or Raspberry
+  Pi Imager, and the one to copy around
+
+`COMPRESS=0 ./build.sh` skips the `.xz` when you're iterating and only `dd`.
 
 ## 4. Flash and boot
 
 See [INSTALL.md](INSTALL.md) for flashing, first boot, and recovery back to
-stock.
+stock. The easy way is balenaEtcher with `sdcard.img.xz`; from a Linux shell:
 
 ```sh
 sudo dd if=sdcard.img of=/dev/sdX bs=4M conv=fsync

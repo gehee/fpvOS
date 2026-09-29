@@ -157,7 +157,8 @@ scripts/extract-vendor.py
 ./build.sh
 ```
 
-Out comes `sdcard.img`. Flash it, boot it, fly.
+Out comes `sdcard.img.xz` (and the raw `sdcard.img`). Flash it with
+[balenaEtcher](https://etcher.balena.io/), boot it, fly.
 
 Full walkthrough — flashing, recovery, first boot, the boot-chain details —
 lives in **[docs/BUILD.md](docs/BUILD.md)** and **[docs/INSTALL.md](docs/INSTALL.md)**.

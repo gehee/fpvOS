@@ -154,7 +154,8 @@ fi
 
 # --- 3. assemble the card image -------------------------------------------
 echo ">>> assembling image"
-OUT="$OUT/fpvos-vrxpro-$VERSION.img" "$ROOT/boot/mk-sd-image.sh"
+# COMPRESS=0: the .xz is made in step 4, after step 3b has checked the image.
+COMPRESS=0 OUT="$OUT/fpvos-vrxpro-$VERSION.img" "$ROOT/boot/mk-sd-image.sh"
 IMG="$OUT/fpvos-vrxpro-$VERSION.img"
 
 # --- 3b. prove the image carries no per-unit identity ---------------------
@@ -215,9 +216,9 @@ kestrel-gnd $VERSION ($KCOMMIT). Image: fpvos-vrxpro-$VERSION.img.xz"
 fi
 
 echo
-echo "flash with:"
-echo "  xz -d fpvos-vrxpro-$VERSION.img.xz"
-echo "  sudo dd if=fpvos-vrxpro-$VERSION.img of=/dev/sdX bs=4M conv=fsync && sync"
+echo "flash with balenaEtcher (Flash from file -> fpvos-vrxpro-$VERSION.img.xz, no need to unpack),"
+echo "or:"
+echo "  xz -dc fpvos-vrxpro-$VERSION.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync && sync"
 if [ "$DRY" != 1 ]; then
     echo
     echo "publish with (after checking the artifacts):"

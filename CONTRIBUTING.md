@@ -37,7 +37,8 @@ so once a kestrel change is merged, a one-line fpvOS PR moves the pin.
    firmware once and caches it).
 3. Build: `./build.sh` — see [docs/BUILD.md](docs/BUILD.md). About 20 minutes
    from scratch on a recent machine; tested on a clean Ubuntu 24.04.
-4. Flash `sdcard.img` and boot it — see [docs/INSTALL.md](docs/INSTALL.md).
+4. Flash `sdcard.img.xz` with balenaEtcher (or `sdcard.img` with `dd`) and boot
+   it — see [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Iterating on kestrel
 

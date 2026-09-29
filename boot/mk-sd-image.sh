@@ -15,12 +15,18 @@
 # The boot chain comes from Buildroot's images directory, where the
 # fpvos-bootchain package writes it (boot/mkbootchain.py, from the stock boot
 # images in vendor/stock/). Nothing here is redistributable on its own.
+#
+# Writes the raw image ($OUT, for dd) and, next to it, $OUT.xz - the one to
+# flash with balenaEtcher or Raspberry Pi Imager, which both take .img.xz as
+# is. COMPRESS=0 skips the .xz (release.sh does, and compresses only after it
+# has checked the image).
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 BR="${BR_IMAGES:-$ROOT/buildroot/output/images}"
 V="$BR"   # boot chain: fpvos-bootchain installs it next to rootfs.ext2
 OUT="${OUT:-$ROOT/sdcard.img}"
+COMPRESS="${COMPRESS:-1}"
 
 IMG_MB=1100
 P1_START=32768;   P1_SIZE=131072     # bootfat, 64M
@@ -33,8 +39,8 @@ for f in "$V/uboot-patched.bin" "$V/boot-sd3.img" "$V/Image" \
         echo "  run ./build.sh - it builds the boot chain and rootfs.ext2 (after" >&2
         echo "  scripts/extract-vendor.py has filled vendor/)" >&2; exit 1; }
 done
-for t in sfdisk mformat mcopy mmd dd truncate; do
-    command -v "$t" >/dev/null || { echo "need '$t' (Debian/Ubuntu: apt install mtools fdisk)" >&2; exit 1; }
+for t in sfdisk mformat mcopy mmd dd truncate $([ "$COMPRESS" = 1 ] && echo xz); do
+    command -v "$t" >/dev/null || { echo "need '$t' (Debian/Ubuntu: apt install mtools fdisk xz-utils)" >&2; exit 1; }
 done
 
 rm -f "$OUT"; truncate -s ${IMG_MB}M "$OUT"
@@ -74,4 +80,12 @@ dd if="$BR/rootfs.ext2" of="$OUT" bs=512 seek=${P2_START} conv=notrunc status=no
 
 rm -f "$P1" "$EXT"
 echo "=== SD image: $OUT ($(du -h "$OUT" | cut -f1)) ==="
-echo "flash:  sudo dd if=$OUT of=/dev/sdX bs=4M conv=fsync && sudo sgdisk -e /dev/sdX"
+
+if [ "$COMPRESS" = 1 ]; then
+    # Keep the raw image (-k) for dd and for iterating; the .xz is what gets
+    # flashed with a GUI tool or handed to someone else.
+    xz -T0 -k -f "$OUT"
+    echo "=== compressed: $OUT.xz ($(du -h "$OUT.xz" | cut -f1)) ==="
+    echo "flash:  balenaEtcher -> Flash from file -> $(basename "$OUT").xz"
+fi
+echo "   or:  sudo dd if=$OUT of=/dev/sdX bs=4M conv=fsync"
