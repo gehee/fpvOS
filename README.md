@@ -59,6 +59,7 @@ kestrel flies now on real hardware against any stock Ascent compatible air unit:
 - **AR8030 digital link** — association, telemetry, live link stats
 - **H.264 / H.265 decode** on the Rockchip VPU, low-latency path
 - **Canopy HUD** — a reactive attitude/instrument display driven from live OSD + link data
+- **Themes** — five colour themes that re-hue the whole interface, switched live from the menu ([more below](#themes))
 - **DVR** — onboard recording of the FPV feed or the screen experience.
 - **On-screen menu** — camera, link, and display settings, driven from the goggle buttons
 - **Betaflight OSD** overlay, standby/arm state detection, signal-lock and idle animations
@@ -105,6 +106,44 @@ goggle *can be*:
   pair.
 
 The goggle has always had the horsepower for this. It was just locked up.
+
+## Themes
+
+A theme in fpvOS is not a tint laid over the HUD. The interface is built on
+**colour roles** — every element on screen belongs to one — and a theme is a
+palette for those roles:
+
+| Role | What it colours |
+|---|---|
+| **text** | headline figures and row type |
+| **data** | the measured tracks — cell level, link quality |
+| **accent** | live state — armed rails, the sag track, VIDEO |
+| **ground** | the panels the HUD is cut from |
+| **quiet** | state words, track labels, anything qualifying a number |
+
+A theme swaps the hues, never the meaning: a pilot who has learned the layout on
+one theme reads every other one the same way. Each palette is checked against
+the two backgrounds that actually occur in flight — bright sky and dark ground
+in shadow — because everything is drawn over live video of unknown brightness.
+
+| Theme | Character |
+|---|---|
+| **KESTREL** | The original: cyan instrumentation, lime for live state, a deep blue ground that lifts thin type off bright video |
+| **EMBER** | Warm amber readings and a hotter orange for live state |
+| **ICE** | Pale blue under a cyan accent — the quietest over bright sky, where lime can glare |
+| **MONO** | No colour at all: state carried by brightness alone. The most legible over anything, and the accessible choice |
+| **VIOLET** | Cold blue readings against a magenta live state — the widest hue separation, state unmistakable at a glance |
+
+One theme dresses everything: the canopy HUD, the menus, the signal-lock screen
+— and the web page, whose live view and DVR gallery pick up the goggle's theme
+too. It switches live from **DISPLAY › Theme**, no restart, and is remembered
+across boots.
+
+**Want a theme?** Open a
+[theme request](https://github.com/gehee/kestrel-gnd/issues/new?template=theme_request.md)
+with a preview — a mockup, a screenshot you've recoloured, or just the five
+colours — and vote for the ones you'd fly with (👍 on the issue). **The
+highest-voted requests get implemented.**
 
 ## Compatibility
 
@@ -208,6 +247,7 @@ first ground to break:
 
 - **New hardware** — another AR8030 goggle you can get a shell on
 - **HUD & UX** — it's all open; make the FPV overlay you always wanted
+- **Themes** — [request one](https://github.com/gehee/kestrel-gnd/issues/new?template=theme_request.md) with a preview, or vote on the others; the most-voted get built
 - **Video pipeline** — latency, codecs, the decode path
 - **Docs** — clear build, flash, and HUD docs save the next person days
 
