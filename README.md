@@ -8,7 +8,7 @@
 
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/kWZA5WcMZ)
 
-[Compatibility](#compatibility) · [Quick start](#quick-start) · [Building](docs/BUILD.md) · [How it works](docs/ARCHITECTURE.md) · [Discord](https://discord.gg/kWZA5WcMZ) · [Contributing](#contributing)
+[Compatibility](#compatibility) · [Quick start](#quick-start) · [Building](docs/BUILD.md) · [How it works](docs/ARCHITECTURE.md) · [Where this goes](#where-this-goes) · [Discord](https://discord.gg/kWZA5WcMZ) · [Contributing](#contributing)
 
 `GPLv3` · `RK3568 / AR8030` · `status: beta, flies today`
 
@@ -26,9 +26,12 @@ front: **Betaflight** opened the flight controller, **EdgeTX** opened the radio,
 the stock application with **kestrel** — an open HUD and video engine using the Artosyn AR8030 digital link. Every pixel on screen, every frame decoded, every
 menu is code you can hack, in a repo you can send a PR to.
 
-This is the start. The goal is what Betaflight and EdgeTX became: a
-community-owned platform that outlives any single product, and a place where a
-good idea from anyone can end up on everyone's goggles.
+fpvOS starts as a **showcase**: a working demonstration, on one goggle, of what
+an open ground stack can do. The hope is that it becomes more than that — a
+community-owned platform like Betaflight and EdgeTX became, where a good idea
+from anyone can end up on everyone's goggles — if there is interest from
+everyone it takes: pilots, and the companies that build the hardware.
+[More on where this goes](#where-this-goes).
 
 **The focus is the experience, not the plumbing.** Open FPV so far has largely
 been a story about connectivity and interoperability — bridging protocols,
@@ -225,20 +228,27 @@ and is pulled in as a Buildroot package.
 | [`scripts/`](scripts/) | `extract-vendor.py` — fetches vendor blobs from your own firmware |
 | [`docs/`](docs/) | Build, install, and architecture guides |
 
-## For manufacturers
+## Where this goes
 
-Building a goggle around the **Artosyn AR8030**? Put fpvOS on it and ship with
-a finished, evolving pilot experience instead of writing one: GPU-rendered
-reactive HUD, low-latency H.264/H.265 decode, raw and screen DVR, the full
-menu system, themes — and a community that keeps improving all of it. You keep
-the hardware, the RF front-end tuning, and the brand.
+Today fpvOS is a demonstration, not a product: it shows what the hardware in
+an AR8030 goggle can do once its software is open — a GPU-rendered reactive
+HUD, low-latency H.264/H.265 decode, raw and screen DVR, the full menu system,
+themes.
 
-It runs on **Rockchip RK3568**: H.264/H.265 decode on the hardware VPU, with
-decoded frames handed to the display as DMA-BUFs and scanned out without a
-copy — the foundation of a low glass-to-glass latency pipeline. As a licensed
-Artosyn customer with your own Rockchip BSP, integration is a Buildroot board
-directory: your defconfig, your bring-up script, your baseband config, your
-button map. No blob extraction, no loader tricks.
+Whether it becomes more depends on interest from all sides: pilots who fly it,
+contributors who build on it, and the companies behind the hardware. If that
+interest is there, fpvOS will get a **clear, public roadmap** to grow it — what
+comes next, in what order, and where help is needed.
+
+**For manufacturers.** If you build around the **Artosyn AR8030**, fpvOS shows
+what your goggle could ship with instead of a pilot experience written from
+scratch. It runs on **Rockchip RK3568**: H.264/H.265 decode on the hardware
+VPU, with decoded frames handed to the display as DMA-BUFs and scanned out
+without a copy — the foundation of a low glass-to-glass latency pipeline. With
+your own Artosyn and Rockchip BSP, a port would be a Buildroot board directory:
+your defconfig, your bring-up script, your baseband config, your button map. If
+that's interesting, [get in touch on Discord](https://discord.gg/kWZA5WcMZ) —
+that conversation is what would shape the roadmap.
 
 ## Contributing
 
