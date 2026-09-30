@@ -1,0 +1,32 @@
+From: Gee <gehee@users.noreply.github.com>
+Subject: [PATCH] h265d: refuse a slice whose PPS names a missing SPS
+
+mpp_hevc_decode_nal_pps() parses a PPS over the one already held under
+its id, and on an error only frees it if it was new. A corrupt PPS that
+reads a bad pps_sps_id and then fails leaves the held PPS with that id:
+an SPS that does not exist, or one past the end of sps_list. The next
+slice using that PPS reads sps_list[sps_id] out of range, or passes NULL
+to set_sps() and dereferences it - a SIGSEGV in the parser thread, seen
+in kestrel-gnd on a damaged air stream.
+
+Check the SPS exists before using it, and drop the slice if not.
+
+Signed-off-by: Gee <gehee@users.noreply.github.com>
+---
+--- a/mpp/codec/dec/h265/h265d_parser.c
++++ b/mpp/codec/dec/h265/h265d_parser.c
+@@ -750,6 +750,14 @@
+     }
+     s->pps = (HEVCPPS*)s->pps_list[sh->pps_id];
+ 
++    /* A PPS that failed to re-parse in place keeps whatever sps_id it read,
++     * which need not name an SPS that exists: set_sps(NULL) below. */
++    if (s->pps->sps_id >= MAX_SPS_COUNT || !s->sps_list[s->pps->sps_id]) {
++        mpp_err("PPS %d refers to SPS %d, which does not exist\n",
++                sh->pps_id, s->pps->sps_id);
++        return MPP_ERR_STREAM;
++    }
++
+     if (s->sps != (HEVCSPS*)s->sps_list[s->pps->sps_id]) {
+         s->sps = (HEVCSPS*)s->sps_list[s->pps->sps_id];
+         mpp_hevc_clear_refs(s);
