@@ -32,7 +32,7 @@ KESTREL_SITE ?= https://github.com/gehee/kestrel-gnd.git
 KESTREL_SITE_METHOD = git
 
 # The pin. Written by scripts/release.sh at release time - a tag from then on.
-KESTREL_PIN = 2026.09.beta1
+KESTREL_PIN = ce423469b709075629d504031fcb52bd6f39700c
 
 # Precedence: an explicit KESTREL_VERSION, then a requested branch, then the pin.
 ifeq ($(origin KESTREL_VERSION),undefined)
