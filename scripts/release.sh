@@ -44,6 +44,8 @@
 # served stale to everyone who already built it.
 #
 #   KESTREL_COMMIT   release this kestrel commit instead of the branch head
+#   KESTREL_PUSH_URL where to push the kestrel tag (default: KESTREL_SITE,
+#                    over ssh for a github https URL)
 #   DRY_RUN=1        do everything except push, commit and tag; prints what
 #                    step 4 would do. Use it to rehearse a release.
 #
@@ -103,6 +105,19 @@ if [ -n "$(git -C "$ROOT" status --porcelain)" ]; then
 fi
 # The build below uses exactly this commit, whatever the pin currently says.
 export KESTREL_VERSION="$KCOMMIT"
+# The version the image reports - /etc/fpvos-version, os-release and the
+# kestrel menu (kestrel.mk passes it on) - all come from VERSION. Write it now,
+# before the build; step 5 commits it with the release.
+echo "$VERSION" > "$ROOT/VERSION"
+# A workspace buildroot/local.mk builds kestrel from a local checkout instead
+# of the commit being released. Keep it out of the way until we are done.
+work=$(mktemp -d)
+LOCAL_MK="$ROOT/buildroot/local.mk"
+if [ -e "$LOCAL_MK" ]; then
+    mv "$LOCAL_MK" "$work/local.mk"
+    echo ">>> moved buildroot/local.mk aside for the release build"
+fi
+trap '[ -e "$work/local.mk" ] && mv "$work/local.mk" "$LOCAL_MK"; rm -rf "$work"' EXIT
 
 # --- 1. vendor runtime + stock boot chain -----------------------------------
 # From scratch every time: nothing left from an earlier extraction - a
@@ -110,7 +125,6 @@ export KESTREL_VERSION="$KCOMMIT"
 # end up in a release. extract-vendor.py fills vendor/rootfs (the runtime) and
 # vendor/stock (the unmodified uboot.img and boot.img the fpvos-bootchain
 # package turns into the boot chain).
-work=$(mktemp -d); trap 'rm -rf "$work"' EXIT
 rm -rf "$ROOT/vendor/rootfs" "$ROOT/vendor/stock" "$ROOT/vendor/boot"
 if [ -n "$FIRMWARE_OTA" ]; then
     got=$(sha256sum "$FIRMWARE_OTA" | cut -d' ' -f1)
@@ -209,15 +223,18 @@ echo
 if [ "$DRY" = 1 ]; then
     echo ">>> DRY RUN - would: tag kestrel-gnd $VERSION at $KCOMMIT and push it;"
     echo ">>>            set KESTREL_PIN = $VERSION in kestrel.mk; commit; tag fpvOS $VERSION"
+    git -C "$ROOT" checkout -q -- VERSION
 else
     echo ">>> tagging kestrel-gnd $VERSION at $KCOMMIT"
-    git clone -q --no-checkout "$KESTREL_SITE" "$work/kestrel"
+    # Pushing needs credentials an https URL does not carry here: push over ssh.
+    KESTREL_PUSH_URL=${KESTREL_PUSH_URL:-$(echo "$KESTREL_SITE" | sed 's#^https://github.com/#git@github.com:#')}
+    git clone -q --no-checkout "$KESTREL_PUSH_URL" "$work/kestrel"
     git -C "$work/kestrel" tag -a "$VERSION" "$KCOMMIT" -m "fpvOS release $VERSION"
     git -C "$work/kestrel" push -q origin "refs/tags/$VERSION"
     echo ">>> pinning kestrel $VERSION in $KESTREL_MK"
     sed -i "s/^KESTREL_PIN = .*/KESTREL_PIN = $VERSION/" "$KESTREL_MK"
     grep -q "^KESTREL_PIN = $VERSION\$" "$KESTREL_MK" || { echo "failed to write the pin" >&2; exit 1; }
-    git -C "$ROOT" add "$KESTREL_MK"
+    git -C "$ROOT" add "$KESTREL_MK" "$ROOT/VERSION"
     git -C "$ROOT" commit -q -m "Release $VERSION
 
 kestrel-gnd $VERSION ($KCOMMIT). Image: fpvos-vrxpro-$VERSION.img.xz"

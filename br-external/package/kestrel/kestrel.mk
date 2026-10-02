@@ -57,5 +57,8 @@ KESTREL_CONF_OPTS = -DUSE_RKMPP=ON
 ifeq ($(KESTREL_OVERRIDE_SRCDIR),)
 KESTREL_CONF_OPTS += -DKESTREL_GND_GIT_HASH_FALLBACK=$(KESTREL_VERSION)
 endif
+# The version the menu shows is the image's: fpvOS's VERSION, which
+# scripts/release.sh writes before it builds a release.
+KESTREL_CONF_OPTS += -DKESTREL_GND_VERSION_LABEL=$(shell cat $(BR2_EXTERNAL_FPVOS_PATH)/../VERSION)
 
 $(eval $(cmake-package))
