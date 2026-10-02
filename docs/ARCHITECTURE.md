@@ -58,8 +58,10 @@ kestrel needs three proprietary pieces, none of which live in this repo:
   from observed behavior, and links the library at runtime. The CMake build
   tolerates its absence so CI can build without it.
 - **Mali GPU driver** (`libmali`) — the GLES/EGL implementation.
-- **`librga`** — Rockchip's 2D scaling/blitting library; a runtime dependency
-  of the video decoder rather than something kestrel calls directly.
+- **`librga`** — Rockchip's 2D scaling/blitting library. kestrel's screen
+  recorder blends each recorded frame with it (the decoded picture and the
+  HUD, into the encoder's input); its headers are kept in kestrel-gnd's
+  `include/rga`, since the firmware ships the library only.
 
 Hardware video *decode* is deliberately not on that list: `librockchip_mpp`
 is genuinely open source (Apache-2.0/MIT) and built from source by

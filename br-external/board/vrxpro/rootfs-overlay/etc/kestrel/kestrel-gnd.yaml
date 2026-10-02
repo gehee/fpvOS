@@ -31,12 +31,13 @@ dvr_dir: /media/dvr
 # re-encoded to H.264. false = record the FPV stream as it arrives from the
 # air unit (H.265, the camera's own rate, no HUD).
 dvr_screen: true
-# Screen recording: how many times a second the screen is captured (1-60;
-# the menu offers 30 and 60). Each capture is an extra display commit, so the
-# video's next frame waits a moment for it. Measured on the live feed while
-# recording: +0.5-0.7 ms average latency at 30, +1.5 ms at 60. Recording FPV
-# (dvr_screen: false) has no latency cost. The file is always written at a
-# constant 60 fps (repeat frames fill the gaps), so it plays in real time.
+# Screen recording: frames a second (1-60; the menu offers 30 and 60). Each
+# frame is rebuilt from what the screen showed - the decoded picture and the
+# HUD, blended with the RGA - without touching the display, so no live picture
+# is lost to it. Measured on the live feed while recording at 60: about +0.8 ms
+# median latency, from the memory traffic, at both 1080p60 and 1080p100.
+# Recording FPV (dvr_screen: false) costs nothing. The file runs at a constant
+# rate (repeat frames fill the gaps), so it plays in real time.
 dvr_screen_fps: 60
 # fmp4 (default): fragmented MP4 - a recording cut short by a power loss
 # still plays up to about its last second. mp4 writes its index only when

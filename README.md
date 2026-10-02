@@ -94,8 +94,9 @@ goggle *can be*:
 - **DVR done right — two ways.** *Raw* recording muxes the exact H.264/H.265
   bitstream off the link straight to MP4: a pixel-perfect capture of what the
   air unit sent, no re-encode, no quality loss, near-zero CPU. *Screen*
-  recording uses the DRM writeback connector to composite every plane — video
-  **and** your HUD — and encode that, so you capture exactly what you saw.
+  recording rebuilds every frame from what the display showed — video **and**
+  your HUD, blended by the RGA — and encodes that at 60 fps, so you capture
+  exactly what you saw without the live picture paying for it.
 - **Everything the stock firmware does — and then some.** The goal is zero
   regressions: camera and image settings, link and channel control, power,
   recording, the on-goggle menus — all present, so switching costs you nothing
