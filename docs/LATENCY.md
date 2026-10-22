@@ -10,7 +10,7 @@ display setting costs, and how smooth it looks.
 | Video mode | Lowest latency | Smoothest | Default settings |
 |---|---|---|---|
 | **864p120** (12 Mbps) | **24.6 ms**, mostly smooth | 27.5 ms, very smooth | 29.8 ms, smooth |
-| **720p100** (12 Mbps) | **25.9 ms**, mostly smooth | 29.6 ms, smooth | 31.3 ms, judders |
+| **720p100** (12 Mbps) | **25.9 ms**, mostly smooth | 30.3 ms, very smooth² | 31.3 ms, judders |
 | **1080p100** (20 Mbps) | **30.0 ms**, smooth | 35.2 ms, smooth | 36.8 ms, judders |
 | **864p144** (12 Mbps) | 28.8 ms, judders | no smooth setting on a 120 Hz screen | 29.6 ms, judders |
 
@@ -21,7 +21,8 @@ display setting costs, and how smooth it looks.
   with whole pictures timed to the last slice (see below).
 - **Smoothest:** Frame Mode **SPLIT** with Refresh Sync **FREE** and
   `display_lock_slice: 2` in the settings file, which times the screen to whole
-  pictures. In the menu alone, **FULL FRAME** + **FREE** comes close.
+  pictures, plus **Sync Margin 2 ms**. In the menu alone, **FULL FRAME** +
+  **FREE** comes close.
 - **Default settings:** FULL FRAME with Refresh Sync OFF.
 - **On a 120 Hz screen, fly 864p120.** Camera and screen run at the same rate,
   so it is the fastest mode and the smoothest.
@@ -31,10 +32,12 @@ display setting costs, and how smooth it looks.
   faster than the screen.
 - **Refresh Sync ON does not help on this screen.** It needs a refresh that is
   a whole multiple of the camera's rate.
-- **Sync Margin** (DISPLAY › ADVANCED, 0 to 4 ms) was left at 0 in these
-  tables. It shows each picture up to 4 ms later, so fewer pictures miss their
-  refresh. That should move "mostly smooth" towards "smooth", for that much
-  latency: 2 ms is about a third fewer hitches.
+- **Sync Margin 2 ms makes whole pictures very smooth.** Sync Margin
+  (DISPLAY › ADVANCED, 0 to 4 ms) shows each picture that much later, so fewer
+  miss their refresh. With whole pictures, 2 ms took out most of the hitches
+  for about 2 ms of latency. With SPLIT it took out few: the top half arrives
+  too unevenly for 2 ms to cover. See [Sync Margin](#sync-margin) below. The
+  main tables were measured at 0.
 - **FULL DECODE is never better than FULL FRAME.**
 - **864p144 needs a 144 Hz screen.** On a 120 Hz screen about one picture in
   six is never shown, whatever the settings.
@@ -149,6 +152,22 @@ setting lands within noise of the others.
 | FULL DECODE | OFF | 29.9 ms (26.4–35.7) | 21.9 / 22.6 ms |
 | FULL DECODE | FREE | 30.0 ms (26.0–34.2) | 21.8 / 22.5 ms |
 
+² *With Sync Margin 2 ms*, see [Sync Margin](#sync-margin).
+
 ¹ *Whole pictures:* `display_lock_slice: 2` in `/etc/kestrel/kestrel-gnd.yaml`
 on the goggle. Refresh Sync then times the screen to a picture's last slice and
 shows it whole, instead of showing its top half early. It has no menu row.
+
+### Sync Margin
+
+Measured at 720p100, 12 Mbps, Refresh Sync FREE, one run each.
+
+| Frame Mode | Sync Margin | Glass to glass (p10–p90) | Smoothness | Pictures a refresh late | Capture → lit (top / bottom) |
+|---|---|---|---|---|---|
+| SPLIT, whole pictures¹ | 0 | 29.8 ms (25.4–32.3) | smooth | 6.6% | 19.8 ms |
+| SPLIT, whole pictures¹ | **2 ms** | 30.3 ms (27.7–34.8) | **very smooth** | **1.0%** | 21.8 ms |
+| SPLIT | 0 | 24.9 ms (22.4–33.6) | mostly smooth | 11.5% | 16.3 / 26.1 ms |
+| SPLIT | 2 ms | 27.6 ms (24.5–32.1) | smooth | 9.6% | 18.4 / 28.1 ms |
+
+The capture → lit figures move by exactly the margin. The glass-to-glass
+difference for whole pictures (0.5 ms) is within the run-to-run noise.
