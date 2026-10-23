@@ -59,7 +59,7 @@ first, then [Discord](https://discord.gg/kWZA5WcMZ).
 | Steady latency: intra refresh instead of keyframe bursts | — | ✅ |
 | Reactive HUD | — | ✅ from the camera's IMU (Lite) or the flight controller's gyro (Lite+) |
 | Flight controller telemetry (battery, altitude, GPS, flight modes) polled over MSP | — | ✅ |
-| A cap on the video bitrate (VIDEO › Max Bitrate, up to 25 Mbps) | — | ✅ |
+| A cap on the video bitrate (VIDEO › Max Bitrate, up to 40 Mbps) | — | ✅ |
 | AIR UNIT › INFO: what the air unit runs and can do | stock's device info | ✅ with the fpvOS version and its capabilities |
 | Recovers by itself from a radio chip reset | as stock | ✅ (restarts) |
 | SSH into the air unit over USB (`root` / `root`) | — | ✅ |
