@@ -9,7 +9,7 @@
 # KESTREL_AIR_SITE another copy of the repository.
 KESTREL_AIR_SITE ?= https://github.com/gehee/kestrel-air.git
 KESTREL_AIR_SITE_METHOD = git
-KESTREL_AIR_VERSION ?= 44c4d98b60436ddf6a46d667157508f0c804c5fd
+KESTREL_AIR_VERSION ?= abbd379abd8fd505248d3921e066465e5efc9cb2
 KESTREL_AIR_LICENSE = GPL-3.0 with an additional permission
 KESTREL_AIR_LICENSE_FILES = LICENSE LICENSE.exception
 KESTREL_AIR_DEPENDENCIES = hi3516cv610-sdk ar-libre

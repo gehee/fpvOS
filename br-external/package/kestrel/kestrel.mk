@@ -34,7 +34,7 @@ KESTREL_LICENSE = GPL-3.0
 KESTREL_LICENSE_FILES = LICENSE
 
 # The pin. Written by scripts/release.sh at release time - a tag from then on.
-KESTREL_PIN = d322e6be725e718fa0b854cbf14a04954bf8947a
+KESTREL_PIN = 340b802c0b292d8ec983bb63ef099c741b553cac
 
 # Precedence: an explicit KESTREL_VERSION, then a requested branch, then the pin.
 ifeq ($(origin KESTREL_VERSION),undefined)
