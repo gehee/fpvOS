@@ -25,7 +25,7 @@ its USB cable, and Chrome or Edge on a desktop computer.
 
 ### Get the image
 
-Download [`fpvos-vrxpro-<version>.img.xz`](https://github.com/gehee/fpvOS/releases/latest) from the
+Download [`fpvOS-vrxpro-<version>.img.xz`](https://github.com/gehee/fpvOS/releases/latest) from the
 assets of the [latest release](https://github.com/gehee/fpvOS/releases/latest). The same
 assets include `SHA256SUMS` if you want to check the download, and the licences
 and sources that go with every image. Or build it yourself: see [BUILD.md](BUILD.md).
@@ -56,8 +56,8 @@ Then write it (replace `/dev/sdX` with your card). `dd` needs the raw image, so
 unpack the release file first:
 
 ```sh
-xz -dk fpvos-vrxpro-<version>.img.xz
-sudo dd if=fpvos-vrxpro-<version>.img of=/dev/sdX bs=4M conv=fsync status=progress
+xz -dk fpvOS-vrxpro-<version>.img.xz
+sudo dd if=fpvOS-vrxpro-<version>.img of=/dev/sdX bs=4M conv=fsync status=progress
 sudo sgdisk -e /dev/sdX     # move the backup GPT to the end of the card
 sync
 ```

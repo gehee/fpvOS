@@ -5,11 +5,11 @@
 # firmware release (scripts/extract-vendor.py), builds, and emits a card image
 # plus what has to go out with it, and checksums:
 #
-#   out/fpvos-vrxpro-<version>.img.xz
-#   out/fpvos-vrxpro-<version>-licenses.tar.xz  every package's licence texts,
+#   out/fpvOS-vrxpro-<version>.img.xz
+#   out/fpvOS-vrxpro-<version>-licenses.tar.xz  every package's licence texts,
 #                                               and the manifest of what is in
 #                                               the image under which licence
-#   out/fpvos-vrxpro-<version>-sources.tar      the exact source of every
+#   out/fpvOS-vrxpro-<version>-sources.tar      the exact source of every
 #                                               package built into the image,
 #                                               with fpvOS's patches - for the
 #                                               GPL, the corresponding source
@@ -239,8 +239,8 @@ echo ">>> verified: kernel $kver with its patches, MPP patches, the plane edit, 
 # --- 3. assemble the card image -------------------------------------------
 echo ">>> assembling image"
 # COMPRESS=0: the .xz is made in step 4, after step 3b has checked the image.
-COMPRESS=0 OUT="$OUT/fpvos-vrxpro-$VERSION.img" "$ROOT/boot/mk-sd-image.sh"
-IMG="$OUT/fpvos-vrxpro-$VERSION.img"
+COMPRESS=0 OUT="$OUT/fpvOS-vrxpro-$VERSION.img" "$ROOT/boot/mk-sd-image.sh"
+IMG="$OUT/fpvOS-vrxpro-$VERSION.img"
 
 # --- 3b. prove the image carries no per-unit identity ---------------------
 # Read the rootfs partition back out of the assembled image and list /factory
@@ -277,16 +277,16 @@ echo ">>> collecting licences and sources (legal-info)"
 LEGAL="$ROOT/buildroot/output/legal-info"
 rm -rf "$LEGAL"
 make -C "$ROOT/buildroot" BR2_EXTERNAL="$ROOT/br-external" legal-info >/dev/null
-tar -C "$LEGAL" --transform "s,^\.,fpvos-vrxpro-$VERSION-licenses," -cJf \
-    "$OUT/fpvos-vrxpro-$VERSION-licenses.tar.xz" \
+tar -C "$LEGAL" --transform "s,^\.,fpvOS-vrxpro-$VERSION-licenses," -cJf \
+    "$OUT/fpvOS-vrxpro-$VERSION-licenses.tar.xz" \
     ./README ./manifest.csv ./licenses ./buildroot.config
-tar -C "$LEGAL" --transform "s,^\./sources,fpvos-vrxpro-$VERSION-sources," -cf \
-    "$OUT/fpvos-vrxpro-$VERSION-sources.tar" ./sources
+tar -C "$LEGAL" --transform "s,^\./sources,fpvOS-vrxpro-$VERSION-sources," -cf \
+    "$OUT/fpvOS-vrxpro-$VERSION-sources.tar" ./sources
 
 echo ">>> compressing"
 xz -T0 -f "$IMG"
-( cd "$OUT" && sha256sum "fpvos-vrxpro-$VERSION.img.xz" \
-      "fpvos-vrxpro-$VERSION-licenses.tar.xz" "fpvos-vrxpro-$VERSION-sources.tar" > SHA256SUMS )
+( cd "$OUT" && sha256sum "fpvOS-vrxpro-$VERSION.img.xz" \
+      "fpvOS-vrxpro-$VERSION-licenses.tar.xz" "fpvOS-vrxpro-$VERSION-sources.tar" > SHA256SUMS )
 
 echo
 echo "=== release artifacts ==="
@@ -312,15 +312,15 @@ else
     git -C "$ROOT" add "$KESTREL_MK" "$ROOT/VERSION"
     git -C "$ROOT" commit -q -m "Release $VERSION
 
-kestrel-gnd $VERSION ($KCOMMIT). Image: fpvos-vrxpro-$VERSION.img.xz"
+kestrel-gnd $VERSION ($KCOMMIT). Image: fpvOS-vrxpro-$VERSION.img.xz"
     git -C "$ROOT" tag -a "$VERSION" -m "fpvOS $VERSION - kestrel-gnd $VERSION ($KCOMMIT)"
     echo ">>> fpvOS committed and tagged $VERSION (not pushed)"
 fi
 
 echo
-echo "flash with balenaEtcher (Flash from file -> fpvos-vrxpro-$VERSION.img.xz, no need to unpack),"
+echo "flash with balenaEtcher (Flash from file -> fpvOS-vrxpro-$VERSION.img.xz, no need to unpack),"
 echo "or:"
-echo "  xz -dc fpvos-vrxpro-$VERSION.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync && sync"
+echo "  xz -dc fpvOS-vrxpro-$VERSION.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync && sync"
 if [ "$DRY" != 1 ]; then
     echo
     echo "publish with (after checking the artifacts):"

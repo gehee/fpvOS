@@ -69,7 +69,7 @@ tour is in the [user guide](docs/GUIDE.md); questions in the [FAQ](docs/FAQ.md).
 <img src="assets/install-steps.svg" alt="1. Flash a microSD card. 2. Put it in the goggle and power on. 3. Link up and fly." width="1000">
 </div>
 
-1. **Write** [`fpvos-vrxpro-<version>.img.xz`](https://github.com/gehee/fpvOS/releases/latest)
+1. **Write** [`fpvOS-vrxpro-<version>.img.xz`](https://github.com/gehee/fpvOS/releases/latest)
    from the latest release to a microSD card (2 GB or more) with
    [balenaEtcher](https://etcher.balena.io/), as it is: no unpacking.
 2. **Put the card in the goggle and power it on.** The fpvOS idle screen means
