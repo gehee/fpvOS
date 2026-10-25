@@ -14,7 +14,7 @@
 OPEN8030_PROFILES_VERSION = 20261022
 OPEN8030_PROFILES_SOURCE = open8030-profiles-$(OPEN8030_PROFILES_VERSION).tar.gz
 OPEN8030_PROFILES_SITE = https://gist.githubusercontent.com/gehee/96924eccf93961f646ea68832a04aa5c/raw/03329b4f3b4fc82ca5d77dc5b4c95cb6cfa0e376
-OPEN8030_PROFILES_LICENSE = reverse engineered from Caddx's stock radio firmware
+OPEN8030_PROFILES_LICENSE = reverse engineered from the Caddx stock radio firmware
 OPEN8030_PROFILES_LICENSE_FILES = README
 OPEN8030_PROFILES_INSTALL_TARGET = NO
 
