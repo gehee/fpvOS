@@ -30,7 +30,7 @@ Lite+ too, and the radio between them runs an open firmware on both ends,
 ## Why fly it
 
 - **Low latency, and it stays there.** **25 ms** median glass to glass with
-  screen tearing, **29 ms** without: an Ascent Lite+ with the fpvOS air image
+  screen tearing, **27.5 ms** without: an Ascent Lite+ with the fpvOS air image
   at 864p120, and a VRX Pro driving a 120 Hz screen. Measured with an LED in
   front of the camera and a photodiode on the screen
   ([details](docs/LATENCY.md)). No keyframe spikes, and each
