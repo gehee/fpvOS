@@ -16,7 +16,7 @@
 <br>
 
 <img src="assets/link-up.webp" alt="The fpvOS idle screen, then the live picture as the aircraft links up" width="720">
-<br><sub>The idle screen, then the warp into the live picture as the aircraft links up.<br>A real flight, from the VRX's own screen DVR. The gallery and stats clips below play a simulated flight.</sub>
+<br><sub>The idle screen, then the warp into the live picture as the aircraft links up.<br>A real flight, from the VRX's own screen DVR. The other clips below play a simulated flight.</sub>
 
 </div>
 
@@ -41,8 +41,8 @@ Lite+ too, and the radio between them runs an open firmware on both ends,
   every pixel on screen is code you can read and change.
 
 <div align="center">
-<img src="assets/arm-and-fly.webp" alt="The canopy HUD as the quad arms and flies over a field" width="720">
-<br><sub>Arming and flying with the reactive HUD.</sub>
+<img src="assets/arming-and-flying.webp" alt="The canopy HUD as the quad arms and takes off" width="720">
+<br><sub>Arming and flying with the reactive HUD, in a simulated flight.</sub>
 </div>
 <br>
 
