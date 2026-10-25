@@ -16,7 +16,7 @@
 <br>
 
 <img src="assets/link-up.webp" alt="The fpvOS idle screen, then the live picture as the aircraft links up" width="720">
-<br><sub>The idle screen, then the warp into the live picture as the aircraft links up.<br>A real flight, from the VRX's own screen DVR. The other clips below play a simulated flight.</sub>
+<br><sub>The idle screen, then the warp into the live picture as the aircraft links up.</sub>
 
 </div>
 
