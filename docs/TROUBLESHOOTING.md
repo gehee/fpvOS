@@ -119,6 +119,12 @@ fpvOS is a beta. Fly it, but keep a stock card handy.
 - **Early presentation** (the top half first, **SPLIT**) only helps on high
   refresh rate displays. On 60 Hz it stays off.
 - **Small, occasional video artifacts** have been seen in test flights.
+- **Blocky patches and tears with a stock radio on the air unit**: with the
+  goggle's radio on Open8030 (the default) and the air unit's radio on
+  Artosyn's firmware (a stock air unit), parts of pictures arrive damaged or
+  not at all, more so as the link changes rate. With Open8030 on both ends, or
+  Artosyn's firmware on both, the picture is clean. Until it is fixed: flash
+  the fpvOS air image, or set **RADIO › VRX Radio Firmware** to **STOCK**.
 - **Constant artifacts that don't clear**: once, after a screen was plugged
   into the goggle while it was running, the goggle's radio started delivering
   parts of the video twice. Changing channel, changing the screen mode or
@@ -134,6 +140,12 @@ changed and what is still known.
 
 A good report has the logs. They live in the goggle's memory, so **they are gone
 once you power it off**. Collect them after the problem, before you shut down.
+
+To keep them across a power-off, turn **HUD › Debug Info** on before you fly.
+The goggle then also writes its log to the card, next to the recordings
+(`fpvOS_<date>_<time>.log`, the newest 30), and an fpvOS air unit keeps a log
+of each armed flight, from 10 s before arming to 10 s after disarming, in
+`/usrdata/fpv/air/logs` (the newest 5).
 
 Connect the goggle to a computer over USB (see
 [connecting over USB](INSTALL.md#connecting-over-usb-advanced)), then:
