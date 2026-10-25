@@ -15,8 +15,8 @@
 
 <br>
 
-<img src="assets/link-up.webp" alt="The fpvOS idle screen, then the live picture as the aircraft links up" width="720">
-<br><sub>The idle screen, then the warp into the live picture as the aircraft links up.</sub>
+<img src="assets/link-up-and-arm.webp" alt="The fpvOS idle screen, then the live picture as the aircraft links up and arms" width="720">
+<br><sub>The idle screen, then the warp into the live picture as the aircraft links up.<br>▶ <a href="https://youtu.be/LEFZF-XOgMg">Watch a full flight on YouTube</a></sub>
 
 </div>
 
@@ -25,28 +25,19 @@
 fpvOS replaces the stock firmware on the **Caddx Ascent VRX Pro** with an open
 one, drawn on the goggle's GPU. The fpvOS air image opens up the Ascent Lite and
 Lite+ too, and the radio between them runs an open firmware on both ends,
-[Open8030](https://github.com/gehee/Open8030).
+[Open8030](https://github.com/mh1412/Open8030) by [mh1412](https://github.com/mh1412).
 
 ## Why fly it
 
-- **Low latency, and it stays there.** **25 ms** median glass to glass with
-  screen tearing, **27.5 ms** without: an Ascent Lite+ with the fpvOS air image
-  at 864p120, and a VRX Pro driving a 120 Hz screen. Measured with an LED in
-  front of the camera and a photodiode on the screen
-  ([details](docs/LATENCY.md)). No keyframe spikes, and each
-  picture is decoded as its slices arrive.
-- **A HUD that flies with you.** A GPU scene that banks with the aircraft, from
-  the camera's IMU or the flight controller's gyro, over your Betaflight OSD.
-- **Yours.** Five themes, settings for camera, video, radio and display, and
-  every pixel on screen is code you can read and change.
-
-<div align="center">
-<img src="assets/arming-and-flying.webp" alt="The canopy HUD as the quad arms and takes off" width="720">
-<br><sub>Arming and flying with the reactive HUD, in a simulated flight.</sub>
-</div>
-<br>
-
 <table>
+<tr>
+<td width="40%"><b>Low latency, and it stays there.</b><br><br><b>27.5 ms</b> median glass to glass (<b>25 ms</b> with screen tearing): an Ascent Lite+ with the fpvOS air image at 864p120, and a VRX Pro driving a 120 Hz screen. Measured with an LED in front of the camera and a photodiode on the screen (<a href="docs/LATENCY.md">details</a>). No keyframe spikes, and each picture is decoded as its slices arrive.<br><br>The stats screen shows it live: latency per stage, frame pacing, the link and temperatures.</td>
+<td align="center"><img src="assets/stats.webp" alt="The stats screen" width="440"></td>
+</tr>
+<tr>
+<td width="40%"><b>A HUD that flies with you.</b><br><br>A GPU scene that banks with the aircraft, from the camera's IMU or the flight controller's gyro, over your Betaflight OSD. Turn it on or off, or choose how far it moves, in <b>HUD › Dynamic HUD</b>.</td>
+<td align="center"><img src="assets/arming-flight.webp" alt="The canopy HUD as the quad arms, takes off and banks over a field" width="440"><br><sub>▶ <a href="https://youtu.be/LEFZF-XOgMg">The full flight</a></sub></td>
+</tr>
 <tr>
 <td width="40%"><b>Let your friends watch.</b><br><br>Phones join the VRX's WiFi and open <code>192.168.4.1</code>: your live view, HUD and all, and your recordings. No app.</td>
 <td align="center"><img src="assets/spectator-live.webp" alt="The spectator view's LIVE tab in a phone browser" height="300">&nbsp;&nbsp;<img src="assets/spectator-gallery.webp" alt="The spectator view's GALLERY tab in a phone browser" height="300"></td>
@@ -56,8 +47,7 @@ Lite+ too, and the radio between them runs an open firmware on both ends,
 <td align="center"><img src="assets/gallery.webp" alt="The DVR gallery on the goggle" width="440"></td>
 </tr>
 <tr>
-<td width="40%"><b>See what the link is doing.</b><br><br>Latency per stage, frame pacing, the link and temperatures, live.</td>
-<td align="center"><img src="assets/stats.webp" alt="The stats screen" width="440"></td>
+<td colspan="2"><b>Yours.</b> Five themes, settings for camera, video, radio and display, and every pixel on screen is code you can read and change.</td>
 </tr>
 </table>
 
@@ -121,7 +111,7 @@ fpvOS is **beta** software, and it runs the video link you fly by.
 
 <div align="center">
 
-Built on Artosyn's AR8030 and Caddx's Ascent, with thanks. [GPLv3](LICENSE), details in [About](docs/ABOUT.md#license).
+Built on Artosyn's AR8030 and Caddx's Ascent, with thanks. Thank you to [mh1412](https://github.com/mh1412) for [Open8030](https://github.com/mh1412/Open8030), the open radio firmware fpvOS runs on both ends. [GPLv3](LICENSE), details in [About](docs/ABOUT.md#license).
 
 **fpvOS**: the goggle is open now.
 
