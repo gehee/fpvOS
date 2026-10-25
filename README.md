@@ -47,7 +47,8 @@ Lite+ too, and the radio between them runs an open firmware on both ends,
 <td align="center"><img src="assets/gallery.webp" alt="The DVR gallery on the goggle" width="440"></td>
 </tr>
 <tr>
-<td colspan="2"><b>Yours.</b> Five themes, settings for camera, video, radio and display, and every pixel on screen is code you can read and change.</td>
+<td width="40%"><b>Yours.</b><br><br>Five themes, settings for camera, video, radio and display, and every pixel on screen is code you can read and change.</td>
+<td align="center"><img src="assets/themes.webp" alt="The HUD in each of the five themes in turn: KESTREL, EMBER, ICE, MONO and VIOLET" width="440"></td>
 </tr>
 </table>
 
