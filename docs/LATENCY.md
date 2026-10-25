@@ -1,9 +1,21 @@
 # Latency
 
-Glass-to-glass latency of fpvOS **2026.10.beta4**: a Caddx Ascent Lite+ running
-the fpvOS air image, a VRX Pro running the fpvOS goggle image, measured from a
-light in front of the camera to the moment the screen shows it. What each
-display setting costs, and how smooth it looks.
+Glass-to-glass latency of fpvOS **2026.10.beta4**, measured from a light in
+front of the camera to the moment the screen shows it. What each display setting
+costs, and how smooth it looks.
+
+## Tested on
+
+| | |
+|---|---|
+| Air unit | **Caddx Ascent Lite+** (OS02K10 sensor), fpvOS 2026.10.beta4 air image, Open8030 radio firmware |
+| Goggle | **Caddx Ascent VRX Pro**, fpvOS 2026.10.beta4 goggle image (Open8030 `ed20c01`) |
+| Screen | A 1920x1080 HDMI headset panel at 120 Hz (60 and 120 Hz modes only, no FreeSync) |
+| Link | Channel 5914 MHz, 20 MHz wide, MCS 11, short radio frame, on the bench |
+
+Other hardware gives other numbers. The Ascent Lite has a different sensor
+(CV2004), so its camera timing differs. A screen with less delay of its own, or
+one that runs at 144 Hz, lowers every figure on this page.
 
 ## In short
 
@@ -66,14 +78,7 @@ mean:
   goggle's screen, both driven by an ESP32-S3. Each reading is the time from
   the LED turning on to the screen getting brighter. That is about 100 readings
   per setting, over 75 seconds.
-- **Equipment:**
-
-  | | |
-  |---|---|
-  | Air unit | Ascent Lite+ (OS02K10 sensor), fpvOS 2026.10.beta4 air image, Open8030 radio firmware |
-  | Goggle | VRX Pro, fpvOS 2026.10.beta4 goggle image (Open8030 `ed20c01`) |
-  | Screen | A 1920x1080 HDMI headset panel at 120 Hz (60 and 120 Hz modes only, no FreeSync) |
-  | Link | Channel 5914 MHz, 20 MHz wide, MCS 11, short radio frame, on the bench |
+- **Equipment:** see [Tested on](#tested-on).
 
 - **Each setting was a fresh start** of the goggle app with that setting. There
   were 20 seconds to settle before measuring.
