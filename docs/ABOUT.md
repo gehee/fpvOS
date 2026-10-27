@@ -82,7 +82,7 @@ VPU, with decoded frames handed to the display as DMA-BUFs and scanned out
 without a copy, the foundation of a low glass-to-glass latency pipeline. With
 your own Artosyn and Rockchip BSP, a port would be a Buildroot board directory:
 your defconfig, your bring-up script, your baseband config, your button map. If
-that's interesting, [get in touch on Discord](https://discord.gg/kWZA5WcMZ).
+that's interesting, [get in touch on Discord](https://discord.gg/CXhNKYFF2v).
 
 ## Contributing
 

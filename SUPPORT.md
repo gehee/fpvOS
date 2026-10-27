@@ -16,7 +16,7 @@ gets read.
 
 ## Ask
 
-**[Discord](https://discord.gg/kWZA5WcMZ)** is the place for questions, for
+**[Discord](https://discord.gg/CXhNKYFF2v)** is the place for questions, for
 "is this normal?", for showing a flight and for new hardware. Say which goggle,
 which air unit, which fpvOS version and what you see.
 

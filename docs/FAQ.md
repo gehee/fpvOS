@@ -20,7 +20,7 @@ telemetry. See [what it adds](#what-the-fpvos-air-image-adds).
 Today fpvOS runs on the Caddx Ascent VRX Pro, with the Ascent Lite and Lite+ air
 units. Other vendors' AR8030 air units use their own link setup and don't pair
 with this stack. If you have other AR8030-class hardware,
-[come talk to us](https://discord.gg/kWZA5WcMZ).
+[come talk to us](https://discord.gg/CXhNKYFF2v).
 
 **Does it work with my flight controller and OSD?**
 It draws the Betaflight OSD, and with the fpvOS air image it reads battery,
@@ -44,7 +44,7 @@ not a guarantee.
 
 **Something broke. Who helps?**
 The community, on a best-effort basis: [Troubleshooting](TROUBLESHOOTING.md)
-first, then [Discord](https://discord.gg/kWZA5WcMZ).
+first, then [Discord](https://discord.gg/CXhNKYFF2v).
 
 ## What the fpvOS air image adds
 

@@ -107,7 +107,7 @@ won't link anyway, bind it again from the menu.
 | The flasher page says it can't work | Use **Chrome or Edge on a desktop computer**. Web Serial isn't in other browsers or on phones. |
 | The port list is empty, or **Connect** fails | Close the Caddx PC tool and any serial terminal: only one program can open the port. On Linux, add your user to the `dialout` group. Try another cable or port. |
 | The page rejects the file | Don't rename it: its name has to end in `Ascent_H_Sky_18_21_10.img`, as downloaded. Download it again from the [release assets](https://github.com/gehee/fpvOS/releases/latest). |
-| The flash stopped half way | Keep it powered and flash again. If the unit no longer shows up, ask on [Discord](https://discord.gg/kWZA5WcMZ) before trying anything else. |
+| The flash stopped half way | Keep it powered and flash again. If the unit no longer shows up, ask on [Discord](https://discord.gg/CXhNKYFF2v) before trying anything else. |
 | I want stock back | [Flash Caddx's update](INSTALL.md#going-back-to-stock). |
 
 ## Known issues

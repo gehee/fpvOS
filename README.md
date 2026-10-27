@@ -7,7 +7,7 @@
 **Flash a microSD card, put it in your VRX Pro, fly.<br>Pull the card and it's stock again.**
 
 [![Download](https://img.shields.io/badge/Download-latest%20release-8be36f)](https://github.com/gehee/fpvOS/releases/latest)
-[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/kWZA5WcMZ)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/CXhNKYFF2v)
 
 [Why fly it](#why-fly-it) · [Install](#install-in-three-steps) · [FAQ](docs/FAQ.md) · [Compatibility](#compatibility) · [Help and docs](#help-and-docs)
 
@@ -107,7 +107,7 @@ fpvOS is **beta** software, and it runs the video link you fly by.
 | | |
 |---|---|
 | [Install](docs/INSTALL.md) · [User guide](docs/GUIDE.md) · [FAQ](docs/FAQ.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) | flying it, and the known issues |
-| [Discord](https://discord.gg/kWZA5WcMZ) · [Report a bug](https://github.com/gehee/fpvOS/issues/new/choose) · [Releases](https://github.com/gehee/fpvOS/releases) | questions, bugs, what changed ([SUPPORT.md](SUPPORT.md)) |
+| [Discord](https://discord.gg/CXhNKYFF2v) · [Report a bug](https://github.com/gehee/fpvOS/issues/new/choose) · [Releases](https://github.com/gehee/fpvOS/releases) | questions, bugs, what changed ([SUPPORT.md](SUPPORT.md)) |
 | [About](docs/ABOUT.md) · [Building](docs/BUILD.md) · [Architecture](docs/ARCHITECTURE.md) · [Kernel](docs/KERNEL.md) · [Contributing](CONTRIBUTING.md) | how it's made, and changing it |
 
 <div align="center">
