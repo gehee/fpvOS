@@ -5,11 +5,14 @@
 /vendor/boot
 /vendor/stock
 /vendor/open8030
+/vendor/ar9311-firmware
 
 # Buildroot's build output (the checkout itself is a submodule, tracked).
 /buildroot/output/
 /output-air/
 /output-air-*/
+/output-ar9311/
+/output-ar9311-*/
 /br-external/board/*/rootfs-overlay/**/output/
 
 # Build artifacts

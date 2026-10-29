@@ -1,0 +1,179 @@
+From: fpvOS developers
+Subject: [PATCH] drm: artosyn: add I420 primary scanout
+
+Add the primary I420 layout and BT.709 limited-range color conversion.
+Allow 8-bit dumb allocations for planar DMA buffers shared with Wave5.
+Use the stock YUV scaler configuration with unity ratios.
+Keep the fixed 1080p mode and restrict pitch/alignment to the board layout.
+
+---
+
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * Artosyn Gnd485 VO: one RGB primary plane, fixed 1920x1080 at nominal 60 Hz.
++ * Artosyn Gnd485 VO: one RGB/YUV primary plane, fixed 1920x1080 at nominal 60 Hz.
+  * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
+  * Register sequencing originates in that project's Artosyn display work;
+  * HDMI clock/timing integration is specific to the Ascent Gnd485 receiver.
+@@ -16,6 +16,7 @@
+ #include <linux/interrupt.h>
+ 
+ #include <drm/drm_atomic.h>
++#include <drm/drm_color_mgmt.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_bridge.h>
+ #include <drm/drm_bridge_connector.h>
+@@ -47,7 +48,7 @@
+ #define VO_MAIN_CTRL	0x1518
+ #define  VO_MAIN_LOCK		BIT(3)
+ #define  VO_MAIN_START		BIT(4)
+-#define VO_FB_FORMAT	0x1520
++#define VO_SCALE_CONFIG	0x1520
+ #define VO_PLANE2_BASE	0x1530
+ #define VO_PLANE3_BASE	0x1538
+ #define VO_FB_SIZE	0x1810
+@@ -77,8 +78,20 @@
+ #define to_ar_vo(d) container_of(d, struct ar_vo, drm)
+ 
+ static const u32 ar_vo_formats[] = {
++	DRM_FORMAT_YUV420,
+ 	DRM_FORMAT_XRGB8888,
+ 	DRM_FORMAT_ARGB8888, /* Alpha is ignored on the opaque primary. */
++};
++
++/* BT.709 limited-range I420 -> full-range RGB. Coefficients are Q10,
++ * signed 13-bit; offsets are signed 23-bit. Clamp each RGB channel to 0..255.
++ */
++static const u32 ar_vo_csc_709_limited[] = {
++	1192, 0, 1836, (-16 * 1192 - 128 * 1836) & 0x7fffff,
++	1192, (-218) & 0x1fff, (-546) & 0x1fff,
++	(-16 * 1192 + 128 * (218 + 546)) & 0x7fffff,
++	1192, 2163, 0, (-16 * 1192 - 128 * 2163) & 0x7fffff,
++	1, 0x00ff0000, 0x00ff0000, 0x00ff0000,
+ };
+ 
+ /* Keep a clean configuration word: readback includes hardware status bits.
+@@ -86,17 +99,32 @@
+  */
+ static void ar_vo_set_fb_addr(struct ar_vo *vo, struct drm_plane_state *state)
+ {
+-	u32 addr = lower_32_bits(drm_fb_dma_get_gem_addr(state->fb, state, 0));
+-
+-	writel(vo->cur_cfg | VO_MAIN_LOCK, vo->regs + VO_MAIN_CTRL);
+-	writel(state->fb->pitches[0], vo->regs + VO_FB_STRIDE);
+-	writel(addr, vo->regs + VO_FB_BASE0);
+-	writel(addr, vo->regs + VO_PLANE2_BASE);
+-	writel(addr, vo->regs + VO_PLANE3_BASE);
+-	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
+-}
+-
+-#define VO_1080P60_SCALE_CFG 0
++	struct drm_framebuffer *fb = state->fb;
++	bool yuv = fb->format->format == DRM_FORMAT_YUV420;
++	u32 y = lower_32_bits(drm_fb_dma_get_gem_addr(fb, state, 0));
++	u32 u = yuv ? lower_32_bits(drm_fb_dma_get_gem_addr(fb, state, 1)) : y;
++	u32 v = yuv ? lower_32_bits(drm_fb_dma_get_gem_addr(fb, state, 2)) : y;
++	u32 cfg = ((yuv ? 15 : 5) << 26) | BIT(0) |
++		  (vo->cur_cfg & VO_MAIN_START) | (yuv ? BIT(14) : 0);
++	unsigned int i;
++
++	writel(cfg | VO_MAIN_LOCK, vo->regs + VO_MAIN_CTRL);
++	if (yuv && !(vo->cur_cfg & BIT(14)))
++		for (i = 0; i < ARRAY_SIZE(ar_vo_csc_709_limited); i++)
++			writel(ar_vo_csc_709_limited[i], vo->regs + 0x1e40 + i * 8);
++	writel(fb->pitches[0], vo->regs + VO_FB_STRIDE);
++	writel(yuv ? fb->pitches[1] : 0, vo->regs + 0x1508);
++	writel(yuv ? fb->pitches[2] : 0, vo->regs + 0x1510);
++	writel(yuv ? 1 : 0, vo->regs + 0x1528);
++	/* Stock YUV scaler configuration, with unity ratios. RGB bypasses it. */
++	writel(yuv ? 0x33 : 0, vo->regs + VO_SCALE_CONFIG);
++	writel(y, vo->regs + VO_FB_BASE0);
++	writel(u, vo->regs + VO_PLANE2_BASE);
++	writel(v, vo->regs + VO_PLANE3_BASE);
++	vo->cur_cfg = cfg;
++	writel(cfg, vo->regs + VO_MAIN_CTRL);
++}
++
+ #define VO_1080P60_DPI_FORMAT 5
+ #define VO_1080P60_PANEL_CTRL 0x111
+ #define VO_1080P60_DPI_CTRL 0x00120000
+@@ -147,7 +175,6 @@
+ 	writel(0xff000000, vo->regs + VO_LAYER_ALPHA);
+ 	writel(0x80008000, vo->regs + VO_SCALER_RATIO);
+ 
+-	writel(VO_1080P60_SCALE_CFG, vo->regs + VO_FB_FORMAT);
+ 	writel(VO_1080P60_DPI_FORMAT, vo->regs + VO_DPI_FORMAT);
+ 	writel(VO_1080P60_PANEL_CTRL, vo->regs + VO_PANEL_CTRL);
+ 	writel(VO_1080P60_DPI_CTRL, vo->regs + VO_DPI_CTRL);
+@@ -221,16 +248,25 @@
+ 	return MODE_OK;
+ }
+ 
+-/* Only the aligned linear RGB layout has been validated on this board. */
++/* Restrict scanout to the supported linear RGB and I420 layouts. */
+ static int ar_vo_pipe_check(struct drm_simple_display_pipe *pipe,
+ 			    struct drm_plane_state *state,
+ 			    struct drm_crtc_state *crtc_state)
+ {
+ 	struct drm_framebuffer *fb = state->fb;
+ 
+-	if (fb && (fb->pitches[0] != 8192 || fb->offsets[0] ||
+-		   state->src_x || state->src_y))
++	if (!fb)
++		return 0;
++	if (state->src_x || state->src_y)
+ 		return -EINVAL;
++	if (fb->format->format == DRM_FORMAT_YUV420) {
++		if (fb->pitches[0] != 1920 || fb->pitches[1] != 960 ||
++		    fb->pitches[2] != 960 || (fb->offsets[0] & 63) ||
++		    (fb->offsets[1] & 63) || (fb->offsets[2] & 63))
++			return -EINVAL;
++	} else if (fb->pitches[0] != 8192 || fb->offsets[0]) {
++		return -EINVAL;
++	}
+ 	return 0;
+ }
+ 
+@@ -264,9 +300,14 @@
+ static int ar_vo_dumb_create(struct drm_file *file, struct drm_device *dev,
+ 			     struct drm_mode_create_dumb *args)
+ {
+-	if (args->bpp != 32 || args->width > 1920 || args->height > 1080)
++	if (!args->width || !args->height || args->width > 1920)
+ 		return -EINVAL;
+-	args->pitch = ALIGN(args->width, 512) * 4;
++	if (args->bpp == 8 && args->height <= 2160)
++		args->pitch = ALIGN(args->width, 64);
++	else if (args->bpp == 32 && args->height <= 1080)
++		args->pitch = ALIGN(args->width, 512) * 4;
++	else
++		return -EINVAL;
+ 
+ 	return drm_gem_dma_dumb_create_internal(file, dev, args);
+ }
+@@ -350,6 +391,12 @@
+ 	if (ret)
+ 		return ret;
+ 
++	ret = drm_plane_create_color_properties(&vo->pipe.plane,
++			BIT(DRM_COLOR_YCBCR_BT709), BIT(DRM_COLOR_YCBCR_LIMITED_RANGE),
++			DRM_COLOR_YCBCR_BT709, DRM_COLOR_YCBCR_LIMITED_RANGE);
++	if (ret)
++		return ret;
++
+ 	ret = drm_bridge_attach(&vo->pipe.encoder, bridge, NULL, DRM_BRIDGE_ATTACH_NO_CONNECTOR);
+ 	if (ret)
+ 		return ret;
+--- a/drivers/gpu/drm/artosyn/Kconfig
++++ b/drivers/gpu/drm/artosyn/Kconfig
+@@ -8,6 +8,6 @@
+ 	select DRM_DISPLAY_HELPER
+ 	select DRM_BRIDGE_CONNECTOR
+ 	help
+-	  Fixed 1920x1080p60 RGB scanout for the Ascent Gnd485 receiver.
++	  Fixed 1920x1080p60 RGB/I420 scanout for the Ascent Gnd485 receiver.
+ 	  Includes the VO controller and Artosyn DSI PHY glue. Requires
+ 	  the board-specific Lontium bridge configuration in its DT.

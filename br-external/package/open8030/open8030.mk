@@ -23,6 +23,12 @@
 # config come from the open8030-profiles package, a published archive - or
 # from OPEN8030_PRIVATE_DIR when it is set, a local copy (vendor/open8030,
 # which scripts/open8030-private.sh fills from an Open8030 checkout).
+ifeq ($(BR2_PACKAGE_AR9311_RADIO),y)
+OPEN8030_PRIVATE_DIR ?= $(BR2_EXTERNAL_FPVOS_PATH)/../vendor/open8030
+OPEN8030_CONFIG_DIR = $(OPEN8030_PROFILES_DIR)
+OPEN8030_DEPENDENCIES += open8030-profiles
+endif
+
 ifeq ($(OPEN8030_PRIVATE_DIR),)
 OPEN8030_PRIVATE_DIR = $(OPEN8030_PROFILES_DIR)
 OPEN8030_DEPENDENCIES += open8030-profiles
@@ -34,6 +40,13 @@ OPEN8030_PROFILE = ascent-lite-plus.c
 OPEN8030_CFLAGS = -DAR_ROLE_AP -DAR_FACTORY_OPTIONAL
 OPEN8030_IMAGE = open8030-ap.img
 OPEN8030_DEST = /usrdata/fpv/air/open8030
+else ifeq ($(BR2_PACKAGE_AR9311_RADIO),y)
+OPEN8030_PIN = 89d3c634c11d5665dcc17401c5d8b3172bbacf8b
+OPEN8030_PROFILE = ascent-vrx.c
+OPEN8030_CFLAGS =
+OPEN8030_IMAGE = open8030-gnd485-sdio.img
+OPEN8030_DEST = /lib/firmware
+OPEN8030_SITE ?= https://github.com/mh1412/Open8030.git
 else
 OPEN8030_PIN = 89d3c634c11d5665dcc17401c5d8b3172bbacf8b
 OPEN8030_PROFILE = ascent-vrx-pro.c
@@ -41,6 +54,9 @@ OPEN8030_CFLAGS = -DAR_FORCE_USB
 OPEN8030_IMAGE = open8030-vrxpro-usb.img
 OPEN8030_DEST = /lib/firmware
 endif
+
+OPEN8030_CONFIG ?= bb_config_gnd_open8030.json
+OPEN8030_CONFIG_DIR ?= $(OPEN8030_PRIVATE_DIR)
 
 OPEN8030_VERSION ?= $(OPEN8030_PIN)
 OPEN8030_SITE ?= https://github.com/gehee/Open8030.git
@@ -56,6 +72,8 @@ OPEN8030_DEPENDENCIES += \
 
 # The --cflags= form: a value starting with -D would read as an option.
 define OPEN8030_BUILD_CMDS
+	test -r $(OPEN8030_PRIVATE_DIR)/$(OPEN8030_PROFILE) || \
+		{ echo "Missing Open8030 board profile: see docs/BUILD.md and OPEN8030_PRIVATE_DIR" >&2; exit 1; }
 	cd $(@D) && $(HOST_MAKE_ENV) USER_CACHE_DIR=$(@D)/build/cache \
 		$(HOST_DIR)/bin/python3 ./open8030 image \
 		--profile $(OPEN8030_PRIVATE_DIR)/$(OPEN8030_PROFILE) \
@@ -78,8 +96,8 @@ endef
 else
 define OPEN8030_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0644 $(@D)/$(OPEN8030_IMAGE) $(TARGET_DIR)$(OPEN8030_DEST)/$(OPEN8030_IMAGE)
-	$(INSTALL) -D -m 0644 $(OPEN8030_PRIVATE_DIR)/bb_config_gnd_open8030.json \
-		$(TARGET_DIR)$(OPEN8030_DEST)/bb_config_gnd_open8030.json
+	$(INSTALL) -D -m 0644 $(OPEN8030_CONFIG_DIR)/$(OPEN8030_CONFIG) \
+		$(TARGET_DIR)$(OPEN8030_DEST)/$(OPEN8030_CONFIG)
 	echo "$(OPEN8030_VERSION_TEXT)" > $(TARGET_DIR)$(OPEN8030_DEST)/open8030.version
 endef
 endif

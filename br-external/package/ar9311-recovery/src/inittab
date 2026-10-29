@@ -1,0 +1,11 @@
+::sysinit:/bin/mkdir -p /dev/pts /run /tmp
+::sysinit:/bin/mount -t devpts devpts /dev/pts
+::sysinit:/sbin/ip link set lo up
+::sysinit:/etc/init.d/S40ar9311-usb start
+::sysinit:/etc/init.d/S50dropbear start
+::sysinit:/bin/cat /etc/issue
+::respawn:/usr/sbin/fpvos-update-service
+ttyS0::askfirst:-/bin/sh
+::ctrlaltdel:/sbin/reboot
+::shutdown:/bin/sync
+::shutdown:/bin/umount -a -r

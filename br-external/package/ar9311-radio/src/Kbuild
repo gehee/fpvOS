@@ -1,0 +1,2 @@
+obj-m += ar9311_radio_pwrseq.o
+CFLAGS_ar9311_radio_pwrseq.o := -I$(srctree)/drivers/mmc/core

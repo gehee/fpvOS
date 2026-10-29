@@ -1,0 +1,14 @@
+config BR2_PACKAGE_AR9311_RADIO
+	bool "AR9311 Gnd485 SDIO radio"
+	depends on BR2_LINUX_KERNEL
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_HOSTARCH = "x86_64"
+	select BR2_PACKAGE_AR9311_MMC
+	select BR2_PACKAGE_AR_LIBRE
+	select BR2_PACKAGE_OPEN8030
+	help
+	  AR8030 radio over the Gnd485 SDIO host, using ar_libre and
+	  Open8030. Requires the matched Ascent VRX 18.21.10 profile
+	  in vendor/open8030 (see board docs). Reuses the VRX Pro
+	  Open8030 radio configuration from open8030-profiles.
+	  Firmware loads into radio RAM; no flash writes.

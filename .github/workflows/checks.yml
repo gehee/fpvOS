@@ -39,3 +39,19 @@ jobs:
         run: |
           python3 -m py_compile scripts/extract-vendor.py boot/mkbootchain.py
           python3 scripts/extract-vendor.py --help >/dev/null
+
+      - name: AR9311 shell syntax
+        run: |
+          for f in $(git ls-files 'br-external/board/ar9311/*' \
+                     'br-external/package/ar9311-radio/src/*' \
+                     'br-external/package/ar9311-recovery/src/*' \
+                     'br-external/package/fpvos-update/*'); do
+            if head -1 "$f" | grep -q '^#!/bin/sh'; then
+              sh -n "$f" || exit 1
+            fi
+          done
+
+      - name: AR9311 host tools and updater tests
+        run: |
+          python3 -m py_compile boot/mkar9311img.py scripts/ar9311-ram-transfer.py
+          python3 -m unittest discover -s tools/fpvos-update/tests -v

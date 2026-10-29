@@ -1,0 +1,62 @@
+From: fpvOS developers
+Subject: [PATCH] drm: lt9611: cache the Gnd485 page selector
+
+The Gnd485 revision-e2 bridge does not reliably read back its page
+selector: it can return data from the previously read register instead.
+regmap may then skip a necessary bank switch when that stale value equals
+the requested page, accessing a register in the wrong bank.
+
+Cache only the selector for this board and keep every data register
+volatile. The unused initial cached page forces the first access after
+probe reset to select a real page explicitly. Preserve ordinary LT9611
+behavior on other boards.
+
+---
+
+--- a/drivers/gpu/drm/bridge/lontium-lt9611.c
++++ b/drivers/gpu/drm/bridge/lontium-lt9611.c
+@@ -85,6 +85,21 @@
+ 	.max_register = 0xffff,
+ 	.ranges = lt9611_ranges,
+ 	.num_ranges = ARRAY_SIZE(lt9611_ranges),
++};
++
++/* Gnd485 rev-e2 does not read back the page selector: reading 0xff can
++ * return the previously read register value. Cache only the selector so
++ * regmap cannot mistake stale data for the currently selected bank.
++ * Every device register remains volatile. Probe resets the chip before
++ * its first access, which selects page 0x80 from this unused cached page.
++ */
++static bool lt9611_gnd485_volatile_reg(struct device *dev, unsigned int reg)
++{
++	return reg != LT9611_PAGE_CONTROL;
++}
++
++static const struct reg_default lt9611_gnd485_defaults[] = {
++	{ LT9611_PAGE_CONTROL, 0 },
+ };
+ 
+ static struct lt9611 *bridge_to_lt9611(struct drm_bridge *bridge)
+@@ -1131,6 +1146,7 @@
+ 
+ static int lt9611_probe(struct i2c_client *client)
+ {
++	struct regmap_config regmap_config = lt9611_regmap_config;
+ 	struct lt9611 *lt9611;
+ 	struct device *dev = &client->dev;
+ 	int ret;
+@@ -1150,7 +1166,13 @@
+ 	lt9611->client = client;
+ 	lt9611->sleep = false;
+ 
+-	lt9611->regmap = devm_regmap_init_i2c(client, &lt9611_regmap_config);
++	if (lt9611->gnd485) {
++		regmap_config.cache_type = REGCACHE_MAPLE;
++		regmap_config.volatile_reg = lt9611_gnd485_volatile_reg;
++		regmap_config.reg_defaults = lt9611_gnd485_defaults;
++		regmap_config.num_reg_defaults = ARRAY_SIZE(lt9611_gnd485_defaults);
++	}
++	lt9611->regmap = devm_regmap_init_i2c(client, &regmap_config);
+ 	if (IS_ERR(lt9611->regmap)) {
+ 		dev_err(lt9611->dev, "regmap i2c init failed\n");
+ 		return PTR_ERR(lt9611->regmap);

@@ -1,0 +1,28 @@
+Subject: [PATCH] usb: dwc2: use buffer DMA on Artosyn AR9311
+
+Adapt the hardware workaround documented in Missing-Lynk/ml-kernel
+commit e3885c6394a7025eacd3a23f473276d9823beb25, patch 0400, to an
+Artosyn-specific match callback. Other DWC2 integrations keep their defaults.
+The mainline parameter validation leaves an explicit false g_dma_desc intact.
+Source: https://github.com/Missing-Lynk/ml-kernel/blob/e3885c6394a7025eacd3a23f473276d9823beb25/patches/0400-dwc2-gadget-buffer-dma.patch
+License: GPL-2.0-or-later OR BSD-3-Clause (same as drivers/usb/dwc2/params.c).
+
+--- a/drivers/usb/dwc2/params.c
++++ b/drivers/usb/dwc2/params.c
+@@ -303,7 +303,16 @@
+ 	p->hird_threshold_en = false;
+ }
+ 
++static void dwc2_set_ar9311_params(struct dwc2_hsotg *hsotg)
++{
++	/* The Artosyn core advertises descriptor DMA, but sustained bulk OUT
++	 * can wedge its descriptor ring. Retain buffer DMA as in the BSP.
++	 */
++	hsotg->params.g_dma_desc = false;
++}
++
+ const struct of_device_id dwc2_of_match_table[] = {
++	{ .compatible = "artosyn,ar9311-usb", .data = dwc2_set_ar9311_params },
+ 	{ .compatible = "brcm,bcm2835-usb", .data = dwc2_set_bcm_params },
+ 	{ .compatible = "hisilicon,hi6220-usb", .data = dwc2_set_his_params },
+ 	{ .compatible = "ingenic,jz4775-otg", .data = dwc2_set_jz4775_params },

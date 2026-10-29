@@ -1,0 +1,7 @@
+config BR2_PACKAGE_AR9311_MEDIA_TEST
+	bool "AR9311 decoder and HDMI playback tools"
+	depends on BR2_aarch64
+	help
+	  Decode short H.264/HEVC clips into visible I420 frames for
+	  comparison against a reference decoder on the host. Also includes
+	  a bounded 1080p I420 DMA-BUF playback tool for the Gnd485 DRM driver.

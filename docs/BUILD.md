@@ -272,3 +272,9 @@ the stock one, and `ascent-kernel-check.py` are for that).
 - **Boots to a black screen** — almost always the loader; confirm
   `buildroot/output/images/uboot-patched.bin` exists (the fpvos-bootchain
   package makes it from `vendor/stock/uboot.img`).
+
+## AR9311 / Ascent Gnd485
+
+The experimental `ar9311_defconfig` builds Linux 6.18 with decoder, HDMI,
+SDIO radio and USB recovery/update support. See the [AR9311 board guide](AR9311.md)
+for dependencies, building, RAM boot, NAND installation and known limitations.

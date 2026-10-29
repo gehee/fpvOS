@@ -1,0 +1,9 @@
+config BR2_PACKAGE_AR9311_FIRMWARE
+	bool "AR9311 Wave521C firmware (local binary)"
+	depends on BR2_aarch64
+	help
+	  Install locally extracted chagall.bin into the RAM filesystem.
+	  Supply the validated Ascent 17.5.8 binary in
+	  vendor/ar9311-firmware/ before building. The binary is not
+	  included in this repository; redistribution rights are
+	  unverified.

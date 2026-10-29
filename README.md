@@ -85,8 +85,17 @@ first: it's the one step that writes to your hardware.
 | **Caddx Ascent VRX Pro** (goggle) | — | ✅ boots from the SD card |
 | **Caddx Ascent Lite** (air, CV2004, IMU) | ✅ links to fpvOS | ✅ fpvOS air image |
 | **Caddx Ascent Lite+** (air, OS02K10) | ✅ links to fpvOS | ✅ fpvOS air image |
+| **Caddx Ascent VRX / Gnd485** (AR9311 receiver) | — | Experimental platform support; see below |
 
 [What the fpvOS air image adds](docs/FAQ.md#what-the-fpvos-air-image-adds) over a stock air unit.
+
+**AR9311 development:** the Gnd485 profile builds Linux 6.18 with hardware
+decoding, fixed-mode HDMI and an SDIO radio interface. It provides bench tools,
+not the integrated Kestrel ground application. Installed systems boot from NAND
+and run their root filesystem in RAM. Initial bring-up and recovery use the
+existing U-Boot USB RAM loader; NAND installation is an explicit operation.
+The SD-card installation instructions above do not apply to this receiver.
+See [building and testing AR9311](docs/AR9311.md).
 
 ## Before you fly
 

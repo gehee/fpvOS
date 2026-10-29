@@ -1,0 +1,36 @@
+#!/bin/sh
+# Prefer bundled firmware; retain SD provisioning for minimal images.
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+bundled=/lib/firmware/artosyn/chagall.bin
+sd_firmware=/mnt/sd/fpvos/firmware/chagall.bin
+firmware=$bundled
+expected=99bc74cdf1e7ded785c2b65440c983f4e128727eb2bbdf309b14ddde668fd8ac
+
+if [ ! -f "$bundled" ] || [ -L "$bundled" ]; then
+    if ! mountpoint -q /mnt/sd || [ ! -f "$sd_firmware" ]; then
+        echo "Media: supply $sd_firmware to enable the AR9311 decoder"
+        exit 0
+    fi
+    firmware=$sd_firmware
+fi
+actual=$(sha256sum "$firmware")
+if [ "${actual%% *}" != "$expected" ]; then
+	echo "Media: unvalidated codec firmware; expected SHA256 $expected" >&2
+	exit 1
+fi
+if [ "$firmware" = "$sd_firmware" ]; then
+    mkdir -p /lib/firmware/artosyn
+    ln -sf "$firmware" "$bundled"
+fi
+modprobe wave5
+for node in /sys/class/video4linux/video*; do
+	case "$(readlink -f "$node")" in
+		*/a080000.video-codec/video4linux/*)
+			echo "Media: AR9311 decoder ready at /dev/${node##*/}"
+			exit 0
+			;;
+	esac
+done
+echo "Media: Wave5 did not register a decoder; inspect dmesg" >&2
+exit 1

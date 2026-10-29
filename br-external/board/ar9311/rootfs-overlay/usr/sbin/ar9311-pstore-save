@@ -1,0 +1,28 @@
+#!/bin/sh
+# Explicitly archive previous-boot crash evidence to SD; do not erase pstore.
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+[ "$#" = 0 ] || { echo "Usage: $0" >&2; exit 2; }
+mountpoint -q /sys/fs/pstore
+mountpoint -q /mnt/sd
+base=/mnt/sd/fpvos
+[ ! -L "$base" ]
+[ ! -L "$base/crashlogs" ]
+mkdir -p "$base/crashlogs"
+umask 077
+dest=
+for file in /sys/fs/pstore/*; do
+	[ -f "$file" ] || continue
+	if [ -z "$dest" ]; then
+		boot=$(cat /proc/sys/kernel/random/boot_id)
+		dest=$(mktemp -d "$base/crashlogs/$boot.XXXXXX")
+	fi
+	cp "$file" "$dest/"
+done
+if [ -n "$dest" ]; then
+	(cd "$dest" && sha256sum ./* > SHA256SUMS)
+	sync
+	echo "Saved previous-boot evidence to $dest; pstore records retained"
+else
+	echo 'No previous-boot pstore records'
+fi
