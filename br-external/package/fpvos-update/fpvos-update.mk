@@ -12,8 +12,8 @@ FPVOS_UPDATE_LICENSE_FILES = src/COPYING
 FPVOS_UPDATE_DEPENDENCIES = busybox
 FPVOS_UPDATE_INSTALL_IMAGES = YES
 
-ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_GND485),y)
-FPVOS_UPDATE_BOARD = ascent-gnd485
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX),y)
+FPVOS_UPDATE_BOARD = ascent-vrx
 endif
 
 define FPVOS_UPDATE_BUILD_CMDS
@@ -53,6 +53,6 @@ $(eval $(generic-package))
 
 # Include backend command hooks after generic-package: Buildroot derives the
 # package name from the last parsed makefile's directory.
-ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_GND485),y)
-include $(FPVOS_UPDATE_SITE)/backends/ascent-gnd485/backend.mk
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX),y)
+include $(FPVOS_UPDATE_SITE)/backends/ascent-vrx/backend.mk
 endif

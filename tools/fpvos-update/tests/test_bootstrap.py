@@ -13,7 +13,7 @@ import zlib
 import test_update as base
 
 PKG, SRC = base.PKG, base.SRC
-BACKEND = PKG / 'backends/ascent-gnd485'
+BACKEND = PKG / 'backends/ascent-vrx'
 sys.path.insert(0, str(PKG))
 spec = importlib.util.spec_from_file_location('bootstrap', PKG / 'embed-bootstrap.py')
 bootstrap = importlib.util.module_from_spec(spec)
@@ -120,7 +120,7 @@ class RuntimePreflight(unittest.TestCase):
                         f'-DVERIFY_PROGRAM="{Path(cls.build.name) / "verify"}"', str(BACKEND/'nand.c'),
                         str(Path(__file__).with_name('runtime_sim.c')),
                          *['-Wl,--wrap='+s for s in ('open', '__open_2', 'fopen', 'opendir', 'uname', 'geteuid', 'ioctl')], '-o', str(cls.binary)], check=True)
-        kernel_patch = (PKG.parents[1]/'board/ascent-gnd485/linux-patches/0009-mtd-ar9311-bank-aware-partitions.patch').read_text()
+        kernel_patch = (PKG.parents[1]/'board/ascent-vrx/linux-patches/0009-mtd-ar9311-bank-aware-partitions.patch').read_text()
         added = kernel_patch.split('+++ b/drivers/mtd/parsers/ofpart_ar9311.h\n', 1)[1].split('\n', 1)[1]
         header = '\n'.join(line[1:] for line in added.splitlines() if line.startswith('+'))+'\n'
         header = header.replace('#include <linux/string.h>', '#include <string.h>')

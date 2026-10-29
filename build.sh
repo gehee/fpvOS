@@ -6,8 +6,8 @@
 #   ./build.sh kestrel      # rebuild only kestrel into the buildroot sysroot
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
-#   ./build.sh gnd485 [config|kernel|all] # Ascent Gnd485, into ./output/ascent-gnd485
-#   ./build.sh ar9311 ...             # compatibility alias for gnd485
+#   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
+#   ./build.sh ar9311 ...             # compatibility alias for ascent-vrx
 #
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
@@ -36,18 +36,18 @@ need_vendor() {
 # Each board has an independent Buildroot configuration, toolchain and images.
 VRXPRO_OUT="$ROOT/output/vrxpro"
 AIR_OUT="$ROOT/output/ascent-lite"
-GND485_OUT="$ROOT/output/ascent-gnd485"
+ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
 
 case "${1:-all}" in
-  gnd485|ar9311)
+  ascent-vrx|gnd485|ascent-gnd485|ar9311)
     # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
     case "${2:-all}" in
-      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$GND485_OUT" ascentgnd485_defconfig ;;
-      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$GND485_OUT" ascentgnd485_defconfig
-              make -C "$GND485_OUT" linux-reconfigure ;;
-      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$GND485_OUT" ascentgnd485_defconfig
-              make -C "$GND485_OUT" ;;
-      *) echo "usage: $0 gnd485 [config|kernel|all]" >&2; exit 1 ;;
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig ;;
+      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig
+              make -C "$ASCENT_VRX_OUT" linux-reconfigure ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig
+              make -C "$ASCENT_VRX_OUT" ;;
+      *) echo "usage: $0 ascent-vrx [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   air)
     case "${2:-all}" in
@@ -70,5 +70,5 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT" vrxpro_defconfig
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {all|config|kestrel|image|air [config|kernel|all]|gnd485 [config|kernel|all]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {all|config|kestrel|image|air [config|kernel|all]|ascent-vrx [config|kernel|all]}" >&2; exit 1 ;;
 esac

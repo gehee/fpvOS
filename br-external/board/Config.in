@@ -1,5 +1,5 @@
-config BR2_FPVOS_BOARD_ASCENT_GND485
-	bool "Caddx Ascent Gnd485 (AR9311)"
+config BR2_FPVOS_BOARD_ASCENT_VRX
+	bool "Caddx Ascent VRX (Gnd485, AR9311)"
 	depends on BR2_aarch64
 	help
 	  Select Gnd485 board integration, including its NAND partition parser.

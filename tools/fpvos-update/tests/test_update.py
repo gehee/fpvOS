@@ -18,7 +18,7 @@ import zlib
 ROOT = Path(__file__).resolve().parents[3]
 PKG = ROOT / 'br-external/package/fpvos-update'
 SRC = PKG / 'src'
-BACKEND = PKG / 'backends/ascent-gnd485'
+BACKEND = PKG / 'backends/ascent-vrx'
 sys.path.insert(0, str(ROOT / 'tools/fpvos-update'))
 from boards import get_profile
 BOARD = get_profile('ar9311')

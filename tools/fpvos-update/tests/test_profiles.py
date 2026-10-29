@@ -13,22 +13,24 @@ from boards import get_profile, read_profile
 
 
 class Profiles(unittest.TestCase):
-    def test_gnd485_and_legacy_board_name_produce_identical_bundles(self):
-        canonical = get_profile('ascent-gnd485')
+    def test_ascent_vrx_and_legacy_board_names_produce_identical_bundles(self):
+        canonical = get_profile('ascent-vrx')
         self.assertEqual(canonical, get_profile('ar9311'))
+        self.assertEqual(canonical, get_profile('ascent-gnd485'))
         self.assertEqual(canonical['board_id'], 485)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             for name in canonical['names']:
                 (root / name).write_bytes(b'profile compatibility fixture')
             bundles = []
-            for name in ('ascent-gnd485', 'ar9311'):
+            for name in ('ascent-vrx', 'ascent-gnd485', 'ar9311'):
                 output = root / (name + '.fwu')
                 subprocess.run(['python3', str(PKG.parents[2] / 'tools/fpvos-update/package.py'),
                                 '--board', name, str(root), str(output)], check=True,
                                capture_output=True)
                 bundles.append(output.read_bytes())
-            self.assertEqual(*bundles)
+            self.assertEqual(bundles[0], bundles[1])
+            self.assertEqual(bundles[0], bundles[2])
 
     def test_second_board_bundle_and_image_backend(self):
         profile = dict(board_id=902, hardware='Test board', usb_identity=['1234','5678','test-board'],
