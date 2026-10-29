@@ -15,4 +15,4 @@ python3 "$repo_dir/boot/mkar9311img.py" \
 
 # Development bundle uses vendor USB framing, without release/signature policy.
 python3 "$repo_dir/tools/fpvos-update/package.py" \
-    --board ar9311 "$images" "$images/fpvos-ar9311.fwu" --replace
+    --board ascent-gnd485 "$images" "$images/fpvos-ar9311.fwu" --replace

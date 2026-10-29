@@ -1,3 +1,4 @@
+source "$BR2_EXTERNAL_FPVOS_PATH/board/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-vendor-libs/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/rockchip-mpp/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/kestrel/Config.in"
@@ -21,4 +22,4 @@ config BR2_PACKAGE_HOST_LZ4
 	  Build the host LZ4 tool for the AR9311 post-image wrapper.
 	  The package recipe is provided by Buildroot.
 source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-update/Config.in"
-source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-recovery/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ascent-gnd485-recovery/Config.in"

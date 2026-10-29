@@ -12,8 +12,8 @@ FPVOS_UPDATE_LICENSE_FILES = src/COPYING
 FPVOS_UPDATE_DEPENDENCIES = busybox
 FPVOS_UPDATE_INSTALL_IMAGES = YES
 
-ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_AR9311),y)
-FPVOS_UPDATE_BOARD = ar9311
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_GND485),y)
+FPVOS_UPDATE_BOARD = ascent-gnd485
 endif
 
 define FPVOS_UPDATE_BUILD_CMDS
@@ -24,9 +24,9 @@ define FPVOS_UPDATE_BUILD_CMDS
 		-Dmain=fpvos_verify_main -c $(@D)/src/verify.c -o $(@D)/verify.o
 	$(FPVOS_UPDATE_BUILD_BACKEND_CMDS)
 	python3 $(FPVOS_UPDATE_SITE)/embed-bootstrap.py $(TARGET_DIR)/bin/busybox \
-		$(FPVOS_UPDATE_SITE) $(@D)/bootstrap-resources.c
+		$(FPVOS_UPDATE_SITE)/backends/$(FPVOS_UPDATE_BOARD) $(@D)/bootstrap-resources.c
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror -I$(@D)/src \
-		$(@D)/src/main.c $(@D)/src/bootstrap.c $(@D)/bootstrap-resources.c \
+		$(@D)/src/main.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.c $(@D)/bootstrap-resources.c \
 		$(@D)/receiver.o $(@D)/verify.o $(@D)/nand.o \
 		$(@D)/profile.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/images.c \
 		$(TARGET_LDFLAGS) -static -o $(@D)/fpvos-update
@@ -43,7 +43,7 @@ endef
 
 define FPVOS_UPDATE_INSTALL_IMAGES_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/fpvos-update $(BINARIES_DIR)/fpvos-update-ar9311
-	$(INSTALL) -D -m 0755 $(FPVOS_UPDATE_SITE)/backends/ar9311/bootstrap.sh \
+	$(INSTALL) -D -m 0755 $(FPVOS_UPDATE_SITE)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.sh \
 		$(BINARIES_DIR)/fpvos-ar9311-bootstrap.sh
 	# Remove the superseded artifact produced by older versions of this package.
 	rm -f $(BINARIES_DIR)/fpvos-ar9311-bootstrap.tar
@@ -53,6 +53,6 @@ $(eval $(generic-package))
 
 # Include backend command hooks after generic-package: Buildroot derives the
 # package name from the last parsed makefile's directory.
-ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_AR9311),y)
-include $(FPVOS_UPDATE_SITE)/backends/ar9311/backend.mk
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_GND485),y)
+include $(FPVOS_UPDATE_SITE)/backends/ascent-gnd485/backend.mk
 endif

@@ -1,0 +1,352 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/* Ascent Gnd485 wiring, stock firmware contract and NAND layout.
+ * Keep board memory reservations, power sequencing and display setup here.
+ */
+/dts-v1/;
+#include "ar9311.dtsi"
+
+/ {
+	model = "Caddx Ascent Gnd485 (AR9311)";
+	compatible = "caddx,ascent-gnd485", "artosyn,proxima-9311";
+
+	aliases {
+		serial0 = &uart0;
+		i2c1 = &i2c1;
+	};
+
+	chosen {
+		stdout-path = "serial0:1152000n8";
+		bootargs = "console=ttyS0,1152000 earlycon loglevel=7 mem=256M rdinit=/init";
+	};
+
+	/* Stock reserves the upper 256 MiB for codec DMA. */
+	memory@20000000 {
+		device_type = "memory";
+		reg = <0 0x20000000 0 0x10000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/* Preserve the secure-firmware range declared by the stock DT. */
+		atf@23400000 {
+			reg = <0 0x23400000 0 0x00c00000>;
+			no-map;
+		};
+
+		/* Outside kernel/DT/initrd USB transfer destinations and the
+		 * codec pool. Retained across warm resets, not power loss.
+		 */
+		ramoops@2ff00000 {
+			compatible = "ramoops";
+			reg = <0 0x2ff00000 0 0x00100000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			pmsg-size = <0x20000>;
+			no-map;
+		};
+
+		/* Stock Gnd485 media MMZ: upper 256 MiB of physical DRAM,
+		 * outside mem=256M Linux RAM. Only the codec owns this pool.
+		 */
+		codec_memory: codec-memory@30000000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x30000000 0 0x10000000>;
+			no-map;
+		};
+	};
+
+	hdmi_connector {
+		compatible = "hdmi-connector";
+		type = "a";
+		port {
+			hdmi_in: endpoint {
+				remote-endpoint = <&bridge_out>;
+			};
+		};
+	};
+
+	bridge_vdd: regulator-bridge-vdd {
+		compatible = "regulator-fixed";
+		regulator-name = "bridge-vdd-always-on";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+
+	bridge_vcc: regulator-bridge-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "bridge-vcc-always-on";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+	};
+
+	psci {
+		compatible = "arm,psci-1.0";
+		method = "smc";
+	};
+
+	/* SD power/voltage and radio GPIO assignments are Gnd485 wiring. */
+	sd_vmmc: regulator-sd-vmmc {
+		compatible = "regulator-fixed";
+		regulator-name = "sd-3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio 14 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	sd_vqmmc: regulator-sd-vqmmc {
+		compatible = "regulator-gpio";
+		regulator-name = "sd-vqmmc";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		gpios = <&gpio 36 GPIO_ACTIVE_HIGH>;
+		gpios-states = <1>;
+		states = <3300000 1>;
+	};
+
+	radio_power: regulator-radio-power {
+		compatible = "regulator-fixed";
+		regulator-name = "radio-power";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio 41 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+		startup-delay-us = <100000>;
+	};
+
+	radio_vmmc: regulator-radio-vmmc {
+		compatible = "regulator-fixed";
+		regulator-name = "radio-3v3";
+		vin-supply = <&radio_power>;
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio 12 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+		startup-delay-us = <100000>;
+	};
+
+	radio_vqmmc: regulator-radio-vqmmc {
+		compatible = "regulator-gpio";
+		regulator-name = "radio-vqmmc";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpios = <&gpio 35 GPIO_ACTIVE_HIGH>;
+		gpios-states = <1>;
+		states = <3300000 1>;
+	};
+
+	radio_pwrseq: radio-pwrseq {
+		compatible = "artosyn,ar8030-pwrseq";
+		reset-gpios = <&gpio 3 GPIO_ACTIVE_LOW>;
+	};
+};
+
+&cpu0 {
+	enable-method = "psci";
+};
+
+&cpu1 {
+	enable-method = "psci";
+};
+
+&vpu {
+	status = "okay";
+	memory-region = <&codec_memory>;
+};
+
+&i2c1 {
+	status = "okay";
+	clock-frequency = <400000>;
+	i2c-sda-hold-time-ns = <300>;
+	i2c-sda-falling-time-ns = <300>;
+	i2c-scl-falling-time-ns = <300>;
+	bridge@3b {
+		compatible = "artosyn,gnd485-lt9611", "lontium,lt9611";
+		reg = <0x3b>;
+		reset-gpios = <&gpio 107 GPIO_ACTIVE_HIGH>;
+		vdd-supply = <&bridge_vdd>;
+		vcc-supply = <&bridge_vcc>;
+		/* GPIO106 IRQ is not wired into Linux; poll connector status. */
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port@0 {
+				reg = <0>;
+				bridge_in: endpoint {
+					remote-endpoint = <&dsi_out>;
+				};
+			};
+			port@2 {
+				reg = <2>;
+				bridge_out: endpoint {
+					remote-endpoint = <&hdmi_in>;
+				};
+			};
+		};
+	};
+};
+
+&qspi {
+	status = "okay";
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <150000000>;
+		partitions {
+			/* The parser maps these bank roles from validated GPT, not
+			 * from a presumed stock-update parity. Never modifies GPT. */
+			compatible = "fpvos,ar9311-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			partition@0 {
+				label = "boot-protected";
+				reg = <0x0 0xb40000>;
+				read-only;
+			};
+			partition@b40000 {
+				label = "kernel";
+				reg = <0xb40000 0x600000>;
+			};
+			partition@1140000 {
+				label = "dtb";
+				reg = <0x1140000 0x60000>;
+			};
+			partition@11a0000 {
+				label = "vendor-rootfs";
+				reg = <0x11a0000 0x1500000>;
+				read-only;
+			};
+			partition@26a0000 {
+				label = "fpvos";
+				reg = <0x26a0000 0x1500000>;
+			};
+			partition@3ba0000 {
+				label = "vendor-data";
+				reg = <0x3ba0000 0x4460000>;
+				read-only;
+			};
+		};
+	};
+};
+
+&gpio {
+	status = "okay";
+	compatible = "caddx,gnd485-gpio", "artosyn,gpio";
+
+	/* Stock run.sh: keep the native USB connector in debug/device
+	 * mode when the GPIO bank direction shadow becomes active.
+	 */
+	usb-device-hog {
+		gpio-hog;
+		gpios = <9 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "usb-device-mode";
+	};
+	usb-debug-hog {
+		gpio-hog;
+		gpios = <10 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "usb-debug-select";
+	};
+};
+
+&mmc_clocks {
+	status = "okay";
+	artosyn,clock-config = <0x87 2>, <0x80 0>;
+};
+
+&mmc0 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	broken-cd;
+	no-mmc;
+	no-sd;
+	no-1-8-v;
+	vmmc-supply = <&radio_vmmc>;
+	vqmmc-supply = <&radio_vqmmc>;
+	mmc-pwrseq = <&radio_pwrseq>;
+};
+
+&mmc1 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	card-detect-delay = <200>;
+	vmmc-supply = <&sd_vmmc>;
+	vqmmc-supply = <&sd_vqmmc>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	disable-wp;
+	no-1-8-v;
+	no-mmc;
+	no-sdio;
+};
+
+&usb {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+/* The current VO/DSI driver implements the Gnd485 fixed HDMI pipeline. */
+&soc {
+	vo: display@8810000 {
+		compatible = "artosyn,gnd485-vo";
+		reg = <0 0x08810000 0 0x10000>,
+		      <0 0x0a10404c 0 4>,
+		      <0 0x0a106018 0 4>;
+		reg-names = "vo", "pixel-clock", "dc-crg";
+		interrupts = <GIC_SPI 70 IRQ_TYPE_LEVEL_HIGH>;
+		port {
+			vo_out: endpoint {
+				remote-endpoint = <&dsi_in>;
+			};
+		};
+	};
+
+	dsi: dsi@8850000 {
+		compatible = "artosyn,gnd485-dsi";
+		reg = <0 0x08850000 0 0x1000>;
+		clocks = <&clk150m>;
+		clock-names = "pclk";
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port@0 {
+				reg = <0>;
+				dsi_in: endpoint {
+					remote-endpoint = <&vo_out>;
+				};
+			};
+			port@1 {
+				reg = <1>;
+				dsi_out: endpoint {
+					remote-endpoint = <&bridge_in>;
+				};
+			};
+		};
+	};
+};

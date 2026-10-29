@@ -206,7 +206,7 @@ def reconnect(path, board, clean=False, image_hash=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--board', required=True, help='board backend, e.g. ar9311')
+    parser.add_argument('--board', required=True, help='board backend, e.g. ascent-gnd485 (ar9311 is a compatibility alias)')
     parser.add_argument('--port', required=True, type=Path)
     sub = parser.add_subparsers(dest='command', required=True)
     sub.add_parser('info')

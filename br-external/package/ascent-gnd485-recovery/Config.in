@@ -1,7 +1,7 @@
-config BR2_PACKAGE_AR9311_RECOVERY
-	bool "AR9311 built-in NAND recovery environment"
+config BR2_PACKAGE_ASCENT_GND485_RECOVERY
+	bool "Ascent Gnd485 built-in NAND recovery environment"
 	depends on BR2_aarch64 && BR2_STATIC_LIBS
-	depends on BR2_PACKAGE_FPVOS_UPDATE_AR9311
+	depends on BR2_PACKAGE_FPVOS_UPDATE_ASCENT_GND485
 	select BR2_PACKAGE_DROPBEAR
 	help
 	  Build a small independent initramfs into the NAND kernel. It loads

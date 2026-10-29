@@ -14,6 +14,8 @@ read_profile = _module.read_profile
 def get_profile(name):
     if not re.fullmatch('[a-z0-9][a-z0-9_-]*', name):
         raise ValueError('invalid board name')
+    # Historical CLI spelling selects this exact board, never an SoC-wide layout.
+    name = {'ar9311': 'ascent-gnd485'}.get(name, name)
     path = PACKAGE / 'backends' / name / 'profile.json'
     if not path.is_file():
         raise ValueError(f'unsupported updater board: {name}')

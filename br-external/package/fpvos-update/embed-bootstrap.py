@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import struct
 import sys
+from board_profile import read_profile
 
 
 def static_aarch64(data):
@@ -20,12 +21,13 @@ def static_aarch64(data):
             raise ValueError('bootstrap executables must be statically linked')
 
 
-def build(busybox, package, output):
+def build(busybox, backend, output):
+    profile = read_profile(backend / "profile.json")
     files = {
-        'prepare.sh': ((package / 'backends/ar9311/bootstrap-ram.sh').read_bytes(), 0o700),
+        'prepare.sh': ((backend / 'bootstrap-ram.sh').read_bytes(), 0o700),
         'root/bin/busybox': (busybox.read_bytes(), 0o700),
-        'root/usr/libexec/fpvos-update-backend': ((package / 'backends/ar9311/update-helper').read_bytes(), 0o755),
-        'root/etc/fpvos-stock-bootstrap': (b'Gnd485\n', 0o600),
+        'root/usr/libexec/fpvos-update-backend': ((backend / 'update-helper').read_bytes(), 0o755),
+        'root/etc/fpvos-stock-bootstrap': ((profile['hardware'] + '\n').encode('ascii'), 0o600),
     }
     static_aarch64(files['root/bin/busybox'][0])
     # Use the packaged BusyBox for every helper command, not stock's libc/tools.

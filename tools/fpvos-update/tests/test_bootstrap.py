@@ -6,13 +6,15 @@ import struct
 import shutil
 from types import SimpleNamespace
 import subprocess
+import sys
 import tempfile
 import unittest
 import zlib
 import test_update as base
 
 PKG, SRC = base.PKG, base.SRC
-BACKEND = PKG / 'backends/ar9311'
+BACKEND = PKG / 'backends/ascent-gnd485'
+sys.path.insert(0, str(PKG))
 spec = importlib.util.spec_from_file_location('bootstrap', PKG / 'embed-bootstrap.py')
 bootstrap = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(bootstrap)
@@ -24,9 +26,9 @@ def compile_unified(destination):
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC),
                         f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"', '-Dmain=fpvos_'+name+'_main', '-c', str(source), '-o', str(destination/(name+'.o'))], check=True)
     busybox = destination/'busybox.fixture'; busybox.write_bytes(BootstrapArtifact.elf())
-    bootstrap.build(busybox, PKG, destination/'resources.c')
+    bootstrap.build(busybox, BACKEND, destination/'resources.c')
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC), str(SRC/'main.c'),
-                    str(SRC/'bootstrap.c'), str(destination/'resources.c'),
+                    str(BACKEND/'bootstrap.c'), str(destination/'resources.c'),
                     *[str(destination/(n+'.o')) for n in ('receiver', 'verify', 'nand')],
                     str(destination/'profile.c'), str(BACKEND/'images.c'), '-o', str(destination/'fpvos-update')], check=True)
     # Existing protocol/image tests now run through the multicall entry points.
@@ -71,11 +73,11 @@ class BootstrapArtifact(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); busybox = root/'busybox'; busybox.write_bytes(self.elf())
             first, second = root/'first.c', root/'second.c'
-            bootstrap.build(busybox, PKG, first); bootstrap.build(busybox, PKG, second)
+            bootstrap.build(busybox, BACKEND, first); bootstrap.build(busybox, BACKEND, second)
             self.assertEqual(first.read_bytes(), second.read_bytes())
             driver = root/'extract.c'
             driver.write_text('int fpvos_stock_runtime_valid(void){return 0;}\nint fpvos_bootstrap_extract(const char *);\nint main(int argc,char **argv){return argc != 2 || fpvos_bootstrap_extract(argv[1]);}\n')
-            subprocess.run(['cc','-Wall','-Wextra','-Werror','-O2','-I'+str(SRC),str(driver),str(SRC/'bootstrap.c'),str(first),'-o',str(root/'extract')],check=True)
+            subprocess.run(['cc','-Wall','-Wextra','-Werror','-O2','-I'+str(SRC),str(driver),str(BACKEND/'bootstrap.c'),str(first),'-o',str(root/'extract')],check=True)
             output = root/'ram'; output.mkdir(mode=0o700)
             subprocess.run([str(root/'extract'),str(output)],check=True)
             self.assertEqual((output/'root/bin/busybox').read_bytes(), self.elf())
@@ -118,7 +120,7 @@ class RuntimePreflight(unittest.TestCase):
                         f'-DVERIFY_PROGRAM="{Path(cls.build.name) / "verify"}"', str(BACKEND/'nand.c'),
                         str(Path(__file__).with_name('runtime_sim.c')),
                          *['-Wl,--wrap='+s for s in ('open', '__open_2', 'fopen', 'opendir', 'uname', 'geteuid', 'ioctl')], '-o', str(cls.binary)], check=True)
-        kernel_patch = (PKG.parents[1]/'board/ar9311/linux-patches/0009-mtd-ar9311-bank-aware-partitions.patch').read_text()
+        kernel_patch = (PKG.parents[1]/'board/ascent-gnd485/linux-patches/0009-mtd-ar9311-bank-aware-partitions.patch').read_text()
         added = kernel_patch.split('+++ b/drivers/mtd/parsers/ofpart_ar9311.h\n', 1)[1].split('\n', 1)[1]
         header = '\n'.join(line[1:] for line in added.splitlines() if line.startswith('+'))+'\n'
         header = header.replace('#include <linux/string.h>', '#include <string.h>')

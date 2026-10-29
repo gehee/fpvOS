@@ -1,0 +1,183 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/* Artosyn Proxima AR9311 register/IRQ geometry.
+ * Derived from the vendor DT and Missing-Lynk/ml-kernel
+ * e3885c6394a7025eacd3a23f473276d9823beb25.
+ * Boards supply DRAM, firmware handoff, pin wiring and peripheral policy.
+ * External-facing controllers are disabled until selected by a board.
+ */
+#include <dt-bindings/interrupt-controller/arm-gic.h>
+#include <dt-bindings/interrupt-controller/irq.h>
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/clock/artosyn,ar9311-mmc.h>
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <2>;
+	interrupt-parent = <&gic>;
+
+	cpus {
+		#address-cells = <2>;
+		#size-cells = <0>;
+
+		cpu0: cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a53";
+			reg = <0 0>;
+		};
+
+		cpu1: cpu@1 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a53";
+			reg = <0 1>;
+		};
+	};
+
+	timer {
+		compatible = "arm,armv8-timer";
+		interrupts = <GIC_PPI 13 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 14 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 11 IRQ_TYPE_LEVEL_LOW>,
+			     <GIC_PPI 10 IRQ_TYPE_LEVEL_LOW>;
+		clock-frequency = <24000000>;
+		always-on;
+	};
+
+	clk150m: clock-150m {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <150000000>;
+	};
+
+	clk24m: clock-24m {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <24000000>;
+	};
+
+	gic: interrupt-controller@201000 {
+		compatible = "arm,gic-400";
+		#interrupt-cells = <3>;
+		#address-cells = <0>;
+		interrupt-controller;
+		reg = <0 0x00201000 0 0x1000>,
+		      <0 0x00202000 0 0x2000>,
+		      <0 0x00204000 0 0x2000>,
+		      <0 0x00206000 0 0x2000>;
+		interrupts = <GIC_PPI 9 IRQ_TYPE_LEVEL_HIGH>;
+	};
+
+	soc: soc {
+		compatible = "simple-bus";
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		codec_sram: sram@1f0000 {
+			compatible = "mmio-sram";
+			reg = <0 0x001f0000 0 0x10000>;
+		};
+
+		vpu: video-codec@a080000 {
+			compatible = "artosyn,ar9311-wave521c";
+			reg = <0 0x0a080000 0 0x10000>,
+			      <0 0x0a106000 0 0x210>,
+			      <0 0x0a102000 0 0x20>,
+			      <0 0x0a104018 0 4>;
+			reg-names = "vpu", "media-crg", "isolation", "codec-clock";
+			interrupts = <GIC_SPI 68 IRQ_TYPE_LEVEL_HIGH>;
+			sram = <&codec_sram>;
+			status = "disabled";
+		};
+
+		i2c1: i2c@1202000 {
+			compatible = "snps,designware-i2c";
+			reg = <0 0x01202000 0 0x2000>;
+			interrupts = <GIC_SPI 33 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		qspi: spi@1e00000 {
+			compatible = "artosyn,ar9301-qspi";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0 0x01e00000 0 0x1000>;
+			reg-names = "qspi_base";
+			clocks = <&clk150m>;
+			status = "disabled";
+		};
+
+		gpio: gpio@a10a000 {
+			compatible = "artosyn,gpio";
+			reg = <0 0x0a10a000 0 0x2000>;
+			gpio-controller;
+			#gpio-cells = <2>;
+			status = "disabled";
+		};
+
+		mmc_clocks: clock-controller@a104020 {
+			compatible = "artosyn,ar9311-mmc-clock";
+			reg = <0 0x0a104020 0 0x10>,
+			      <0 0x0a108088 0 8>,
+			      <0 0x0a1080c0 0 8>;
+			#clock-cells = <1>;
+			status = "disabled";
+		};
+
+		mmc0: mmc@1b00000 {
+			compatible = "artosyn,proxima-dw-mshc";
+			reg = <0 0x01b00000 0 0x1000>;
+			interrupts = <GIC_SPI 48 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>, <&mmc_clocks AR9311_CLK_SDMMC0>;
+			clock-names = "biu", "ciu";
+			status = "disabled";
+		};
+
+		mmc1: mmc@1c00000 {
+			compatible = "artosyn,proxima-dw-mshc";
+			reg = <0 0x01c00000 0 0x1000>;
+			interrupts = <GIC_SPI 49 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>, <&mmc_clocks AR9311_CLK_SDMMC1>;
+			clock-names = "biu", "ciu";
+			status = "disabled";
+		};
+
+		usb: usb@8000000 {
+			compatible = "artosyn,ar9311-usb", "snps,dwc2";
+			reg = <0 0x08000000 0 0x40000>;
+			interrupts = <GIC_SPI 74 IRQ_TYPE_LEVEL_HIGH>;
+			g-np-tx-fifo-size = <0x20>;
+			g-rx-fifo-size = <0x300>;
+			g-tx-fifo-size = <0x300 0x200 0x200 0x20 0x10
+					  0x10 0x10 0x10 0x10 0x10>;
+			status = "disabled";
+		};
+
+		uart0: serial@1500000 {
+			compatible = "snps,dw-apb-uart";
+			reg = <0 0x01500000 0 0x400>;
+			interrupts = <GIC_SPI 11 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
+			/* Keep earlycon's existing divisor; 8250_dw uses the clock
+			 * and hardware fractional divisor for the normal console.
+			 */
+			reg-shift = <2>;
+			reg-io-width = <4>;
+			status = "disabled";
+		};
+
+		watchdog: watchdog@1600000 {
+			compatible = "snps,dw-wdt";
+			reg = <0 0x01600000 0 0x1000>;
+			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk24m>;
+			snps,watchdog-tops = <0x00010000 0x00020000 0x00040000 0x00080000
+				0x00100000 0x00200000 0x00400000 0x00800000
+				0x01000000 0x02000000 0x04000000 0x08000000
+				0x10000000 0x20000000 0x40000000 0x80000000>;
+			status = "disabled";
+		};
+	};
+};

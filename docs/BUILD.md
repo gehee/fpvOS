@@ -275,6 +275,9 @@ the stock one, and `ascent-kernel-check.py` are for that).
 
 ## AR9311 / Ascent Gnd485
 
-The experimental `ar9311_defconfig` builds Linux 6.18 with decoder, HDMI,
+The experimental `ascentgnd485_defconfig` (`./build.sh gnd485`) builds Linux 6.18 with decoder, HDMI,
 SDIO radio and USB recovery/update support. See the [AR9311 board guide](AR9311.md)
 for dependencies, building, RAM boot, NAND installation and known limitations.
+The old `ar9311` build command and defconfig remain aliases for this board.
+Shared SoC support lives under `br-external/board/common/ar9311`; Gnd485 wiring,
+display and NAND policy live under `br-external/board/ascent-gnd485`.

@@ -2,7 +2,7 @@
 /* Run the real transaction code against file-backed NAND, enforcing erase
  * alignment and 1->0 programming, with a one-shot write fault. */
 #define main nand_program_main
-#include "../../../br-external/package/fpvos-update/backends/ar9311/nand.c"
+#include "../../../br-external/package/fpvos-update/backends/ascent-gnd485/nand.c"
 #undef main
 #include <assert.h>
 #include <stdarg.h>

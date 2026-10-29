@@ -42,9 +42,10 @@ jobs:
 
       - name: AR9311 shell syntax
         run: |
-          for f in $(git ls-files 'br-external/board/ar9311/*' \
+          for f in $(git ls-files 'br-external/board/ascent-gnd485/*' \
+                     'br-external/board/common/ar9311/*' \
                      'br-external/package/ar9311-radio/src/*' \
-                     'br-external/package/ar9311-recovery/src/*' \
+                     'br-external/package/ascent-gnd485-recovery/src/*' \
                      'br-external/package/fpvos-update/*'); do
             if head -1 "$f" | grep -q '^#!/bin/sh'; then
               sh -n "$f" || exit 1

@@ -1,0 +1,7 @@
+config BR2_FPVOS_BOARD_ASCENT_GND485
+	bool "Caddx Ascent Gnd485 (AR9311)"
+	depends on BR2_aarch64
+	help
+	  Select Gnd485 board integration, including its NAND partition parser.
+	  Other AR9311 boards can reuse board/common/ar9311 without selecting
+	  this board's wiring, stock firmware layout or update backend.

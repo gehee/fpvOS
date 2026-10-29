@@ -11,8 +11,8 @@ MESA3D_CONF_OPTS += -Dllvm=disabled
 endif
 
 # The kernel against its board's linux.hash (board/vrxpro for the goggle,
-# board/ascent-lite for the air unit: the folder of the build's kernel config
-# fragment): its tarball, and its licence files for legal-info. Buildroot's own
+# board/ascent-lite for the air unit, common/ar9311 for Gnd485: the folder
+# of the first kernel config fragment): its tarball, and its licence files for legal-info. Buildroot's own
 # linux.hash only knows upstream's licence files, which Rockchip's tree does not
 # match (legal-info fails), and Buildroot skips the tarball's check for any
 # kernel but its own latest. A pin moved without a new hash fails the download.
@@ -26,21 +26,26 @@ LINUX_HEADERS_HASH_FILES = $(LINUX_HASH_FILES)
 endif
 endif
 
+# The Gnd485 partition parser also needs its layout when recovery is disabled
+# for a RAM-only build. This is board policy, not a shared AR9311 flash map.
+ifeq ($(BR2_FPVOS_BOARD_ASCENT_GND485),y)
+define ASCENT_GND485_LAYOUT_KERNEL_HEADER
+	$(INSTALL) -m 0644 $(BR2_EXTERNAL_FPVOS_PATH)/package/fpvos-update/backends/ascent-gnd485/layout.h $(LINUX_DIR)/drivers/mtd/parsers/fpvos_ar9311_layout.h
+endef
+LINUX_PRE_BUILD_HOOKS += ASCENT_GND485_LAYOUT_KERNEL_HEADER
+endif
+
 # The NAND kernel contains an independent recovery root, not the final rootfs
 # (which includes match-built kernel modules and is packaged afterwards).
-ifeq ($(BR2_PACKAGE_AR9311_RECOVERY),y)
-define AR9311_LAYOUT_KERNEL_HEADER
-	$(INSTALL) -m 0644 $(BR2_EXTERNAL_FPVOS_PATH)/package/fpvos-update/backends/ar9311/layout.h $(LINUX_DIR)/drivers/mtd/parsers/fpvos_ar9311_layout.h
-endef
-LINUX_PRE_BUILD_HOOKS += AR9311_LAYOUT_KERNEL_HEADER
-LINUX_DEPENDENCIES += ar9311-recovery
+ifeq ($(BR2_PACKAGE_ASCENT_GND485_RECOVERY),y)
+LINUX_DEPENDENCIES += ascent-gnd485-recovery
 # linux.mk has already instantiated its generic package by this point.
-$(LINUX_DIR)/.stamp_configured: $(AR9311_RECOVERY_DIR)/.stamp_target_installed
-define AR9311_RECOVERY_KERNEL_CONFIG
-	$(call KCONFIG_SET_OPT,CONFIG_INITRAMFS_SOURCE,"$(AR9311_RECOVERY_DIR)/root $(AR9311_RECOVERY_DIR)/nodes.list")
+$(LINUX_DIR)/.stamp_configured: $(ASCENT_GND485_RECOVERY_DIR)/.stamp_target_installed
+define ASCENT_GND485_RECOVERY_KERNEL_CONFIG
+	$(call KCONFIG_SET_OPT,CONFIG_INITRAMFS_SOURCE,"$(ASCENT_GND485_RECOVERY_DIR)/root $(ASCENT_GND485_RECOVERY_DIR)/nodes.list")
 	$(call KCONFIG_SET_OPT,CONFIG_INITRAMFS_ROOT_UID,$(shell id -u))
 	$(call KCONFIG_SET_OPT,CONFIG_INITRAMFS_ROOT_GID,$(shell id -g))
 	$(call KCONFIG_ENABLE_OPT,CONFIG_INITRAMFS_COMPRESSION_GZIP)
 endef
-LINUX_KCONFIG_FIXUP_CMDS += $(AR9311_RECOVERY_KERNEL_CONFIG)
+LINUX_KCONFIG_FIXUP_CMDS += $(ASCENT_GND485_RECOVERY_KERNEL_CONFIG)
 endif

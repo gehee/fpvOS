@@ -6,7 +6,8 @@
 #   ./build.sh kestrel      # rebuild only kestrel into the buildroot sysroot
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output-air
-#   ./build.sh ar9311 [config|kernel|all] # Ascent Gnd485 RAM boot, into ./output-ar9311
+#   ./build.sh gnd485 [config|kernel|all] # Ascent Gnd485, into ./output-ar9311
+#   ./build.sh ar9311 ...             # compatibility alias for gnd485
 #
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
@@ -37,15 +38,15 @@ AIR_OUT="$ROOT/output-air"
 AR9311_OUT="$ROOT/output-ar9311"
 
 case "${1:-all}" in
-  ar9311)
+  gnd485|ar9311)
     # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
     case "${2:-all}" in
-      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$AR9311_OUT" ar9311_defconfig ;;
-      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$AR9311_OUT" ar9311_defconfig
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$AR9311_OUT" ascentgnd485_defconfig ;;
+      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$AR9311_OUT" ascentgnd485_defconfig
               make -C "$AR9311_OUT" linux-reconfigure ;;
-      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$AR9311_OUT" ar9311_defconfig
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$AR9311_OUT" ascentgnd485_defconfig
               make -C "$AR9311_OUT" ;;
-      *) echo "usage: $0 ar9311 [config|kernel|all]" >&2; exit 1 ;;
+      *) echo "usage: $0 gnd485 [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   air)
     case "${2:-all}" in
@@ -68,5 +69,5 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" vrxpro_defconfig
     make -C "$BR" BR2_EXTERNAL="$EXT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {all|config|kestrel|image|air [config|kernel|all]|ar9311 [config|kernel|all]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {all|config|kestrel|image|air [config|kernel|all]|gnd485 [config|kernel|all]}" >&2; exit 1 ;;
 esac
