@@ -167,10 +167,16 @@ static int open_part(struct part *p, int writing)
 	    info.erasesize != BLOCK || info.writesize != PAGE || info.oobsize != 128 ||
 	    (writing && !(info.flags & MTD_WRITEABLE)))
 		return -1;
-	/* No implicit remapping: fail before writing if this tested layout changes. */
-	for (loff_t at = 0; at < p->size; at += BLOCK) {
-		int bad = ioctl(p->fd, MEMGETBADBLOCK, &at);
-		if (bad) {
+	return 0;
+}
+/* Check only ranges that an operation actually uses. In particular, boot must
+ * not depend on unused tail blocks. Writers still refuse bad blocks instead
+ * of silently inventing a remapping incompatible with the installed layout. */
+static int good_range(struct part *p, uint32_t start, uint32_t size)
+{
+	if (start > p->size || size > p->size - start) return -1;
+	for (loff_t at = start - start % BLOCK; at < (loff_t)start + size; at += BLOCK) {
+		if (ioctl(p->fd, MEMGETBADBLOCK, &at)) {
 			fprintf(stderr, "%s: bad block/query error at 0x%llx\n", p->name,
 				(unsigned long long)at);
 			return -1;
@@ -241,7 +247,8 @@ static int layout(void)
 {
 	unsigned char records[2][AR9311_GPT_BYTES];
 	for (unsigned slot = 0; slot < 2; slot++) {
-		if (exact(parts[0].fd, records[slot], sizeof(records[slot]),
+		if (good_range(&parts[0], 0x100000 + slot * 0x40000, sizeof(records[slot])) ||
+		    exact(parts[0].fd, records[slot], sizeof(records[slot]),
 			  0x100000 + slot * 0x40000, 0))
 			return -1;
 	}
@@ -267,7 +274,7 @@ static int verify(const char *package, const char *directory)
 }
 static int export_range(struct part *p, uint32_t start, uint32_t size, const char *file)
 {
-	if (start > p->size || size > p->size - start)
+	if (good_range(p, start, size))
 		return -1;
 	int out = open(file, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
 	if (out < 0)
@@ -299,7 +306,7 @@ static int compare_range(struct part *p, uint32_t start, const char *file)
 	if (f < 0)
 		return -1;
 	if (fstat(f, &st) || !S_ISREG(st.st_mode) || st.st_size < 0 || start > p->size ||
-	    (uint64_t)st.st_size > p->size - start)
+	    (uint64_t)st.st_size > p->size - start || good_range(p, start, st.st_size))
 		goto done;
 	struct mtd_ecc_stats before, after;
 	if (ioctl(p->fd, ECCGETSTATS, &before))
@@ -330,6 +337,7 @@ static int write_image(struct part *p, uint32_t start, const char *file, int hea
 	if (fstat(f, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || start % BLOCK ||
 	    start >= p->size || (uint64_t)st.st_size > p->size - start)
 		goto done;
+	if (good_range(p, start, p->size - start)) goto done;
 	for (uint32_t at = start; at < p->size; at += BLOCK) {
 		struct erase_info_user erase = {.start = at, .length = BLOCK};
 		if (ioctl(p->fd, MEMERASE, &erase))
@@ -363,6 +371,7 @@ done:
 }
 static int control_read(uint64_t *sequence, unsigned *mode, int *slot)
 {
+	if (good_range(&parts[3], 0, DATA_START)) return -2;
 	*sequence = 0;
 	*mode = 0;
 	*slot = -1;
@@ -443,7 +452,8 @@ static int boot(void)
 		return 10;
 	}
 	unsigned char h[512];
-	if (exact(parts[3].fd, h, 512, DATA_START, 0) || memcmp(h, "FPVOSUP1", 8) || le32(h + 88))
+	if (good_range(&parts[3], DATA_START, 512) ||
+	    exact(parts[3].fd, h, 512, DATA_START, 0) || memcmp(h, "FPVOSUP1", 8) || le32(h + 88))
 		return 11;
 	uint32_t len = le32(h + 16);
 	if (len < 512 || len > parts[3].size - DATA_START)
@@ -464,22 +474,58 @@ static int boot(void)
 	unlink(ROOT_IMAGES "/ascent-gnd485.dtb");
 	return 0;
 }
-static int install(const char *package)
+/* Own a private snapshot before verification. A receiver restart may unlink or
+ * replace staging, and another process can still hold a writable staging fd.
+ * Opening that fd once alone would not protect against in-place modification.
+ * Only this transaction uses the 0400 copy inside its private directory. */
+static int snapshot_package(const char *source, const char *copy)
+{
+	int in = open(source, O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK);
+	if (in < 0) return -1;
+	struct stat st;
+	int out = -1, result = -1;
+	struct statvfs space;
+	if (fstat(in, &st) || !S_ISREG(st.st_mode) || st.st_size < 512 ||
+	    (uint64_t)st.st_size > parts[3].size - DATA_START ||
+	    statvfs(WORK, &space) ||
+	    space.f_bavail * (uint64_t)space.f_frsize < (uint64_t)st.st_size + 32U * 1024 * 1024)
+		goto done;
+	out = open(copy, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+	if (out < 0) goto done;
+	for (off_t at = 0; at < st.st_size;) {
+		size_t n = st.st_size - at;
+		if (n > BLOCK) n = BLOCK;
+		if (exact(in, buffer, n, at, 0) || exact(out, buffer, n, at, 1)) goto done;
+		at += n;
+	}
+	if (fsync(out) || fchmod(out, 0400)) goto done;
+	result = 0;
+done:
+	if (out >= 0) close(out);
+	close(in);
+	if (result) unlink(copy);
+	return result;
+}
+static int install(const char *source)
 {
 	char dir[] = WORK "/install.XXXXXX";
 	if (!mkdtemp(dir))
 		return -1;
-	if (verify(package, dir))
-		return -1;
-	unsigned char h[512];
-	if (header(package, h))
-		return -1;
-	unsigned kind = le32(h + 88);
-	if (kind > 1)
-		return -1;
-	char kernel[256], dtb[256], backups[3][256];
+	char package[256], kernel[256], dtb[256], backups[3][256];
+	int changed[3] = {0}, result = -1;
+	snprintf(package, sizeof(package), "%s/package.fwu", dir);
 	snprintf(kernel, sizeof(kernel), "%s/kernel.img", dir);
 	snprintf(dtb, sizeof(dtb), "%s/ascent-gnd485.dtb", dir);
+	for (unsigned i = 0; i < 3; i++)
+		snprintf(backups[i], sizeof(backups[i]), "%s/before-%u", dir, i);
+	if (snapshot_package(source, package) || verify(package, dir))
+		goto done;
+	unsigned char h[512];
+	if (header(package, h))
+		goto done;
+	unsigned kind = le32(h + 88);
+	if (kind > 1)
+		goto done;
 	/* Legacy fpvOS trees hard-code the opposite bank mapping. Do not install
 	 * one on stock bank 1 and strand the device in an incompatible recovery.
 	 * The verifier has already checked the complete DTB structure and hash. */
@@ -495,20 +541,22 @@ static int install(const char *package)
 		if (f >= 0) close(f);
 		if (!compatible) {
 			fprintf(stderr, "stock userapp1 requires a bank-aware fpvOS device tree; no writes\n");
-			return -1;
+			goto done;
 		}
 	}
-	for (unsigned i = 0; i < 3; i++)
-		snprintf(backups[i], sizeof(backups[i]), "%s/before-%u", dir, i);
+	/* Check every region we will erase before touching any NAND. Restore
+	 * packages do not read, erase or program the inactive rootfs/control area. */
+	if (good_range(&parts[1], 0, parts[1].size) ||
+	    good_range(&parts[2], 0, parts[2].size) ||
+	    (!kind && good_range(&parts[3], 0, parts[3].size))) goto done;
 	struct statvfs space;
 	if (statvfs(WORK, &space) || space.f_bavail * (uint64_t)space.f_frsize < 32U * 1024 * 1024)
-		return -1;
+		goto done;
 	progress(5, 3, "backing up affected NAND regions in RAM");
 	if (export_range(&parts[1], 0, parts[1].size, backups[0]) ||
 	    export_range(&parts[2], 0, parts[2].size, backups[1]) ||
 	    (!kind && export_range(&parts[3], DATA_START, parts[3].size - DATA_START, backups[2])))
-		return -1;
-	int changed[3] = {0}, result = -1;
+		goto done;
 	if (!kind) {
 		progress(25, 3, "writing fpvOS root bundle");
 		changed[2] = 1;
@@ -523,7 +571,7 @@ static int install(const char *package)
 	changed[0] = 1;
 	if (write_image(&parts[1], 0, kernel, 0))
 		goto restore;
-	if (control_write(0))
+	if (!kind && control_write(0))
 		goto restore;
 	progress(100, 4,
 		 kind ? "vendor kernel restored; reboot required"
@@ -544,10 +592,12 @@ restore:
 		}
 	progress(0, -1, "update failed; previous affected regions restored");
 done:
-	/* Keep failed transaction backups in RAM for diagnosis/recovery. */
-	if (!result) {
+	/* Retain evidence only after a write attempt; rejected uploads must not
+	 * accumulate private snapshots and extracted images in scarce tmpfs. */
+	if (!result || !(changed[0] || changed[1] || changed[2])) {
 		for (unsigned i = 0; i < 3; i++)
 			unlink(backups[i]);
+		unlink(package);
 		unlink(kernel);
 		unlink(dtb);
 		char root[256];
@@ -596,6 +646,8 @@ int main(int argc, char **argv)
 	}
 	int result;
 	if (is_preflight) {
+		for (unsigned i = 1; i < 4; i++)
+			if (good_range(&parts[i], 0, parts[i].size)) return 1;
 		printf("Gnd485 %s NAND layout verified; stock=userapp%u fpvOS=userapp%u; no writes\n",
 		       stock_runtime ? "stock" : "fpvOS", stock_bank, stock_bank ^ 1);
 		result = 0;

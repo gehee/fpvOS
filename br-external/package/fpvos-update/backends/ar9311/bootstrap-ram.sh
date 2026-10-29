@@ -60,7 +60,8 @@ mount --bind /dev "$root/dev" || fail 'RAM device view'
 mount --bind /proc "$root/proc" || fail 'RAM process view'
 mount --bind /sys "$root/sys" || fail 'RAM sysfs view'
 # Chroot isolates paths; the root itself lives entirely on the verified tmpfs.
-chroot "$root" /usr/sbin/ar9311-nandctl preflight || fail 'NAND preflight'
-chroot "$root" /usr/libexec/fpvos-update-backend clean || fail 'clean readiness'
+# The receiver performs clean readiness once, before serving any requests.
 : >"$root/run/fpvos-clean-boot"
-exec chroot "$root" /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend
+# Host-side absolute paths above do not exist inside the chroot. The receiver
+# launches md5sum via PATH, unlike the backend shell which sets its own PATH.
+exec chroot "$root" /bin/sh -c 'export PATH=/bin:/usr/sbin:/usr/libexec; exec /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend'

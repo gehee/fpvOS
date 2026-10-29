@@ -22,8 +22,10 @@
 #include "board.h"
 
 #define CHUNK (1024U * 1024)
-#define MAX_FILE (64U * 1024 * 1024)
 #define HEADER 36
+#ifndef CLEAN_BOOT_MARKER
+#define CLEAN_BOOT_MARKER "/run/fpvos-clean-boot"
+#endif
 static unsigned char payload[CHUNK];
 static int port, file = -1, clean, prepared, state;
 static uint32_t total, received, last_seq, last_crc, last_len;
@@ -152,7 +154,8 @@ static int check_md5(void)
 	while (waitpid(p, &status, 0) < 0)
 		if (errno != EINTR)
 			return -1;
-	return result || !WIFEXITED(status) || WEXITSTATUS(status) || strcmp(buf, expected_md5);
+	if (result || !WIFEXITED(status) || WEXITSTATUS(status)) return -1;
+	return strcmp(buf, expected_md5) ? 1 : 0;
 }
 static void stop_requested(int signum)
 {
@@ -310,7 +313,11 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
                                                     fpvos_board.legacy_install_destination);
         int verify_only = destination_matches(payload + 72, "/tmp/pc/fpvos.verify",
                                                fpvos_board.legacy_verify_destination);
-		if (!size || size > MAX_FILE || get32(payload + 68) != 1 ||
+		uint32_t limit = 0;
+		for (unsigned kind = 0; kind < 2; kind++)
+			if (fpvos_board.counts[kind] && fpvos_board.bundle_limits[kind] > limit)
+				limit = fpvos_board.bundle_limits[kind];
+		if (!size || size > limit || get32(payload + 68) != 1 ||
 		    (!install_requested && !verify_only))
 			return ack(h, -1, "invalid size or destination");
 		for (unsigned i = 0; i < 32; i++)
@@ -361,13 +368,15 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 			error = 1;
 		file = -1;
 		prepared = 0;
-		if (error || check_md5()) {
+		int md5_result = error ? 0 : check_md5();
+		if (error || md5_result) {
 			reset_transfer();
 			state = -1;
-			snprintf(detail, sizeof(detail), "MD5 mismatch");
+			snprintf(detail, sizeof(detail), "%s", error ? "staging sync/close failed"
+				 : md5_result < 0 ? "MD5 helper failed" : "MD5 mismatch");
 			return ack(h, -1, detail);
 		}
-		if (run_helper("verify")) {
+		if (!install_requested && run_helper("verify")) {
 			reset_transfer();
 			state = -1;
 			snprintf(detail, sizeof(detail), "package validation failed");
@@ -442,11 +451,14 @@ int main(int argc, char **argv)
 	restore_status();
 	if (state >= 0)
 		reset_transfer();
-	if (access("/run/fpvos-clean-boot", F_OK) == 0 && run_helper("clean") == 0) {
+	if (state >= 0 && access(CLEAN_BOOT_MARKER, F_OK) == 0) {
+		if (run_helper("clean")) {
+			fprintf(stderr, "clean-mode startup failed; receiver not started\n");
+			return 1;
+		}
 		clean = 1;
 		snprintf(detail, sizeof(detail), "clean RAM mode");
 	}
-	restore_status();
 	for (;;) {
 		refresh_worker();
 		if (stopping && !worker)

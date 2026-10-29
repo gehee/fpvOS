@@ -34,5 +34,4 @@ fi
 umount /newroot 2>/dev/null || :
 rm -rf /run/fpvos-root /run/fpvos-update/boot.fwu /run/rootfs.gz
 : > /run/fpvos-clean-boot
-: > /run/fpvos-update/clean
 exec /sbin/init

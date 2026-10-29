@@ -13,7 +13,7 @@
 #include <sys/ioctl.h>
 #include <sys/utsname.h>
 #include <unistd.h>
-static int devices[4096];
+static int devices[4096], numbers[4096];
 int __real_open(const char *, int, ...);
 DIR *__real_opendir(const char *);
 FILE *__real_fopen(const char *, const char *);
@@ -32,11 +32,11 @@ int __wrap_open(const char *path, int flags, ...)
     if (flags & O_CREAT) { va_list args; va_start(args, flags); mode = va_arg(args, int); va_end(args); }
     int mtd = !strncmp(path, "/dev/mtd", 8);
     /* All preflight device descriptors must be opened read-only. */
-    if (mtd) assert((flags & O_ACCMODE) == O_RDONLY);
+    if (mtd && !getenv("TEST_BOOT")) assert((flags & O_ACCMODE) == O_RDONLY);
     char buffer[1024];
     int fd = __real_open(fixture(path, buffer), flags, mode);
     if (getenv("TEST_TRACE")) fprintf(stderr, "open %s => %d\n", path, fd);
-    if (fd >= 0) { assert(fd < 4096); devices[fd] = mtd; }
+    if (fd >= 0) { assert(fd < 4096); devices[fd] = mtd; if (mtd) numbers[fd] = atoi(path + 8); }
     return fd;
 }
 int __wrap___open_2(const char *path, int flags) { return __wrap_open(path, flags); }
@@ -62,11 +62,17 @@ int __wrap_ioctl(int fd, unsigned long command, ...)
     if (command == MEMGETINFO) {
         struct stat st; assert(!fstat(fd, &st));
         struct mtd_info_user *info = arg; memset(info, 0, sizeof(*info));
-        info->type = MTD_NANDFLASH; info->size = st.st_size;
+        info->flags = MTD_WRITEABLE; info->type = MTD_NANDFLASH; info->size = st.st_size;
         info->erasesize = 0x20000; info->writesize = 2048; info->oobsize = 128;
         if (getenv("TEST_TRACE")) fprintf(stderr, "geometry %d size=%x type=%u\n", fd, info->size, info->type);
         return 0;
     }
-    if (command == MEMGETBADBLOCK) return getenv("TEST_BADBLOCK") ? 1 : 0;
+    if (command == MEMGETBADBLOCK) {
+        if (getenv("TEST_BADBLOCK")) return 1;
+        return getenv("TEST_BAD_MTD") && getenv("TEST_BAD_OFFSET") &&
+            numbers[fd] == atoi(getenv("TEST_BAD_MTD")) &&
+            *(loff_t *)arg == strtoll(getenv("TEST_BAD_OFFSET"), NULL, 0);
+    }
+    if (command == ECCGETSTATS) { memset(arg, 0, sizeof(struct mtd_ecc_stats)); return 0; }
     assert(!"preflight attempted a write or unexpected ioctl"); return -1;
 }

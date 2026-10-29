@@ -30,7 +30,7 @@ def compile_framework(destination):
         files = [str(SRC / f'{name}.c'), str(profile)]
         if name == 'verify':
             files.append(str(BACKEND / 'images.c'))
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
 
 
 def load(name):
@@ -83,6 +83,7 @@ class Tests(unittest.TestCase):
         self.process.wait(timeout=3)
         os.close(self.master)
         os.close(self.slave)
+        (self.bin / "clean-boot").unlink(missing_ok=True)
         self.temp.cleanup()
 
     def start(self, data, destination=CLIENT.VERIFY_DESTINATION, md5=None):
@@ -101,6 +102,18 @@ class Tests(unittest.TestCase):
         self.assertEqual(result['state'], 2)
         self.assertEqual((self.dir / 'stage/package.fwu').read_bytes(), data)
         self.assertEqual((self.dir / 'calls').read_text(), 'clean\nverify\n')
+
+    def test_missing_md5_helper_is_not_reported_as_data_corruption(self):
+        arguments = self.process.args
+        self.process.terminate(); self.process.wait(timeout=3)
+        self.process = subprocess.Popen(arguments, env={**os.environ, 'PATH':'/no-host-path-inside-chroot'})
+        self.client.info()
+        self.start(b'valid transfer', destination=CLIENT.DESTINATION)
+        self.client.ack(0x74, b'valid transfer')
+        with self.assertRaisesRegex(ValueError, 'MD5 helper failed'):
+            self.client.ack(0x75)
+        self.assertEqual((self.dir/'calls').read_text(), 'clean\n')
+        self.assertFalse((self.dir/'stage/package.fwu').exists())
 
     def test_install_worker_and_failure(self):
         helper = self.dir / 'helper'
@@ -143,6 +156,68 @@ class Tests(unittest.TestCase):
         self.client.ack(0x74, b'abcd')
         self.client.ack(0x75)
         self.assertEqual((self.dir / 'stage/package.fwu').read_bytes(), b'abcd')
+
+    def test_board_bundle_limit_is_checked_before_staging(self):
+        self.client.clean()
+        limit = max(BOARD['bundle_limits'])
+        for size in (limit+1, 60*1024*1024):
+            self.client.ack(0x72)
+            with self.assertRaisesRegex(ValueError, 'invalid size'):
+                self.client.ack(0x73, struct.pack('<64sii128s128s', b'0'*32,
+                                size, 1, CLIENT.DESTINATION.encode(), b'host'))
+            self.assertFalse((self.dir / 'stage/package.fwu').exists())
+        # Exactly at the limit is accepted without sending/allocating the payload.
+        self.client.ack(0x73, struct.pack('<64sii128s128s', b'0'*32,
+                        limit, 1, CLIENT.DESTINATION.encode(), b'host'))
+        self.assertEqual((self.dir / 'stage/package.fwu').stat().st_size, 0)
+
+    def test_install_delegates_validation_to_transaction_once(self):
+        helper = self.dir / 'helper'
+        helper.write_text(f'''#!/bin/sh
+printf "%s\\n" "$1" >> "{self.dir / 'calls'}"
+[ "$1" != verify ] || exit 99
+if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'}"; fi
+''')
+        path = self.dir / 'test.fwu'; path.write_bytes(b'worker verification fixture')
+        self.assertTrue(self.client.verify(path, install=True)['installed'])
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\ninstall\n')
+
+    def test_clean_boot_runs_readiness_once_and_fails_closed(self):
+        args = self.process.args
+        self.process.terminate(); self.process.wait(timeout=3)
+        (self.bin / 'clean-boot').touch()
+        self.process = subprocess.Popen(args)
+        self.client.info()
+        self.client.ack(0x72)  # Ready without another explicit clean request.
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\n')
+        self.process.terminate(); self.process.wait(timeout=3)
+        (self.dir / 'helper').write_text('#!/bin/sh\nexit 1\n')
+        self.process = subprocess.Popen(args, stderr=subprocess.PIPE)
+        self.assertNotEqual(self.process.wait(timeout=3), 0)
+        self.assertIn(b'clean-mode startup failed', self.process.stderr.read())
+        self.process.stderr.close()
+
+    def test_failed_restore_status_is_not_overridden_by_clean_boot(self):
+        args = self.process.args
+        self.process.terminate(); self.process.wait(timeout=3)
+        (self.bin / 'clean-boot').touch()
+        (self.dir / 'stage/status').write_text('0 -2 restoration failed\n')
+        (self.dir / 'stage/package.fwu').write_bytes(b'evidence')
+        self.process = subprocess.Popen(args)
+        self.client.info()
+        with self.assertRaisesRegex(ValueError, 'restoration failed'):
+            self.client.clean()
+        self.assertFalse((self.dir / 'calls').exists())
+        self.assertEqual((self.dir / 'stage/package.fwu').read_bytes(), b'evidence')
+
+    def test_atomic_package_replace_respects_umask(self):
+        self.fixture()
+        for mask, expected in ((0o022, 0o644), (0o077, 0o600)):
+            path = self.dir / 'output.fwu'
+            subprocess.run([sys.executable, str(ROOT / 'tools/fpvos-update/package.py'),
+                            '--board', 'ar9311', '--replace', str(self.dir/'images'), str(path)],
+                           umask=mask, check=True, capture_output=True)
+            self.assertEqual(path.stat().st_mode & 0o777, expected)
 
     def test_requires_clean_mode(self):
         with self.assertRaisesRegex(ValueError, 'clean mode'):

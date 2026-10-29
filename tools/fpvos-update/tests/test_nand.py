@@ -17,6 +17,9 @@ class NandTests(unittest.TestCase):
         cls.build = tempfile.TemporaryDirectory()
         cls.bin = Path(cls.build.name)
         compile_framework(cls.bin)
+        (cls.bin/'verify').rename(cls.bin/'verify-real')
+        (cls.bin/'verify').write_text(f'#!/bin/sh\necho verify >> verify-calls\nexec "{cls.bin}/verify-real" "$@"\n')
+        (cls.bin/'verify').chmod(0o755)
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-DWORK="work"', '-DROOT_IMAGES="root"',
                         f'-DVERIFY_PROGRAM="{cls.bin / "verify"}"', str(Path(__file__).with_name('nand_sim.c')),
                         '-Wl,--wrap=ioctl', '-Wl,--wrap=pwrite', '-Wl,--wrap=pread', '-o', str(cls.bin / 'sim')], check=True)
@@ -46,6 +49,7 @@ class NandTests(unittest.TestCase):
 
     def test_success_and_readback(self):
         self.run_sim('install')
+        self.assertEqual((self.dir/'verify-calls').read_text(), 'verify\n')
         self.assertEqual(self.hashes()[0], self.before[0])
         for i, name in ((1, 'kernel.img'), (2, 'ascent-gnd485.dtb')):
             expected = (self.dir / 'images' / name).read_bytes()
@@ -71,6 +75,51 @@ class NandTests(unittest.TestCase):
         result = self.run_sim('legacy-bank1')
         self.assertIn(b'requires a bank-aware', result.stderr)
         self.assertEqual(self.hashes(), self.before)
+
+    def test_staging_mutation_after_verification_cannot_change_programmed_bytes(self):
+        original = self.package.read_bytes()
+        for mode in ('mutate1', 'mutate2', 'mutate3'):  # unlink, replace, same-inode write
+            with self.subTest(mode=mode):
+                self.package.write_bytes(original)
+                self.run_sim(mode)
+                actual = (self.dir / 'part3').read_bytes()[0x40000:0x40000+len(original)]
+                self.assertEqual(actual, original)
+                self.assertEqual(self.hashes()[0], self.before[0])
+                self.assertIn('100 4', (self.dir / 'work/status').read_text())
+
+    def test_invalid_snapshot_refuses_install_without_erasing(self):
+        damaged = bytearray(self.package.read_bytes()); damaged[-1] ^= 1
+        self.package.write_bytes(damaged)
+        self.run_sim('invalid')
+        self.assertEqual(self.hashes(), self.before)
+        self.assertEqual(list((self.dir/'work').glob('install.*')), [])
+
+    def test_bad_block_in_any_write_range_refuses_before_first_erase(self):
+        for part in (1, 2, 3):
+            with self.subTest(part=part):
+                self.run_sim(f'bad{part}')
+                self.assertEqual(self.hashes(), self.before)
+
+    def test_vendor_restore_leaves_entire_inactive_bank_unchanged(self):
+        kernel = bytearray((self.dir / 'images/kernel.img').read_bytes())
+        struct.pack_into('<I', kernel, 12, 0x200a0000)
+        struct.pack_into('>II', kernel, 80, 0x200a0000, 0x200a0000)
+        struct.pack_into('>I', kernel, 68, 0)
+        struct.pack_into('>I', kernel, 68, zlib.crc32(kernel[64:128]))
+        struct.pack_into('<I', kernel, 32, sum(kernel[64:]))
+        kernel += b'Z' * (0x600000-len(kernel))
+        dtb = (self.dir / 'images/ascent-gnd485.dtb').read_bytes()
+        dtb += b'Y' * (0x60000-len(dtb))
+        (self.dir / 'kernel.before.bin').write_bytes(kernel)
+        (self.dir / 'dtb.before.bin').write_bytes(dtb)
+        self.package.write_bytes(test_update.PACKAGE.build(self.dir, test_update.BOARD, vendor_restore=True))
+        for bank in (0, 1):
+            with self.subTest(bank=bank):
+                self.run_sim(f'restore-stock{bank}')
+                self.assertEqual((self.dir / 'part1').read_bytes(), kernel)
+                self.assertEqual((self.dir / 'part2').read_bytes(), dtb)
+                self.assertEqual(self.hashes()[0], self.before[0])
+                self.assertEqual(self.hashes()[3], self.before[3])
 
     def test_layout_crc_and_active_bank(self):
         raw = bytearray(b'\xff' * 0xb40000)

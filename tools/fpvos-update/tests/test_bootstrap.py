@@ -3,6 +3,8 @@ import importlib.util
 import os
 from pathlib import Path
 import struct
+import shutil
+from types import SimpleNamespace
 import subprocess
 import tempfile
 import unittest
@@ -20,7 +22,7 @@ def compile_unified(destination):
     subprocess.run(['python3', str(PKG/'generate-profile.py'), str(BACKEND/'profile.json'), str(destination/'profile.c')], check=True)
     for source, name in ((SRC/'receiver.c', 'receiver'), (SRC/'verify.c', 'verify'), (BACKEND/'nand.c', 'nand')):
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC),
-                        '-Dmain=fpvos_'+name+'_main', '-c', str(source), '-o', str(destination/(name+'.o'))], check=True)
+                        f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"', '-Dmain=fpvos_'+name+'_main', '-c', str(source), '-o', str(destination/(name+'.o'))], check=True)
     busybox = destination/'busybox.fixture'; busybox.write_bytes(BootstrapArtifact.elf())
     bootstrap.build(busybox, PKG, destination/'resources.c')
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC), str(SRC/'main.c'),
@@ -92,12 +94,28 @@ class BootstrapArtifact(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         subprocess.run(['sh', '-n', str(BACKEND/'bootstrap-ram.sh')], check=True)
 
+    def test_receiver_handoff_replaces_host_path_after_entering_ram_chroot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # The wrapper stands in for the namespace change only. Execute the
+            # real shell handoff with a host-side PATH containing no md5sum.
+            (root/'chroot').write_text('#!/bin/sh\nshift\nexec "$@"\n')
+            (root/'chroot').chmod(0o755)
+            command = (BACKEND/'bootstrap-ram.sh').read_text().splitlines()[-1]
+            command = command.replace('exec /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend',
+                                      'command -v md5sum; printf "%s\\n" "$PATH"')
+            result = subprocess.run(['/bin/sh', '-c', command], env={'PATH':tmp, 'root':'fixture'}, capture_output=True, check=True)
+            self.assertIn(b'/bin/md5sum\n', result.stdout)
+            self.assertTrue(result.stdout.endswith(b'/bin:/usr/sbin:/usr/libexec\n'))
+
 
 class RuntimePreflight(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.build = tempfile.TemporaryDirectory(); cls.binary = Path(cls.build.name)/'runtime'
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-DWORK="work"', str(BACKEND/'nand.c'),
+        base.compile_framework(Path(cls.build.name))
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-DWORK="work"', '-DROOT_IMAGES="root"',
+                        f'-DVERIFY_PROGRAM="{Path(cls.build.name) / "verify"}"', str(BACKEND/'nand.c'),
                         str(Path(__file__).with_name('runtime_sim.c')),
                          *['-Wl,--wrap='+s for s in ('open', '__open_2', 'fopen', 'opendir', 'uname', 'geteuid', 'ioctl')], '-o', str(cls.binary)], check=True)
         kernel_patch = (PKG.parents[1]/'board/ar9311/linux-patches/0009-mtd-ar9311-bank-aware-partitions.patch').read_text()
@@ -170,6 +188,36 @@ class RuntimePreflight(unittest.TestCase):
         self.assertIn(b'fpvOS NAND', self.run_preflight().stdout)
         (self.root/'sys/class/mtd/mtd17/offset').write_text('0\n'); self.run_preflight(False)
 
+    def test_boot_checks_used_blocks_but_ignores_unused_bad_tail(self):
+        (self.root/'proc/device-tree/model').write_text('Caddx Ascent Gnd485 (AR9311)\0')
+        (self.root/'sys/class/mtd/mtd0/name').write_text('boot-protected\n')
+        with (self.root/'dev/mtd0').open('r+b') as f: f.truncate(0xb40000)
+        (self.root/'sys/class/mtd/mtd17/name').write_text('fpvos\n')
+        for number, offset in ((0,0),(14,0xb40000),(15,0x1140000),(17,0x26a0000)):
+            (self.root/f'sys/class/mtd/mtd{number}/offset').write_text(hex(offset)+'\n')
+        bundle = base.Tests.fixture(SimpleNamespace(dir=self.root))
+        for number, name in ((14, 'kernel.img'), (15, 'ascent-gnd485.dtb')):
+            with (self.root/f'dev/mtd{number}').open('r+b') as f:
+                f.write((self.root/'images'/name).read_bytes())
+        record = bytearray(b'\xff'*2048); record[:8] = b'FPVOCTL1'
+        struct.pack_into('<QII', record, 8, 1, 0, 0)
+        struct.pack_into('<I', record, 20, zlib.crc32(record))
+        with (self.root/'dev/mtd17').open('r+b') as f:
+            f.write(record); f.seek(0x40000); f.write(bundle)
+        for mtd, offset, success in ((17,0x14e0000,True), (14,0x5e0000,True),
+                                     (0,0,True), (17,0x40000,False), (14,0,False),
+                                     (17,0,False), (0,0x100000,False)):
+            with self.subTest(mtd=mtd, offset=offset):
+                self.run_preflight(success, command='boot', TEST_BOOT='1',
+                                   TEST_BAD_MTD=str(mtd), TEST_BAD_OFFSET=hex(offset))
+                if success:
+                    self.assertEqual((self.root/'root/rootfs.cpio.uboot').read_bytes(),
+                                     (self.root/'images/rootfs.cpio.uboot').read_bytes())
+                shutil.rmtree(self.root/'root', ignore_errors=True)
+                (self.root/'work/boot.fwu').unlink(missing_ok=True)
+        # Installation preflight still refuses the same unused bad block.
+        self.run_preflight(False, TEST_BAD_MTD='17', TEST_BAD_OFFSET='0x14e0000')
+
     def test_preserved_stock_root_may_be_attached_but_geometry_must_match(self):
         d = self.root/'sys/class/mtd/mtd16'; d.mkdir(); (d/'name').write_text('userapp0\n')
         ubi = self.root/'sys/class/ubi/ubi0'; ubi.mkdir(); (ubi/'mtd_num').write_text('16\n')
@@ -228,9 +276,57 @@ class RuntimePreflight(unittest.TestCase):
 
 
 class MountPolicy(unittest.TestCase):
+    def test_chroot_mount_check_uses_host_view_and_fails_if_unavailable(self):
+        # Execute the actual helper function against separate host/chroot proc
+        # fixtures. A virtual-only self view must not hide a dirty host mount.
+        helper = (BACKEND/'update-helper').read_text()
+        function = helper.split('check_mounts() {', 1)[1].split('\n}\n', 1)[0]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root/'1').mkdir()
+            (root/'mounts').write_text('tmpfs / tmpfs rw 0 0\nproc /proc proc rw 0 0\n')
+            host = root/'1/mounts'
+            stock_root = '/dev/root / squashfs ro,relatime 0 0\n'
+            function = function.replace('/proc/', str(root)+'/')
+            command = 'check_mounts() {'+function+'\n}\ncheck_mounts'
+            def check(stock, allowed):
+                r = subprocess.run(['sh', '-c', command], env={**os.environ, 'stock':str(stock)}, capture_output=True)
+                self.assertEqual(r.returncode == 0, allowed, r.stderr)
+            for mount in ('/dev/ubi10_0 /factory ubifs rw 0 0\n',
+                          '/dev/ubi18_0 /usrdata ubifs rw 0 0\n'):
+                host.write_text(stock_root+mount); check(1, False); check(0, True)
+            host.write_text(stock_root); check(1, True)
+            host.write_text(''); check(1, False)
+            host.unlink(); check(1, False)
+
+    def test_install_helper_delegates_verification_but_keeps_mount_guard(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); (root/'proc/device-tree').mkdir(parents=True)
+            (root/'proc/device-tree/model').write_bytes(b'Caddx Ascent Gnd485 (AR9311)\0')
+            (root/'proc/mounts').write_text('tmpfs / tmpfs rw 0 0\n')
+            (root/'work').mkdir(); (root/'work/clean').touch()
+            for name in ('nand', 'verify'):
+                tool = root/name
+                tool.write_text(f'#!/bin/sh\necho {name} >> "{root}/calls"\n')
+                tool.chmod(0o755)
+            script = (BACKEND/'update-helper').read_text()
+            script = script.replace('#!/bin/sh', '#!/bin/sh\nid() { echo 0; }')
+            script = script.replace('/proc/', str(root/'proc')+'/')
+            script = script.replace('/run/fpvos-update', str(root/'work'))
+            script = script.replace('/usr/sbin/ar9311-nandctl', str(root/'nand'))
+            script = script.replace('/usr/libexec/fpvos-update-verify', str(root/'verify'))
+            helper = root/'helper'; helper.write_text(script)
+            subprocess.run(['sh',str(helper),'install','fixture.fwu'],check=True)
+            self.assertEqual((root/'calls').read_text(), 'nand\n')
+            subprocess.run(['sh',str(helper),'verify','fixture.fwu'],check=True)
+            self.assertEqual((root/'calls').read_text(), 'nand\nverify\n')
+            with (root/'proc/mounts').open('a') as f: f.write('/dev/ubi0_0 /data ubifs rw 0 0\n')
+            result = subprocess.run(['sh',str(helper),'install','fixture.fwu'])
+            self.assertNotEqual(result.returncode,0)
+            self.assertEqual((root/'calls').read_text(), 'nand\nverify\n')
+
     def test_only_preserved_readonly_stock_root_and_virtual_mounts_are_allowed(self):
         helper = (BACKEND/'update-helper').read_text()
-        program = helper.split('awk -v stock="$stock" \x27', 1)[1].split("' /proc/mounts", 1)[0]
+        program = helper.split('awk -v stock="$stock" \x27', 1)[1].split("' ", 1)[0]
         virtual = 'tmpfs /tmp tmpfs rw 0 0\nproc /proc proc rw 0 0\n'
         for source in ('/dev/root', '/dev/ubiblock0_0'):
             root = f'{source} / squashfs ro,relatime 0 0\n'

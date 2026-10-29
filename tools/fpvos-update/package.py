@@ -62,6 +62,9 @@ def main():
                 output.write(payload)
                 output.flush()
                 os.fsync(output.fileno())
+                mask = os.umask(0)
+                os.umask(mask)
+                os.fchmod(output.fileno(), 0o666 & ~mask)
                 os.replace(temporary, args.output)
             finally:
                 temporary.unlink(missing_ok=True)
