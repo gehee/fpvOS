@@ -155,7 +155,7 @@ The images then carry:
   the file over ssh to go back to stock's. Both ends must run the same firmware
   family: an Open8030 air unit needs an Open8030 goggle.
 
-`OPEN8030_OVERRIDE_SRCDIR` (in `local.mk`) builds a local Open8030 checkout
+`OPEN8030_OVERRIDE_SRCDIR` (in the board output directory's `local.mk`) builds a local Open8030 checkout
 instead of the pinned commit.
 
 ## 3. Build
@@ -170,10 +170,10 @@ Sub-commands for iterating:
 ./build.sh config     # (re)generate the Buildroot .config from the defconfig
 ./build.sh kestrel    # rebuild only kestrel into the sysroot
 ./build.sh image      # re-assemble the image (rootfs already built)
-./build.sh air        # the air unit's image, into output-air/ (see below)
+./build.sh air        # the air unit's image, into output/ascent-lite/ (see below)
 ```
 
-The result, in the repo root, is the image twice:
+The VRX Pro images are in `output/vrxpro/images/`:
 
 - `sdcard.img` — the raw image, for `dd`
 - `sdcard.img.xz` — the same image compressed, for balenaEtcher or Raspberry
@@ -181,13 +181,32 @@ The result, in the repo root, is the image twice:
 
 `COMPRESS=0 ./build.sh` skips the `.xz` when you're iterating and only `dd`.
 
+Each board uses a separate output directory:
+
+| Build command | Output directory |
+| --- | --- |
+| `./build.sh` | `output/vrxpro/` |
+| `./build.sh air` | `output/ascent-lite/` |
+| `./build.sh gnd485` (or `ar9311`) | `output/ascent-gnd485/` |
+
+Each contains its own `.config`, `build/`, `host/`, `target/` and `images/`.
+Build outputs are Git-ignored. Run package and configuration commands against
+that board's directory, for example `make -C output/vrxpro menuconfig`, after
+`./build.sh config`. Put local package overrides in that directory's `local.mk`.
+
+Older checkouts used `buildroot/output/`, `output-air/` and `output-ar9311/`.
+Those folders are left untouched and remain ignored. Start a fresh build at the
+new location; moving an existing Buildroot output can leave embedded absolute
+paths pointing to the old directory. Copy any intentional `local.mk` overrides
+separately. Release archives continue to be assembled under `out/`.
+
 ## 4. Flash and boot
 
 See [INSTALL.md](INSTALL.md) for flashing, first boot, and recovery back to
 stock. The easy way is balenaEtcher with `sdcard.img.xz`; from a Linux shell:
 
 ```sh
-sudo dd if=sdcard.img of=/dev/sdX bs=4M conv=fsync
+sudo dd if=output/vrxpro/images/sdcard.img of=/dev/sdX bs=4M conv=fsync
 # If the card is larger than the image, extend the backup GPT:
 sudo sgdisk -e /dev/sdX
 ```
@@ -208,7 +227,7 @@ reflash with Caddx's own update.
 
 ```sh
 scripts/extract-vendor.py      # also saves the stock Ascent_H_Sky_*.img to vendor/stock/air/
-./build.sh air                 # -> output-air/images/Ascent_H_Sky_18_21_10.img
+./build.sh air                 # -> output/ascent-lite/images/Ascent_H_Sky_18_21_10.img
 ./build.sh air kernel          # just the toolchain and the kernel
 boot/ascent-kernel-check.py    # compare our kernel with the stock one
 ```
@@ -270,7 +289,7 @@ the stock one, and `ascent-kernel-check.py` are for that).
 - **Buildroot fails on first package** — confirm you cloned the exact pinned
   version from `br-external/BUILDROOT_VERSION`.
 - **Boots to a black screen** — almost always the loader; confirm
-  `buildroot/output/images/uboot-patched.bin` exists (the fpvos-bootchain
+  `output/vrxpro/images/uboot-patched.bin` exists (the fpvos-bootchain
   package makes it from `vendor/stock/uboot.img`).
 
 ## AR9311 / Ascent Gnd485
