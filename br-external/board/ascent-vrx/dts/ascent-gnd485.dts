@@ -245,7 +245,6 @@
 
 &gpio {
 	status = "okay";
-	compatible = "caddx,gnd485-gpio", "artosyn,gpio";
 
 	/* Stock run.sh: keep the native USB connector in debug/device
 	 * mode when the GPIO bank direction shadow becomes active.
