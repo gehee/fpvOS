@@ -187,7 +187,7 @@ Each board uses a separate output directory:
 | --- | --- |
 | `./build.sh` | `output/vrxpro/` |
 | `./build.sh air` | `output/ascent-lite/` |
-| `./build.sh ascent-vrx` (aliases: `gnd485`, `ascent-gnd485`, `ar9311`) | `output/ascent-vrx/` |
+| `./build.sh ascent-vrx` | `output/ascent-vrx/` |
 
 Each contains its own `.config`, `build/`, `host/`, `target/` and `images/`.
 Build outputs are Git-ignored. Run package and configuration commands against
@@ -298,7 +298,5 @@ the stock one, and `ascent-kernel-check.py` are for that).
 The experimental `ascentvrx_defconfig` (`./build.sh ascent-vrx`) builds Linux 6.18 with decoder, HDMI,
 SDIO radio and USB recovery/update support. See the [AR9311 board guide](AR9311.md)
 for dependencies, building, RAM boot, NAND installation and known limitations.
-The old `gnd485`, `ascent-gnd485` and `ar9311` build commands, and
-`ascentgnd485_defconfig` / `ar9311_defconfig`, remain aliases for this board.
 Shared SoC support lives under `br-external/board/common/ar9311`; Gnd485 wiring,
 display and NAND policy live under `br-external/board/ascent-vrx`.

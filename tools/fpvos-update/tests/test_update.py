@@ -21,7 +21,7 @@ SRC = PKG / 'src'
 BACKEND = PKG / 'backends/ascent-vrx'
 sys.path.insert(0, str(ROOT / 'tools/fpvos-update'))
 from boards import get_profile
-BOARD = get_profile('ar9311')
+BOARD = get_profile('ascent-vrx')
 
 def compile_framework(destination):
     profile = destination / 'profile.c'
@@ -239,7 +239,7 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         for mask, expected in ((0o022, 0o644), (0o077, 0o600)):
             path = self.dir / 'output.fwu'
             subprocess.run([sys.executable, str(ROOT / 'tools/fpvos-update/package.py'),
-                            '--board', 'ar9311', '--replace', str(self.dir/'images'), str(path)],
+                            '--board', 'ascent-vrx', '--replace', str(self.dir/'images'), str(path)],
                            umask=mask, check=True, capture_output=True)
             self.assertEqual(path.stat().st_mode & 0o777, expected)
 

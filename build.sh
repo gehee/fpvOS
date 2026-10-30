@@ -7,7 +7,6 @@
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
 #   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
-#   ./build.sh ar9311 ...             # compatibility alias for ascent-vrx
 #
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
@@ -39,7 +38,7 @@ AIR_OUT="$ROOT/output/ascent-lite"
 ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
 
 case "${1:-all}" in
-  ascent-vrx|gnd485|ascent-gnd485|ar9311)
+  ascent-vrx)
     # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
     case "${2:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig ;;

@@ -47,7 +47,7 @@ def build(images, board, release='development', vendor_restore=False):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--board', required=True, help='board backend, e.g. ascent-vrx (ar9311 and ascent-gnd485 are compatibility aliases)')
+    parser.add_argument('--board', required=True, help='board backend, e.g. ascent-vrx')
     parser.add_argument('images', type=Path)
     parser.add_argument('output', type=Path)
     parser.add_argument('--release', default='development', help='informational; no ordering policy')
