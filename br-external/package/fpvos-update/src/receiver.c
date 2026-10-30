@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "board.h"
+#include "fpvos-bytes.h"
 
 #define CHUNK (1024U * 1024)
 #define HEADER 36
@@ -36,26 +37,6 @@ static volatile sig_atomic_t stopping;
 static char status_file[512];
 static char expected_md5[33], staging[512], detail[64] = "normal mode";
 static const char *helper;
-static uint32_t get32(const unsigned char *p)
-{
-	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-static void put32(unsigned char *p, uint32_t v)
-{
-	p[0] = v;
-	p[1] = v >> 8;
-	p[2] = v >> 16;
-	p[3] = v >> 24;
-}
-static uint32_t crc_update(uint32_t c, const unsigned char *p, size_t n)
-{
-	while (n--) {
-		c ^= *p++;
-		for (int i = 0; i < 8; i++)
-			c = (c >> 1) ^ ((0 - (c & 1)) & 0xedb88320U);
-	}
-	return c;
-}
 static int io(int fd, void *buf, size_t n, int writing)
 {
 	unsigned char *p = buf;
@@ -82,22 +63,22 @@ static int reply(const unsigned char *request, const void *body, uint32_t n)
 	memcpy(h, request, HEADER);
 	h[6] = 2;
 	h[7] = 0;
-	put32(h + 20, n);
-	put32(h + 32, 0);
-	put32(h + 32, ~crc_update(crc_update(~0U, h, HEADER), body, n));
+	fpvos_put_le32(h + 20, n);
+	fpvos_put_le32(h + 32, 0);
+	fpvos_put_le32(h + 32, ~fpvos_crc32_update(fpvos_crc32_update(~0U, h, HEADER), body, n));
 	return io(port, h, sizeof(h), 1) || io(port, (void *)body, n, 1);
 }
 static int ack(const unsigned char *h, int status, const char *text)
 {
 	unsigned char body[80] = {0};
-	uint32_t cmd = get32(h + 12);
+	uint32_t cmd = fpvos_get_le32(h + 12);
 	int data = (cmd == 0x74 || cmd == 0x75), off = data ? 12 : 0;
 	if (data) {
-		put32(body, get32(h + 20));
-		put32(body + 4, received);
-		put32(body + 8, total);
+		fpvos_put_le32(body, fpvos_get_le32(h + 20));
+		fpvos_put_le32(body + 4, received);
+		fpvos_put_le32(body + 8, total);
 	}
-	put32(body + off, (uint32_t)status);
+	fpvos_put_le32(body + off, (uint32_t)status);
 	snprintf((char *)body + off + 4, 64, "%s", text);
 	return reply(h, body, data ? 80 : 68);
 }
@@ -225,11 +206,11 @@ static int destination_matches(const unsigned char *name, const char *current, c
 }
 static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 {
-	uint32_t cmd = get32(h + 12), seq = get32(h + 24);
+	uint32_t cmd = fpvos_get_le32(h + 12), seq = fpvos_get_le32(h + 24);
 	refresh_worker();
 	if (cmd == 0x3c && !n) {
 		unsigned char b[300] = {0};
-		put32(b, CHUNK);
+		fpvos_put_le32(b, CHUNK);
 		snprintf((char *)b + 4, 32, "development");
 		snprintf((char *)b + 36, 64, "fpvOS updater");
 		snprintf((char *)b + 104, 64, "fpvOS unsigned development updates");
@@ -248,10 +229,10 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 	}
 	if (cmd == 0x76 && !n) {
 		unsigned char b[72] = {0};
-		put32(b, (state == 3 || state == 4)
+		fpvos_put_le32(b, (state == 3 || state == 4)
 			     ? install_progress
 			     : (state == 2 ? 90 : (total ? (uint64_t)received * 80 / total : 0)));
-		put32(b + 4, (uint32_t)state);
+		fpvos_put_le32(b + 4, (uint32_t)state);
 		snprintf((char *)b + 8, 64, "%s", detail);
 		return reply(h, b, sizeof(b));
 	}
@@ -308,7 +289,7 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		return ack(h, 0, "OK");
 	}
 	if (cmd == 0x73 && n == 328 && prepared && file < 0) {
-		uint32_t size = get32(payload + 64);
+		uint32_t size = fpvos_get_le32(payload + 64);
 		install_requested = destination_matches(payload + 72, "/tmp/pc/fpvos.fwu",
                                                     fpvos_board.legacy_install_destination);
         int verify_only = destination_matches(payload + 72, "/tmp/pc/fpvos.verify",
@@ -317,7 +298,7 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		for (unsigned kind = 0; kind < 2; kind++)
 			if (fpvos_board.counts[kind] && fpvos_board.bundle_limits[kind] > limit)
 				limit = fpvos_board.bundle_limits[kind];
-		if (!size || size > limit || get32(payload + 68) != 1 ||
+		if (!size || size > limit || fpvos_get_le32(payload + 68) != 1 ||
 		    (!install_requested && !verify_only))
 			return ack(h, -1, "invalid size or destination");
 		for (unsigned i = 0; i < 32; i++)
@@ -481,20 +462,20 @@ int main(int argc, char **argv)
 			break;
 		if (io(port, h, HEADER, 0))
 			break;
-		uint32_t n = get32(h + 20), crc = get32(h + 32);
+		uint32_t n = fpvos_get_le32(h + 20), crc = fpvos_get_le32(h + 32);
 		if (memcmp(h, "OTRA", 4) || h[4] != 0xdc || h[5] != 0x0c || h[6] != 1 || h[7] ||
 		    h[16] != 2 || h[17] || n > CHUNK)
 			break;
 		if (io(port, payload, n, 0))
 			break;
-		put32(h + 32, 0);
-		if (~crc_update(crc_update(~0U, h, HEADER), payload, n) != crc) {
+		fpvos_put_le32(h + 32, 0);
+		if (~fpvos_crc32_update(fpvos_crc32_update(~0U, h, HEADER), payload, n) != crc) {
 			if (ack(h, -1, "CRC mismatch"))
 				break;
 			continue;
 		}
 		/* Retry count is excluded from data identity, so a retry can change it. */
-		if (dispatch(h, n, ~crc_update(~0U, payload, n)))
+		if (dispatch(h, n, ~fpvos_crc32_update(~0U, payload, n)))
 			break;
 	}
 	/* Disconnecting the cable must not interrupt a flash transaction. */

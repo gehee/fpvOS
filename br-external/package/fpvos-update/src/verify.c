@@ -11,19 +11,7 @@
 #include <unistd.h>
 
 #include "board.h"
-static uint32_t le32(const unsigned char *p)
-{
-	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-static uint32_t crc(uint32_t c, const unsigned char *p, size_t n)
-{
-	while (n--) {
-		c ^= *p++;
-		for (int i = 0; i < 8; i++)
-			c = (c >> 1) ^ ((0 - (c & 1)) & 0xedb88320U);
-	}
-	return c;
-}
+#include "fpvos-bytes.h"
 static int zeros(const unsigned char *p, size_t n)
 {
 	while (n--)
@@ -91,24 +79,24 @@ int main(int argc, char **argv)
 	if (!in)
 		goto done;
 	fd = -1;
-	if (fread(h, 1, 512, in) != 512 || memcmp(h, "FPVOSUP1", 8) || le32(h + 8) != 1 ||
-	    le32(h + 12) != fpvos_board.board_id || le32(h + 16) != (uint64_t)st.st_size)
+	if (fread(h, 1, 512, in) != 512 || memcmp(h, "FPVOSUP1", 8) || fpvos_get_le32(h + 8) != 1 ||
+	    fpvos_get_le32(h + 12) != fpvos_board.board_id || fpvos_get_le32(h + 16) != (uint64_t)st.st_size)
 		goto done;
-	unsigned kind = le32(h + 88), count = le32(h + 20);
+	unsigned kind = fpvos_get_le32(h + 88), count = fpvos_get_le32(h + 20);
 	if (kind > 1 || !fpvos_board.counts[kind] || count != fpvos_board.counts[kind] ||
 	    (uint64_t)st.st_size > fpvos_board.bundle_limits[kind] ||
 	    !zeros(h + 96 + 104 * count, 104 * (3 - count)))
 		goto done;
-	uint32_t expected = le32(h + 508);
+	uint32_t expected = fpvos_get_le32(h + 508);
 	memset(h + 508, 0, 4);
-	if (~crc(~0U, h, 512) != expected || !memchr(h + 24, 0, 64) || !zeros(h + 92, 4) ||
+	if (~fpvos_crc32_update(~0U, h, 512) != expected || !memchr(h + 24, 0, 64) || !zeros(h + 92, 4) ||
 	    !zeros(h + 408, 100))
 		goto done;
 	uint64_t sum = 512;
 	for (unsigned i = 0; i < count; i++) {
 		unsigned char *entry = h + 96 + 104 * i;
 		size_t name_len = strlen(fpvos_board.names[i]);
-		uint32_t n = le32(entry + 32);
+		uint32_t n = fpvos_get_le32(entry + 32);
 		if (memcmp(entry, fpvos_board.names[i], name_len) || !zeros(entry + name_len, 32 - name_len) ||
 		    !zeros(entry + 100, 4) || !n || n > fpvos_board.limits[i])
 			goto done;
@@ -122,7 +110,7 @@ int main(int argc, char **argv)
 		goto done;
 	for (unsigned i = 0; i < count; i++) {
 		unsigned char *entry = h + 96 + 104 * i;
-		uint32_t n = le32(entry + 32);
+		uint32_t n = fpvos_get_le32(entry + 32);
 		buf = malloc(n);
 		if (!buf || fread(buf, 1, n, in) != n || !fpvos_board_image_valid(i, buf, n, kind))
 			goto done;

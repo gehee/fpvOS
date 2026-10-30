@@ -117,7 +117,7 @@ class RuntimePreflight(unittest.TestCase):
     def setUpClass(cls):
         cls.build = tempfile.TemporaryDirectory(); cls.binary = Path(cls.build.name)/'runtime'
         base.compile_framework(Path(cls.build.name))
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-DWORK="work"', '-DROOT_IMAGES="root"',
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-DWORK="work"', '-DROOT_IMAGES="root"', '-I'+str(SRC),
                         f'-DVERIFY_PROGRAM="{Path(cls.build.name) / "verify"}"', str(BACKEND/'nand.c'),
                         str(Path(__file__).with_name('runtime_sim.c')),
                          *['-Wl,--wrap='+s for s in ('open', '__open_2', 'fopen', 'opendir', 'uname', 'geteuid', 'ioctl')], '-o', str(cls.binary)], check=True)
@@ -128,6 +128,7 @@ class RuntimePreflight(unittest.TestCase):
         dest = Path(cls.build.name)
         (dest/'ofpart_ar9311.h').write_text(header)
         (dest/'fpvos_ar9311_layout.h').write_bytes((BACKEND/'layout.h').read_bytes())
+        (dest/'fpvos-bytes.h').write_bytes((SRC/'fpvos-bytes.h').read_bytes())
         cls.kernel = dest/'kernel-partitions'
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(dest),
                         str(Path(__file__).with_name('kernel_partition_sim.c')), '-o', str(cls.kernel)], check=True)

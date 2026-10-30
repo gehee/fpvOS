@@ -31,6 +31,7 @@ endif
 ifeq ($(BR2_FPVOS_BOARD_ASCENT_VRX),y)
 define ASCENT_VRX_LAYOUT_KERNEL_HEADER
 	$(INSTALL) -m 0644 $(BR2_EXTERNAL_FPVOS_PATH)/package/fpvos-update/backends/ascent-vrx/layout.h $(LINUX_DIR)/drivers/mtd/parsers/fpvos_ar9311_layout.h
+	$(INSTALL) -m 0644 $(BR2_EXTERNAL_FPVOS_PATH)/package/fpvos-update/src/fpvos-bytes.h $(LINUX_DIR)/drivers/mtd/parsers/fpvos-bytes.h
 endef
 LINUX_PRE_BUILD_HOOKS += ASCENT_VRX_LAYOUT_KERNEL_HEADER
 endif

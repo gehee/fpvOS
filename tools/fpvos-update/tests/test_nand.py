@@ -20,7 +20,7 @@ class NandTests(unittest.TestCase):
         (cls.bin/'verify').rename(cls.bin/'verify-real')
         (cls.bin/'verify').write_text(f'#!/bin/sh\necho verify >> verify-calls\nexec "{cls.bin}/verify-real" "$@"\n')
         (cls.bin/'verify').chmod(0o755)
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-DWORK="work"', '-DROOT_IMAGES="root"',
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-DWORK="work"', '-DROOT_IMAGES="root"', '-I'+str(SRC),
                         f'-DVERIFY_PROGRAM="{cls.bin / "verify"}"', str(Path(__file__).with_name('nand_sim.c')),
                         '-Wl,--wrap=ioctl', '-Wl,--wrap=pwrite', '-Wl,--wrap=pread', '-o', str(cls.bin / 'sim')], check=True)
 

@@ -54,36 +54,6 @@ static const char stock_mtd_prefix[] =
     "256k(gpt0),256k(gpt1),512K(vendor),6M(factory),512K(bl31),384K(env0),"
     "384K(env1),1M(uboot0),1M(uboot1),6M(kernel),384K(dtb),21M(userapp0),21M(userapp1),"
     "22M(usr_data0),22M(usr_data1),22M(fpv_data)";
-static uint32_t le32(const unsigned char *p)
-{
-	return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
-}
-static uint64_t le64(const unsigned char *p)
-{
-	return le32(p) | ((uint64_t)le32(p + 4) << 32);
-}
-static void put32(unsigned char *p, uint32_t x)
-{
-	p[0] = x;
-	p[1] = x >> 8;
-	p[2] = x >> 16;
-	p[3] = x >> 24;
-}
-static void put64(unsigned char *p, uint64_t x)
-{
-	put32(p, x);
-	put32(p + 4, x >> 32);
-}
-static uint32_t crc(const unsigned char *p, size_t n)
-{
-	uint32_t c = ~0U;
-	while (n--) {
-		c ^= *p++;
-		for (int i = 0; i < 8; i++)
-			c = (c >> 1) ^ ((0 - (c & 1)) & 0xedb88320U);
-	}
-	return ~c;
-}
 static void progress(unsigned percent, int state, const char *text)
 {
 	FILE *f = fopen(WORK "/status.new", "w");
@@ -381,18 +351,18 @@ static int control_read(uint64_t *sequence, unsigned *mode, int *slot)
 			return -2;
 		if (memcmp(record, "FPVOCTL1", 8))
 			continue;
-		uint32_t saved = le32(record + 20);
-		put32(record + 20, 0);
-		if (crc(record, PAGE) != saved || le32(record + 16) > 1)
+		uint32_t saved = fpvos_get_le32(record + 20);
+		fpvos_put_le32(record + 20, 0);
+		if (fpvos_crc32(record, PAGE) != saved || fpvos_get_le32(record + 16) > 1)
 			continue;
-		uint64_t seq = le64(record + 8);
+		uint64_t seq = fpvos_get_le64(record + 8);
 		if (!seq)
 			continue;
 		if (*slot >= 0 && seq == *sequence)
 			return -2;
 		if (seq > *sequence) {
 			*sequence = seq;
-			*mode = le32(record + 16);
+			*mode = fpvos_get_le32(record + 16);
 			*slot = i;
 		}
 	}
@@ -418,10 +388,10 @@ static int control_write(unsigned mode)
 	unsigned char record[PAGE];
 	memset(record, 0xff, sizeof(record));
 	memcpy(record, "FPVOCTL1", 8);
-	put64(record + 8, seq + 1);
-	put32(record + 16, mode);
-	put32(record + 20, 0);
-	put32(record + 20, crc(record, PAGE));
+	fpvos_put_le64(record + 8, seq + 1);
+	fpvos_put_le32(record + 16, mode);
+	fpvos_put_le32(record + 20, 0);
+	fpvos_put_le32(record + 20, fpvos_crc32(record, PAGE));
 	struct erase_info_user erase = {.start = next * BLOCK, .length = BLOCK};
 	if (ioctl(parts[3].fd, MEMERASE, &erase) ||
 	    exact(parts[3].fd, record, PAGE, next * BLOCK, 1) ||
@@ -453,14 +423,14 @@ static int boot(void)
 	}
 	unsigned char h[512];
 	if (good_range(&parts[3], DATA_START, 512) ||
-	    exact(parts[3].fd, h, 512, DATA_START, 0) || memcmp(h, "FPVOSUP1", 8) || le32(h + 88))
+	    exact(parts[3].fd, h, 512, DATA_START, 0) || memcmp(h, "FPVOSUP1", 8) || fpvos_get_le32(h + 88))
 		return 11;
-	uint32_t len = le32(h + 16);
+	uint32_t len = fpvos_get_le32(h + 16);
 	if (len < 512 || len > parts[3].size - DATA_START)
 		return 11;
-	uint32_t saved = le32(h + 508);
-	put32(h + 508, 0);
-	if (crc(h, 512) != saved)
+	uint32_t saved = fpvos_get_le32(h + 508);
+	fpvos_put_le32(h + 508, 0);
+	if (fpvos_crc32(h, 512) != saved)
 		return 11;
 	if (mkdir(ROOT_IMAGES, 0700))
 		return 11;
@@ -523,7 +493,7 @@ static int install(const char *source)
 	unsigned char h[512];
 	if (header(package, h))
 		goto done;
-	unsigned kind = le32(h + 88);
+	unsigned kind = fpvos_get_le32(h + 88);
 	if (kind > 1)
 		goto done;
 	/* Legacy fpvOS trees hard-code the opposite bank mapping. Do not install

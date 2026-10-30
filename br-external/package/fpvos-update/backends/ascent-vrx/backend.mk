@@ -1,6 +1,6 @@
 # Ascent Gnd485 NAND layout and stock-runtime policy.
 define FPVOS_UPDATE_BUILD_BACKEND_CMDS
-	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror \
+	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror -I$(@D)/src \
 		-Dmain=fpvos_nand_main -c $(@D)/backends/ascent-vrx/nand.c -o $(@D)/nand.o
 endef
 
