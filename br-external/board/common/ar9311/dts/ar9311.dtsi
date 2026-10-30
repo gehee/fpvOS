@@ -89,6 +89,24 @@
 			status = "disabled";
 		};
 
+		vo: display@8810000 {
+			compatible = "artosyn,ar9311-vo";
+			reg = <0 0x08810000 0 0x10000>,
+			      <0 0x0a10404c 0 4>,
+			      <0 0x0a106018 0 4>;
+			reg-names = "vo", "pixel-clock", "dc-crg";
+			interrupts = <GIC_SPI 70 IRQ_TYPE_LEVEL_HIGH>;
+			status = "disabled";
+		};
+
+		dsi: dsi@8850000 {
+			compatible = "artosyn,ar9311-dsi";
+			reg = <0 0x08850000 0 0x1000>;
+			clocks = <&clk150m>;
+			clock-names = "pclk";
+			status = "disabled";
+		};
+
 		i2c1: i2c@1202000 {
 			compatible = "snps,designware-i2c";
 			reg = <0 0x01202000 0 0x2000>;

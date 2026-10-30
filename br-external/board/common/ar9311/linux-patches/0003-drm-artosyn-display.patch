@@ -1,16 +1,15 @@
 From: fpvOS developers
-Subject: [PATCH] drm: add fixed-mode Gnd485 VO, DSI and HDMI support
+Subject: [PATCH] drm: add shared AR9311 VO and DSI support
 
 Adapt the Artosyn VO and DSI integration from Missing-Lynk/ml-kernel
  e3885c6394a7025eacd3a23f473276d9823beb25, retaining GPL-2.0 licensing.
-Use the Gnd485 stock DC raster, clock divider and D-PHY timing table;
-restrict scanout to the validated 1080p60 RGB primary plane. Expose real
-vblank/page-flip events with contiguous DMA buffers.
+Use SoC-compatible identifiers and require an explicit display profile
+before programming hardware. The ascent-1080p60 profile retains the
+validated DC raster, clock divider and D-PHY tables without changes.
+No arbitrary-mode or other-board validation is implied.
 
-The separate shared LT9611 patch implements the opt-in bridge quirks.
-Select the validated bridge properties in the board DTS. GPIO/pinmux and
-early power still depend on the vendor boot chain. No proprietary display
-code or data is included.
+Boards supply their output graph and select bridge quirks separately.
+Early clocks, pinmux and power still depend on the vendor boot chain.
 
 ---
 
@@ -34,7 +33,7 @@ code or data is included.
 +++ b/drivers/gpu/drm/artosyn/Kconfig
 @@ -0,0 +1,13 @@
 +config DRM_ARTOSYN
-+	bool "Artosyn Gnd485 HDMI display"
++	bool "Artosyn AR9311 display"
 +	depends on DRM=y && OF && ARM64
 +	select DRM_KMS_HELPER
 +	select DRM_GEM_DMA_HELPER
@@ -43,22 +42,22 @@ code or data is included.
 +	select DRM_DISPLAY_HELPER
 +	select DRM_BRIDGE_CONNECTOR
 +	help
-+	  Fixed 1920x1080p60 RGB scanout for the Ascent Gnd485 receiver.
-+	  Includes the VO controller and Artosyn DSI PHY glue. Requires
-+	  the board-specific Lontium bridge configuration in its DT.
++	  AR9311 VO controller and Artosyn DSI PHY glue. Boards must
++	  select a supported display profile and provide their output graph.
++	  Currently only the ascent-1080p60 profile is supported.
 --- /dev/null
 +++ b/drivers/gpu/drm/artosyn/Makefile
 @@ -0,0 +1 @@
 +obj-$(CONFIG_DRM_ARTOSYN) += artosyn_vo.o artosyn_dsi.o
 --- /dev/null
 +++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
-@@ -0,0 +1,414 @@
+@@ -0,0 +1,421 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
-+ * Artosyn Gnd485 VO: one RGB primary plane, fixed 1920x1080 at nominal 60 Hz.
++ * Artosyn AR9311 VO: one RGB primary plane, fixed 1920x1080 at nominal 60 Hz.
 + * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
 + * Register sequencing originates in that project's Artosyn display work;
-+ * HDMI clock/timing integration is specific to the Ascent Gnd485 receiver.
++ * The explicit ascent-1080p60 profile retains the validated clock/timing setup.
 + * The DC feeds the Artosyn DSI host and Lontium HDMI bridge.
 + */
 +
@@ -68,6 +67,7 @@ code or data is included.
 +#include <linux/module.h>
 +#include <linux/of.h>
 +#include <linux/platform_device.h>
++#include <linux/string.h>
 +#include <linux/interrupt.h>
 +
 +#include <drm/drm_atomic.h>
@@ -345,11 +345,17 @@ code or data is included.
 +static int ar_vo_probe(struct platform_device *pdev)
 +{
 +	struct device *dev = &pdev->dev;
++	const char *profile;
 +	struct drm_bridge *bridge;
 +	struct resource *r;
 +	struct ar_vo *vo;
 +	int ret, irq;
 +	struct drm_connector *connector;
++
++	/* Reject absent/unknown profiles before mapping or programming hardware. */
++	if (of_property_read_string(dev->of_node, "artosyn,display-profile", &profile) ||
++	    strcmp(profile, "ascent-1080p60"))
++		return dev_err_probe(dev, -EINVAL, "unsupported display profile\n");
 +
 +	vo = devm_drm_dev_alloc(dev, &ar_vo_drm_driver, struct ar_vo, drm);
 +	if (IS_ERR(vo))
@@ -448,7 +454,7 @@ code or data is included.
 +}
 +
 +static const struct of_device_id ar_vo_match[] = {
-+	{ .compatible = "artosyn,gnd485-vo" },
++	{ .compatible = "artosyn,ar9311-vo" },
 +	{}
 +};
 +MODULE_DEVICE_TABLE(of, ar_vo_match);
@@ -469,15 +475,15 @@ code or data is included.
 +MODULE_LICENSE("GPL");
 --- /dev/null
 +++ b/drivers/gpu/drm/artosyn/artosyn_dsi.c
-@@ -0,0 +1,183 @@
+@@ -0,0 +1,190 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
-+ * Gnd485 glue for the Synopsys DSI host and Artosyn custom D-PHY.
++ * AR9311 glue for the Synopsys DSI host and Artosyn custom D-PHY.
 + * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
-+ * The Gnd485-specific register table is taken from the working vendor mode.
++ * The ascent-1080p60 profile uses the validated Ascent vendor register table.
 + * Only four lanes, RGB888 and 1920x1080p60 sync-event video are supported.
 + * D-PHY timing and PLL are fixed (~928.8 Mbps/lane); generic non-burst host
-+ * horizontal timings need overriding to match this board's internal raster.
++ * horizontal timings need overriding to match the selected profile's internal raster.
 + */
 +
 +#include <linux/clk.h>
@@ -485,6 +491,7 @@ code or data is included.
 +#include <linux/module.h>
 +#include <linux/of.h>
 +#include <linux/platform_device.h>
++#include <linux/string.h>
 +
 +#include <drm/bridge/dw_mipi_dsi.h>
 +#include <drm/drm_mipi_dsi.h>
@@ -594,8 +601,14 @@ code or data is included.
 +static int ar_dsi_probe(struct platform_device *pdev)
 +{
 +	struct device *dev = &pdev->dev;
++	const char *profile;
 +	struct resource *res;
 +	struct ar_dsi *dsi;
++
++	/* Reject absent/unknown profiles before mapping or programming hardware. */
++	if (of_property_read_string(dev->of_node, "artosyn,display-profile", &profile) ||
++	    strcmp(profile, "ascent-1080p60"))
++		return dev_err_probe(dev, -EINVAL, "unsupported display profile\n");
 +
 +	dsi = devm_kzalloc(dev, sizeof(*dsi), GFP_KERNEL);
 +	if (!dsi)
@@ -636,7 +649,7 @@ code or data is included.
 +}
 +
 +static const struct of_device_id ar_dsi_match[] = {
-+	{ .compatible = "artosyn,gnd485-dsi" },
++	{ .compatible = "artosyn,ar9311-dsi" },
 +	{}
 +};
 +MODULE_DEVICE_TABLE(of, ar_dsi_match);
@@ -653,3 +666,137 @@ code or data is included.
 +
 +MODULE_DESCRIPTION("Artosyn MIPI-DSI host glue for dw-mipi-dsi");
 +MODULE_LICENSE("GPL");
+--- /dev/null
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
+@@ -0,0 +1,61 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/display/artosyn,ar9311-vo.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Artosyn AR9311 video output controller
++
++maintainers:
++  - mh1412 <mh1412@users.noreply.github.com>
++
++description: |
++  The controller is shared by AR9311 boards. Enabled nodes must select a
++  supported fixed display profile and supply their board output graph.
++  The ascent-1080p60 profile preserves the validated Ascent raster, divider
++  and four-lane RGB888 DSI sync-event PHY setup for CEA-16 at 148.5 MHz.
++  It relies on early firmware clock and pinmux setup; it does not describe
++  arbitrary modes or guarantee compatibility with another board's sink.
++
++properties:
++  compatible:
++    const: artosyn,ar9311-vo
++
++  reg:
++    maxItems: 3
++
++  artosyn,display-profile:
++    $ref: /schemas/types.yaml#/definitions/string
++    const: ascent-1080p60
++    description: Explicit selection of the supported fixed output setup.
++
++  reg-names:
++    items:
++      - const: vo
++      - const: pixel-clock
++      - const: dc-crg
++
++  interrupts:
++    maxItems: 1
++
++  port:
++    $ref: /schemas/graph.yaml#/properties/port
++    description: Output to the DSI controller.
++
++required:
++  - compatible
++  - reg
++  - reg-names
++  - interrupts
++
++allOf:
++  - if:
++      properties:
++        status:
++          enum: [okay, ok]
++    then:
++      required:
++        - artosyn,display-profile
++        - port
++
++additionalProperties: false
+--- /dev/null
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
+@@ -0,0 +1,67 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/display/artosyn,ar9311-dsi.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Artosyn AR9311 MIPI DSI controller
++
++maintainers:
++  - mh1412 <mh1412@users.noreply.github.com>
++
++description: |
++  The controller is shared by AR9311 boards. Enabled nodes must select a
++  supported fixed display profile and supply their board output graph.
++  The ascent-1080p60 profile preserves the validated Ascent raster, divider
++  and four-lane RGB888 DSI sync-event PHY setup for CEA-16 at 148.5 MHz.
++  It relies on early firmware clock and pinmux setup; it does not describe
++  arbitrary modes or guarantee compatibility with another board's sink.
++
++properties:
++  compatible:
++    const: artosyn,ar9311-dsi
++
++  reg:
++    maxItems: 1
++
++  artosyn,display-profile:
++    $ref: /schemas/types.yaml#/definitions/string
++    const: ascent-1080p60
++    description: Explicit selection of the supported fixed output setup.
++
++  clocks:
++    maxItems: 1
++
++  clock-names:
++    const: pclk
++
++  ports:
++    $ref: /schemas/graph.yaml#/properties/ports
++    properties:
++      port@0:
++        $ref: /schemas/graph.yaml#/properties/port
++        description: Input from the video output controller.
++      port@1:
++        $ref: /schemas/graph.yaml#/properties/port
++        description: Output to the board's display bridge or panel.
++    required:
++      - port@0
++      - port@1
++
++required:
++  - compatible
++  - reg
++  - clocks
++  - clock-names
++
++allOf:
++  - if:
++      properties:
++        status:
++          enum: [okay, ok]
++    then:
++      required:
++        - artosyn,display-profile
++        - ports
++
++additionalProperties: false
