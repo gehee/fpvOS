@@ -30,7 +30,8 @@ jobs:
                    $(git ls-files 'br-external/board/vrxpro/rootfs-overlay/etc/init.d/*') \
                    br-external/board/vrxpro/rootfs-overlay/usr/sbin/fpvos-wifi \
                    br-external/board/vrxpro/rootfs-overlay/root/bb-restart.sh \
-                   br-external/board/vrxpro/rootfs-overlay/ar8030soc/bb_only.sh; do
+                   br-external/board/vrxpro/rootfs-overlay/ar8030soc/bb_only.sh \
+                   br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/start.sh; do
             head -1 "$f" | grep -q bash && sh=bash || sh=sh
             $sh -n "$f" || { echo "syntax error: $f"; exit 1; }
           done
@@ -56,3 +57,6 @@ jobs:
         run: |
           python3 -m py_compile boot/mkar9311img.py scripts/ar9311-ram-transfer.py
           python3 -m unittest discover -s tools/fpvos-update/tests -v
+
+      - name: AR9311 firmware extraction tests
+        run: python3 -m unittest discover -s br-external/package/ar9311-firmware/tests -v
