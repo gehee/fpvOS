@@ -1,0 +1,270 @@
+From: fpvOS developers
+Subject: [PATCH] drm: lt9611: describe optional bridge quirks in DT
+
+Keep the standard lontium,lt9611 compatible and select the unreliable
+page-selector workaround separately from the fixed RGB 1080p60 sequence.
+Both are opt-in properties, so another board can reuse the bridge without
+an Artosyn or Gnd485 compatible. Do not infer either behavior solely from
+the revision byte observed on one board.
+
+Keep the existing calibration register sequence unchanged, restrict that
+sequence to CEA-16 at 148.5 MHz, and document its DSI sync-event input.
+Allow connector polling without an IRQ. Boards without the properties
+retain the upstream register access and output initialization behavior.
+
+---
+
+--- a/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
++++ b/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
+@@ -26,6 +26,23 @@
+ 
+   interrupts:
+     maxItems: 1
++    description: Optional interrupt; connector status is polled when omitted.
++
++  lontium,page-select-quirk:
++    type: boolean
++    description:
++      The page selector can read back stale register data. Cache only the
++      selector so every page change is written explicitly; data registers
++      remain volatile. Select this only on hardware with this behavior.
++
++  lontium,fixed-1080p60-quirk:
++    type: boolean
++    description:
++      Use the fixed RGB CEA-16 1920x1080p60 initialization sequence, including
++      fixed-M calibration, pixel-clock recovery release/reset after TMDS
++      enable, and a fixed HDMI AVI packet. Selects DSI sync-event input and
++      limits modes to CEA-16 at 148.5 MHz. DVI and audio are not supported by
++      this sequence. Select this only on hardware requiring this sequence.
+ 
+   reset-gpios:
+     maxItems: 1
+@@ -64,7 +81,6 @@
+ required:
+   - compatible
+   - reg
+-  - interrupts
+   - vdd-supply
+   - vcc-supply
+   - ports
+--- a/drivers/gpu/drm/bridge/lontium-lt9611.c
++++ b/drivers/gpu/drm/bridge/lontium-lt9611.c
+@@ -47,6 +47,7 @@
+ 	struct mipi_dsi_device *dsi1;
+ 
+ 	bool ac_mode;
++	bool fixed_1080p60;
+ 
+ 	struct gpio_desc *reset_gpio;
+ 	struct gpio_desc *enable_gpio;
+@@ -84,6 +85,21 @@
+ 	.max_register = 0xffff,
+ 	.ranges = lt9611_ranges,
+ 	.num_ranges = ARRAY_SIZE(lt9611_ranges),
++};
++
++/* Some bridges do not reliably read back the page selector: reading 0xff can
++ * return the previously read register value. Cache only the selector so
++ * regmap cannot mistake stale data for the currently selected bank.
++ * Every device register remains volatile. Probe resets the chip before
++ * its first access, which selects page 0x80 from this unused cached page.
++ */
++static bool lt9611_page_volatile_reg(struct device *dev, unsigned int reg)
++{
++	return reg != LT9611_PAGE_CONTROL;
++}
++
++static const struct reg_default lt9611_page_defaults[] = {
++	{ LT9611_PAGE_CONTROL, 0 },
+ };
+ 
+ static struct lt9611 *bridge_to_lt9611(struct drm_bridge *bridge)
+@@ -640,6 +656,63 @@
+ 	return 0;
+ }
+ 
++/*
++ * Opt-in 1080p60 sequence: calibrate at fixed M, then release clock recovery.
++ * Reset PCR once more AFTER enabling TMDS; doing this only before output-enable
++ * leaves the first cold modeset black. Never select the internal test pattern.
++ * This sequence supports only RGB CEA-16 at 148.5 MHz (no DVI/audio).
++ */
++static int lt9611_fixed_1080p60_enable(struct lt9611 *lt)
++{
++	unsigned int lock, cal, band;
++	int ret;
++	static const struct reg_sequence init[] = {
++		{ 0x8130, 0x6a }, { 0x824f, 0x80 }, { 0x8250, 0x10 },
++		/* Fixed RGB 16:9 VIC 16 AVI packet, also used without EDID. */
++		{ 0x82d6, 0x8e }, { 0x82d7, 4 },
++		{ 0x8443, 0x27 }, { 0x8444, 0x10 }, { 0x8445, 0x28 },
++		{ 0x8446, 0 }, { 0x8447, 16 }, { 0x843d, 8 },
++		{ 0x8123, 0x40 }, { 0x8124, 0x62 }, { 0x8125, 0x80 },
++		{ 0x832d, 0x40 }, { 0x8331, 8 }, { 0x8326, 0xb6 },
++		{ 0x82de, 0x20 }, { 0x82de, 0xe0 },
++		{ 0x8011, 0x5a }, { 0x8011, 0xfa }, { 0x8016, 0xf2 },
++		{ 0x8018, 0xdc }, { 0x8018, 0xfc }, { 0x8016, 0xf3 },
++		{ 0x8140, 0x98 }, { 0x8141, 0x98 },
++		{ 0x8142, 0x98 }, { 0x8143, 0x98 },
++	};
++
++	static const struct reg_sequence calibrate[] = {
++		{ 0x8016, 0xe3 }, { 0x8016, 0xf3, 100000 },
++	};
++	static const struct reg_sequence enable[] = {
++		{ 0x8326, 0x36 }, { 0x8011, 0x5a, 10000 },
++		{ 0x8011, 0xfa, 100000 },
++		{ 0x8130, 0xea, 100000 },
++		{ 0x8326, 0x36 }, { 0x8011, 0x5a, 10000 }, { 0x8011, 0xfa },
++	};
++
++	ret = regmap_multi_reg_write(lt->regmap, init, ARRAY_SIZE(init));
++	if (ret)
++		return ret;
++	msleep(100);
++	ret = regmap_multi_reg_write(lt->regmap, calibrate, ARRAY_SIZE(calibrate));
++	if (ret)
++		return ret;
++	ret = regmap_read(lt->regmap, 0x8215, &lock);
++	if (ret)
++		return ret;
++	ret = regmap_read(lt->regmap, 0x82e7, &cal);
++	if (ret)
++		return ret;
++	ret = regmap_read(lt->regmap, 0x82e6, &band);
++	if (ret)
++		return ret;
++	if (!(lock & 0x80) || !(cal & 0x80) || band == 0xff)
++		return -ETIMEDOUT;
++
++	return regmap_multi_reg_write(lt->regmap, enable, ARRAY_SIZE(enable));
++}
++
+ /* bridge funcs */
+ static void lt9611_bridge_atomic_enable(struct drm_bridge *bridge,
+ 					struct drm_atomic_state *state)
+@@ -684,8 +757,16 @@
+ 
+ 	lt9611_video_check(lt9611);
+ 
+-	/* Enable HDMI output */
+-	regmap_write(lt9611->regmap, 0x8130, 0xea);
++	if (lt9611->fixed_1080p60) {
++		int ret = lt9611_fixed_1080p60_enable(lt9611);
++
++		if (ret) {
++			regmap_write(lt9611->regmap, 0x8130, 0x6a);
++			dev_err(lt9611->dev, "Fixed 1080p60 HDMI initialization failed: %d\n", ret);
++		}
++	} else {
++		regmap_write(lt9611->regmap, 0x8130, 0xea);
++	}
+ }
+ 
+ static void lt9611_bridge_atomic_disable(struct drm_bridge *bridge,
+@@ -728,8 +809,9 @@
+ 
+ 	dsi->lanes = 4;
+ 	dsi->format = MIPI_DSI_FMT_RGB888;
+-	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_SYNC_PULSE |
+-			  MIPI_DSI_MODE_VIDEO_HSE;
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_HSE;
++	if (!lt9611->fixed_1080p60)
++		dsi->mode_flags |= MIPI_DSI_MODE_VIDEO_SYNC_PULSE;
+ 
+ 	ret = devm_mipi_dsi_attach(dev, dsi);
+ 	if (ret < 0) {
+@@ -755,6 +837,11 @@
+ 						     const struct drm_display_mode *mode)
+ {
+ 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
++
++	/* The optional calibration and AVI sequence is specific to CEA-16. */
++	if (lt9611->fixed_1080p60 &&
++	    (mode->clock != 148500 || drm_match_cea_mode(mode) != 16))
++		return MODE_BAD;
+ 
+ 	if (mode->hdisplay > 3840)
+ 		return MODE_BAD_HVALUE;
+@@ -1064,6 +1151,7 @@
+ 
+ static int lt9611_probe(struct i2c_client *client)
+ {
++	struct regmap_config regmap_config = lt9611_regmap_config;
+ 	struct lt9611 *lt9611;
+ 	struct device *dev = &client->dev;
+ 	int ret;
+@@ -1079,10 +1167,18 @@
+ 		return PTR_ERR(lt9611);
+ 
+ 	lt9611->dev = dev;
++	lt9611->fixed_1080p60 = of_property_read_bool(dev->of_node,
++						    "lontium,fixed-1080p60-quirk");
+ 	lt9611->client = client;
+ 	lt9611->sleep = false;
+ 
+-	lt9611->regmap = devm_regmap_init_i2c(client, &lt9611_regmap_config);
++	if (of_property_read_bool(dev->of_node, "lontium,page-select-quirk")) {
++		regmap_config.cache_type = REGCACHE_MAPLE;
++		regmap_config.volatile_reg = lt9611_page_volatile_reg;
++		regmap_config.reg_defaults = lt9611_page_defaults;
++		regmap_config.num_reg_defaults = ARRAY_SIZE(lt9611_page_defaults);
++	}
++	lt9611->regmap = devm_regmap_init_i2c(client, &regmap_config);
+ 	if (IS_ERR(lt9611->regmap)) {
+ 		dev_err(lt9611->dev, "regmap i2c init failed\n");
+ 		return PTR_ERR(lt9611->regmap);
+@@ -1116,12 +1212,14 @@
+ 		goto err_disable_regulators;
+ 	}
+ 
+-	ret = devm_request_threaded_irq(dev, client->irq, NULL,
+-					lt9611_irq_thread_handler,
+-					IRQF_ONESHOT, "lt9611", lt9611);
+-	if (ret) {
+-		dev_err(dev, "failed to request irq\n");
+-		goto err_disable_regulators;
++	if (client->irq > 0) {
++		ret = devm_request_threaded_irq(dev, client->irq, NULL,
++					      lt9611_irq_thread_handler,
++					      IRQF_ONESHOT, "lt9611", lt9611);
++		if (ret) {
++			dev_err(dev, "failed to request irq\n");
++			goto err_disable_regulators;
++		}
+ 	}
+ 
+ 	i2c_set_clientdata(client, lt9611);
+@@ -1131,8 +1229,10 @@
+ 
+ 	lt9611->bridge.of_node = client->dev.of_node;
+ 	lt9611->bridge.ops = DRM_BRIDGE_OP_DETECT | DRM_BRIDGE_OP_EDID |
+-			     DRM_BRIDGE_OP_HPD | DRM_BRIDGE_OP_MODES |
++			     DRM_BRIDGE_OP_MODES |
+ 			     DRM_BRIDGE_OP_HDMI | DRM_BRIDGE_OP_HDMI_AUDIO;
++	if (client->irq > 0)
++		lt9611->bridge.ops |= DRM_BRIDGE_OP_HPD;
+ 	lt9611->bridge.type = DRM_MODE_CONNECTOR_HDMIA;
+ 	lt9611->bridge.vendor = "Lontium";
+ 	lt9611->bridge.product = "LT9611";
+@@ -1158,7 +1258,8 @@
+ 		}
+ 	}
+ 
+-	lt9611_enable_hpd_interrupts(lt9611);
++	if (client->irq > 0)
++		lt9611_enable_hpd_interrupts(lt9611);
+ 
+ 	return 0;
+ 
+@@ -1179,7 +1280,8 @@
+ {
+ 	struct lt9611 *lt9611 = i2c_get_clientdata(client);
+ 
+-	disable_irq(client->irq);
++	if (client->irq > 0)
++		disable_irq(client->irq);
+ 	drm_bridge_remove(&lt9611->bridge);
+ 
+ 	regulator_bulk_disable(ARRAY_SIZE(lt9611->supplies), lt9611->supplies);

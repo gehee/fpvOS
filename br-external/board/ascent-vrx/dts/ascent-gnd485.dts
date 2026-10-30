@@ -173,7 +173,9 @@
 	i2c-sda-falling-time-ns = <300>;
 	i2c-scl-falling-time-ns = <300>;
 	bridge@3b {
-		compatible = "artosyn,gnd485-lt9611", "lontium,lt9611";
+		compatible = "lontium,lt9611";
+		lontium,page-select-quirk;
+		lontium,fixed-1080p60-quirk;
 		reg = <0x3b>;
 		reset-gpios = <&gpio 107 GPIO_ACTIVE_HIGH>;
 		vdd-supply = <&bridge_vdd>;
