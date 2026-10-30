@@ -26,12 +26,19 @@ KESTREL_AIR_MAKE_OPTS = \
 
 KESTREL_AIR_VERSION_TEXT = $(if $(KESTREL_AIR_OVERRIDE_SRCDIR),$(shell git -C $(KESTREL_AIR_OVERRIDE_SRCDIR) describe --always --dirty 2>/dev/null),$(shell echo $(KESTREL_AIR_VERSION) | cut -c1-8))
 
+# GT (board 4861) camera. The PS5280 CMOS driver is linked into the stock
+# air app, so this .so maps that binary and exports g_sns_ps5280_obj.
+# kestrel-air dlopen()s it from /usrdata/fpv/air/lib when it sees the chip.
 define KESTREL_AIR_BUILD_CMDS
 	$(TARGET_MAKE_ENV) $(MAKE) -C $(@D) $(KESTREL_AIR_MAKE_OPTS)
+	$(TARGET_CC) -shared -fPIC -O2 -Wall -Wextra \
+		-Wl,-soname,libsns_ps5280.so \
+		-o $(@D)/libsns_ps5280.so $(KESTREL_AIR_PKGDIR)libsns_ps5280.c
 endef
 
 define KESTREL_AIR_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/kestrel-air $(TARGET_DIR)/usrdata/fpv/air/kestrel-air
+	$(INSTALL) -D -m 0755 $(@D)/libsns_ps5280.so $(TARGET_DIR)/usrdata/fpv/air/lib/libsns_ps5280.so
 	echo "$(KESTREL_AIR_VERSION_TEXT)" > $(TARGET_DIR)/usrdata/fpv/air/kestrel-air.version
 endef
 

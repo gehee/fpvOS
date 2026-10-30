@@ -6,8 +6,8 @@ config BR2_PACKAGE_OPEN8030
 	  Open8030, the open-source firmware for the AR8030 radio
 	  chip, built from source with Zephyr and installed next to
 	  stock's. The goggle loads it unless kestrel-gnd's RADIO > Radio
-	  Firmware says STOCK (ar8030_firmware: 0); the air unit (a Lite
-	  or Lite+) when /usrdata/fpv/air/open8030/always exists.
+	  Firmware says STOCK (ar8030_firmware: 0); the air unit (a Lite,
+	  Lite+ or GT) when /usrdata/fpv/air/open8030/always exists.
 
 	  Built with the board profiles from open8030-profiles (or a
 	  local copy named by OPEN8030_PRIVATE_DIR).
@@ -18,8 +18,8 @@ config BR2_PACKAGE_OPEN8030_AIR_DEFAULT
 	bool "air unit boots on Open8030"
 	depends on BR2_PACKAGE_KESTREL_AIR
 	help
-	  Ship /usrdata/fpv/air/open8030/always, so that a Lite or Lite+
-	  starts its radio on Open8030 from the first boot. The goggle has
+	  Ship /usrdata/fpv/air/open8030/always, so that a Lite, Lite+ or
+	  GT starts its radio on Open8030 from the first boot. The goggle has
 	  to run Open8030 too (its default). Remove the file on the unit
 	  to go back to stock's firmware.
 

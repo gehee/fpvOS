@@ -1,7 +1,9 @@
 #!/bin/bash
-# Put the air app of a built image on a running Ascent Lite or Lite+ over ssh, without
-# flashing it: the files under fpv/air/ and the hooked fpv_run_cx482.sh, taken
-# from the same app volume the PC tool would flash, so the result is the same.
+# Put the air app of a built image on a running Ascent Lite, Lite+ or GT over ssh,
+# without flashing it. Lite and Lite+ get fpv/air/ and the hooked fpv_run_cx482.sh.
+# A GT (it has fpv_run_cx4861.sh) gets fpv/air/ only, and that script is hooked
+# in place. The stock ar_ldyhs_sky stays: the PS5280 driver maps it.
+# Taken from the same app volume the PC tool would flash.
 #
 #   boot/ascent-deploy.sh [--dry] [--reboot] [HOST]       (HOST default root@192.168.5.104)
 #   IMG=path/to/Ascent_H_Sky_*.img                        (default: output-air/images/)
@@ -42,8 +44,17 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 "$ROOT/boot/mkascentimg.py" extract "$IMG" "$T/img" > /dev/null
 VOL=$T/img/fpv                      # the app volume's root: contains fpv/
-FILES="fpv/air fpv/fpv_run_cx482.sh"
 [ -x "$VOL/fpv/air/start.sh" ] || { echo "the image has no fpv/air/start.sh" >&2; exit 1; }
+# A GT boots fpv_run_cx4861.sh. Do not replace that script with the Lite one,
+# and do not replace the stock air binary the PS5280 driver maps.
+if unit "test -f $UNIT_ROOT/fpv/fpv_run_cx4861.sh"; then
+    GT=1
+    FILES="fpv/air"
+    echo "unit: GT (fpv_run_cx4861.sh); copying fpv/air only"
+else
+    GT=0
+    FILES="fpv/air fpv/fpv_run_cx482.sh"
+fi
 
 echo "image: $(cat "$VOL/fpv/air/VERSION")  ($(basename "$IMG"))"
 echo "unit:  $(unit "cat $UNIT_ROOT/fpv/air/VERSION 2>/dev/null || echo 'no fpv/air yet'")"
@@ -59,7 +70,7 @@ tar -C "$VOL" --owner=0 --group=0 --numeric-owner -c $FILES | unit "cd $UNIT_ROO
 # 2. rename each file over its place (symlinks and directories included); keep the
 #    old hook script once
 unit "set -e; cd $UNIT_ROOT/.deploy
-[ -e $UNIT_ROOT/fpv/fpv_run_cx482.sh.prev ] || cp -p $UNIT_ROOT/fpv/fpv_run_cx482.sh $UNIT_ROOT/fpv/fpv_run_cx482.sh.prev
+if [ -f $UNIT_ROOT/fpv/fpv_run_cx482.sh ] && [ ! -e $UNIT_ROOT/fpv/fpv_run_cx482.sh.prev ]; then cp -p $UNIT_ROOT/fpv/fpv_run_cx482.sh $UNIT_ROOT/fpv/fpv_run_cx482.sh.prev; fi
 find fpv -type d | while read d; do [ -d $UNIT_ROOT/\$d ] || { mkdir -p $UNIT_ROOT/\$d; chmod --reference=\$d $UNIT_ROOT/\$d 2>/dev/null || true; }; done
 find fpv ! -type d | while read f; do mv -f \$f $UNIT_ROOT/\$f; done
 cd $UNIT_ROOT && rm -rf .deploy && sync"
@@ -69,6 +80,11 @@ cd $UNIT_ROOT && rm -rf .deploy && sync"
 bad=$(grep -E ': FAILED|No such file|md5sum:' "$T/check" || true)
 if [ -n "$bad" ]; then echo "MISMATCH after the copy:"; echo "$bad"; exit 1; fi
 echo "all $(wc -l < "$T/sums") files match the image"
+
+if [ "$GT" = 1 ]; then
+    unit "cat > /tmp/fpv_run-hook.sh" < "$ROOT/br-external/board/ascent-lite/fpv_run-hook.sh"
+    unit "sh -s $UNIT_ROOT" < "$ROOT/boot/gt-hook-apply.sh"
+fi
 
 if [ $REBOOT = 1 ]; then
     echo "rebooting the unit"

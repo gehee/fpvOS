@@ -22,11 +22,17 @@ cp -a "$WORK/stock/fpv" "$WORK/fpv"
 # changes into boot_ar8030/): after the updater, the MPP modules and the 2 s wait
 # for the baseband to reset, which is everything the PC tool needs and the radio
 # needs. Past it, the stock radio driver and air app run as they always did.
-run=$WORK/fpv/fpv/fpv_run_cx482.sh
-n=$(grep -n '^cd /usrdata/fpv/boot_ar8030' "$run" | head -n 1 | cut -d: -f1)
-[ -n "$n" ] || { echo "fpv_run_cx482.sh: no 'cd /usrdata/fpv/boot_ar8030' line to hook before" >&2; exit 1; }
-{ head -n $((n - 1)) "$run"; cat "$BOARD/fpv_run-hook.sh"; tail -n +"$n" "$run"; } > "$WORK/run.new"
-cat "$WORK/run.new" > "$run"
+# cx482 is the Lite/Lite+ runner and has to be in the stock image. cx4861 is
+# the GT runner; a Lite stock image does not have it, a GT one does.
+for run_name in fpv_run_cx482.sh fpv_run_cx4861.sh; do
+	run=$WORK/fpv/fpv/$run_name
+	[ -f "$run" ] || { [ "$run_name" = fpv_run_cx482.sh ] && { echo "no $run_name in the stock image" >&2; exit 1; }; continue; }
+	grep -q 'fpvOS hook' "$run" && continue
+	n=$(grep -n '^cd /usrdata/fpv/boot_ar8030' "$run" | head -n 1 | cut -d: -f1)
+	[ -n "$n" ] || { echo "$run_name: no 'cd /usrdata/fpv/boot_ar8030' line to hook before" >&2; exit 1; }
+	{ head -n $((n - 1)) "$run"; cat "$BOARD/fpv_run-hook.sh"; tail -n +"$n" "$run"; } > "$WORK/run.new"
+	cat "$WORK/run.new" > "$run"
+done
 
 cp -a "$TARGET_DIR/usrdata/." "$WORK/fpv/"
 # The USB network: our address and a DHCP server, in place of stock's usb_ip.sh.

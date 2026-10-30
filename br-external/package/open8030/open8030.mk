@@ -10,9 +10,9 @@
 #             bb_config_gnd_open8030.json; bb_only.sh loads them unless
 #             kestrel-gnd.yaml says ar8030_firmware: 0
 #   air unit  /usrdata/fpv/air/open8030/open8030-ap.img, the AP role, with
-#             the board's stock radio config; start.sh loads it on a Lite
-#             or Lite+ when /usrdata/fpv/air/open8030/always exists (one
-#             image for both: the Lite's profile builds the same bytes)
+#             the board's stock radio config; start.sh loads it on a Lite,
+#             Lite+ or GT (4861) when /usrdata/fpv/air/open8030/always exists
+#             (one image: the Lite's profile builds the same bytes)
 # Both ends are pinned to Open8030's main (the AP role, the automatic link
 # width and the host requests, run on the goggle and the air unit since
 # 2026-10-19), each built with its own flags. OPEN8030_OVERRIDE_SRCDIR builds a

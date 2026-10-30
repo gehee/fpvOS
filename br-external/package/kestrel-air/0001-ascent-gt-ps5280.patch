@@ -1,0 +1,561 @@
+diff --git a/src/app/app.c b/src/app/app.c
+index ad329cb..43c46e3 100644
+--- a/src/app/app.c
++++ b/src/app/app.c
+@@ -24,15 +24,17 @@
+ 
+ static int flying(void) { return fc_flying(); }
+ 
+-// Before the sensor is looked for: its 24 MHz clock select in bits 15:12 of
+-// 0x11018440 (the same for the CV2004 and the OS02K10).
++// XCLK mux is bits 15:12 of 0x11018440. The pipeline writes the sensor's
++// own select after detect (24 MHz for the OmniVision parts, 27 MHz for the
++// PS5280). Here, only a boot default of 0 is filled in, so I2C can answer
++// and a clock the GT already has is left alone.
+ static void sensor_boot(void) {
+     int fd = open("/dev/mem", O_RDWR | O_SYNC);
+     if (fd >= 0) {
+         volatile uint32_t *r = mmap(NULL, 0x10000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x11010000);
+         if (r != MAP_FAILED) {
+             uint32_t v = r[0x8440 / 4];
+-            if (((v >> 12) & 0xf) != 4) r[0x8440 / 4] = (v & ~0xf000u) | 0x4000;
++            if (((v >> 12) & 0xf) == 0) r[0x8440 / 4] = (v & ~0xf000u) | 0x4000;
+             munmap((void *)r, 0x10000);
+         }
+         close(fd);
+@@ -103,7 +105,7 @@ int app_run(volatile char *keep_running) {
+     printf("app: kestrel-air %s\n", KA_VERSION);
+     settings_log();
+     if (model_init(BOARD_TYPE_FILE)) {
+-        // air/start.sh only starts kestrel-air on a Lite or Lite+. Exit 0: no reboot.
++        // air/start.sh only starts kestrel-air on a Lite, Lite+ or GT. Exit 0: no reboot.
+         fprintf(stderr, "app: not an air unit kestrel-air runs on\n");
+         return 0;
+     }
+@@ -122,14 +124,17 @@ int app_run(volatile char *keep_running) {
+     // tuning bin and the image settings. The encoder waits for the ground.
+     cv610_set_sensor_angle(angle);
+     cv610_set_low_delay_lines(video_low_delay_lines());
+-    if (cv610_pipeline_create(0, w, h, (char)sf, 0)) {
+-        fprintf(stderr, "app: camera pipeline failed\n");
+-        return 1;
++    int cam_ok = cv610_pipeline_create(0, w, h, (char)sf, 0) == 0;
++    if (!cam_ok) {
++        // Keep the radio up. Exit 1 used to reboot-loop the GT when the
++        // PS5280 had no matching driver yet.
++        fprintf(stderr, "app: camera pipeline failed, radio only\n");
++    } else {
++        sensor_devinfo();
++        video_set_format(w, h, f, sf);
++        image_start(sf, angle);
++        image_apply_all();
+     }
+-    sensor_devinfo();
+-    video_set_format(w, h, f, sf);
+-    image_start(sf, angle);
+-    image_apply_all();
+ 
+     record_init();
+ 
+@@ -154,7 +159,7 @@ int app_run(volatile char *keep_running) {
+         fprintf(stderr, "app: radio setup failed\n");
+         radio_init_failed = 1;
+     } else {
+-        video_start();
++        if (cam_ok) video_start();
+         ground_start();
+     }
+     fc_start("/dev/ttyAMA1");
+@@ -163,9 +168,11 @@ int app_run(volatile char *keep_running) {
+     while (*keep_running) usleep(100000);
+ 
+     printf("app: stop streaming\n");
+-    video_stop();
++    if (cam_ok) video_stop();
+     imu_stop();
+-    cv610_pipeline_destroy();
+-    cv610_system_deinit();
++    if (cam_ok) {
++        cv610_pipeline_destroy();
++        cv610_system_deinit();
++    }
+     return 0;
+ }
+diff --git a/src/app/settings.c b/src/app/settings.c
+index 5a3f387..cdf6770 100644
+--- a/src/app/settings.c
++++ b/src/app/settings.c
+@@ -7,7 +7,7 @@
+ 
+ // Every KA_* setting, where it is read and what its default is.
+ static const struct { const char *name, *def, *what; } known[] = {
+-    { "KA_BOARD_TYPE", BOARD_TYPE_FILE, "stock's board type: 482 Lite, 472 Lite+; set by air/start.sh (unit/model.c)" },
++    { "KA_BOARD_TYPE", BOARD_TYPE_FILE, "stock's board type: 482 Lite, 472 Lite+, 4861 GT; set by air/start.sh (unit/model.c)" },
+     { "KA_IR",         "2",            "intra refresh, CTU rows (or columns) per picture; 0: periodic keyframes (video/encoder.c)" },
+     { "KA_IR_MODE",    "0",            "intra refresh by rows (0) or columns (1)" },
+     { "KA_IR_QP",      "32",           "intra refresh's request_i_qp" },
+diff --git a/src/camera/pipeline.c b/src/camera/pipeline.c
+index 0d523a3..28624f1 100644
+--- a/src/camera/pipeline.c
++++ b/src/camera/pipeline.c
+@@ -21,6 +21,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/ioctl.h>
++#include <sys/mman.h>
+ #include <time.h>
+ #include <unistd.h>
+ 
+@@ -29,12 +30,14 @@
+ #include "app/settings.h"
+ 
+ 
+-// The sensor: Ascents ship with either of two, both 1920x1080 on I2C 0x36
+-// with 16-bit register addresses. The capture is the full 1080p but at 120
+-// fps (864p120: a window of each, see cv610_has_864p120) and 144 (864p144:
+-// the OS02K10's 1536x864 window, cv610_has_864p144); VPSS scales to the
+-// encoded size. They are told apart as the stock app
+-// does, by two ID registers, the CV2004 first.
++// The sensor: Lite and Lite+ are the CV2004 and the OS02K10, both 1920x1080
++// on I2C 0x36 with 16-bit register addresses. The GT (board 4861) is a
++// PS5280: 8-bit registers, I2C 0x48, 27 MHz XCLK, MIPI combo 0, lanes 0 and
++// 2. Capture is the full 1080p, or at 120 fps (864p120) and 144 (864p144,
++// the OS02K10) a window of the OmniVision parts. VPSS scales to the encoded
++// size. Told apart as the stock app does, by two ID registers, the CV2004
++// first. The PS5280 driver is libsns_ps5280.so (it exports the stock CMOS
++// object; there is no public CV610 source for that sensor).
+ typedef struct {
+     const char *name, *lib, *obj;
+     int id;                       // the ISP's sensor id (what the driver registers)
+@@ -45,26 +48,35 @@ typedef struct {
+     int bayer_follows_angle;      // the ISP's bayer order turns with the orientation
+     int win120_w, win120_h;       // ours: its window at 120 fps (864p120)
+     int win144_w, win144_h;       // ours: its window at 144 fps (864p144; 0: none)
++    int i2c_8bit;                 // 1: 8-bit register address (PS5280)
++    unsigned char i2c_addr;       // 7-bit I2C address
++    unsigned char xclk_sel;       // 0x11018440[15:12]: 4 = 24 MHz, 10 = 27 MHz
++    unsigned char sns_clk;        // sensor clock and reset source
++    unsigned char mipi_dev;       // combo device
++    unsigned char vi_dev;         // VI device
++    unsigned char hs_mode;        // 0 = 4-lane, 1 = 2+2
++    short lane0, lane1;           // physical MIPI data lanes
+ } cv610_sensor;
+ static const cv610_sensor sensors[] = {
+-    { "cv2004",  "libsns_cv2004.so",  "g_sns_cv2004_obj",  2004, 0x3002, { 0x04, 0x20 }, 1, 1, 1, 1536, 864, 0, 0 },
++    { "cv2004",  "libsns_cv2004.so",  "g_sns_cv2004_obj",  2004, 0x3002, { 0x04, 0x20 }, 1, 1, 1, 1536, 864, 0, 0,    0, 0x36, 4, 0, 1, 1, 1, 1, 3 },
+     // Stock leaves the ISP's order at BGGR at both orientations.
+-    { "os02k10", "libsns_os02k10.so", "g_sns_os02k10_obj", 1480, 0x300a, { 0x53, 0x02 }, 7, 0, 0, 1856, 1044, 1536, 864 },
++    { "os02k10", "libsns_os02k10.so", "g_sns_os02k10_obj", 1480, 0x300a, { 0x53, 0x02 }, 7, 0, 0, 1856, 1044, 1536, 864, 0, 0x36, 4, 0, 1, 1, 1, 1, 3 },
++    // Live probe on GT 4861: vsync only on combo 0 / HS 0 / lanes 0,2.
++    { "ps5280",  "libsns_ps5280.so",  "g_sns_ps5280_obj",  5280, 0x0000, { 0x52, 0x80 }, 10, 0, 0, 0, 0, 0, 0,         1, 0x48, 10, 1, 0, 0, 0, 0, 2 },
+ };
+ static const cv610_sensor *sns = &sensors[0];
+ const char *cv610_sensor_name(void) { return sns->name; }
+ int cv610_sensor_type(void) { return sns->type; }
+ int cv610_sensor_angle_tuning(void) { return sns->angle_tuning; }
+ #define SNS_I2C    0
+-#define SNS_ADDR   0x36
+ // Ours: the sensor's output - its whole 1920x1080, or at 120 or 144 fps its
+ // driver's window (cv610_has_864p120, cv610_has_864p144).
+ static int cap_w = 1920, cap_h = 1080;
+ #define CAP_W      cap_w
+ #define CAP_H      cap_h
+ 
+-#define MIPI_DEV   1          // combo device 1: the 2+2 split's port 1, lanes {1,3}
+-#define VI_DEV     1
++static int vi_dev_id = 1;   // Lite default; a detected PS5280 selects its own
++#define VI_DEV     vi_dev_id
+ #define VI_PIPE    0
+ #define VI_CHN     0
+ #define VPSS_GRP   0
+@@ -94,6 +106,8 @@ static pthread_t isp_thread;
+ static int isp_running;
+ 
+ static int sns_angle = -1;   // orientation to set before sensor init, -1: leave
++static int sns_i2c = SNS_I2C;
++static int sns_found;
+ 
+ // The sensor's orientation, as stock sets it: before the sensor is
+ // initialised, 0 normal, else mirror+flip.
+@@ -101,6 +115,43 @@ void cv610_set_sensor_angle(int angle) { sns_angle = angle; }
+ 
+ static int ld_lines = 64;    // VPSS low delay, see vpss_setup
+ void cv610_set_low_delay_lines(int lines) { ld_lines = lines; }
++static int sensor_detect(void);
++
++// 24 MHz is mux nibble 4, 27 MHz (PS5280) is nibble 10. The wrong XCLK
++// leaves the sensor PLL unlocked: MIPI stays idle and the goggles see
++// radio with no picture.
++static void sensor_set_xclk(void) {
++    int fd = open("/dev/mem", O_RDWR | O_SYNC);
++    unsigned sel = sns->xclk_sel;
++    unsigned cur = 0;
++    int changed = 0;
++
++    if (fd >= 0) {
++        volatile uint32_t *r = mmap(NULL, 0x10000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x11010000);
++        if (r != MAP_FAILED) {
++            uint32_t v = r[0x8440 / 4];
++            cur = (v >> 12) & 0xf;
++            if (cur != sel) {
++                r[0x8440 / 4] = (v & ~0xf000u) | (sel << 12);
++                changed = 1;
++            }
++            munmap((void *)r, 0x10000);
++        }
++        close(fd);
++    }
++    printf("camera: xclk mux %u -> %u (%u MHz, %s)\n",
++           cur, sel, sel == 10 ? 27 : 24, sns->name);
++    if (!changed) return;
++    if ((fd = open("/dev/ot_mipi_rx", O_RDWR)) < 0) return;
++    sns_clk_source_t clk = sns->sns_clk;
++    sns_rst_source_t rst = sns->sns_clk;
++    ioctl(fd, OT_MIPI_ENABLE_SENSOR_CLOCK, &clk);
++    ioctl(fd, OT_MIPI_RESET_SENSOR, &rst);
++    usleep(10000);
++    ioctl(fd, OT_MIPI_UNRESET_SENSOR, &rst);
++    usleep(50000);
++    close(fd);
++}
+ 
+ // Kernel-side MPP state outlives the process that made it. The vendor app we
+ // replace - or a run of ours that died - leaves SYS, VB and ISP set up, and
+@@ -161,10 +212,10 @@ static int sys_setup(void) {
+ 
+ static int mipi_setup(void) {
+     combo_dev_attr_t attr;
+-    combo_dev_t dev = MIPI_DEV, clk_dev = 0;
+-    sns_clk_source_t sns_clk = 0;
+-    sns_rst_source_t sns_rst = 0;
+-    lane_divide_mode_t hs = LANE_DIVIDE_MODE_1;
++    combo_dev_t dev = sns->mipi_dev, clk_dev = 0;
++    sns_clk_source_t sns_clk = sns->sns_clk;
++    sns_rst_source_t sns_rst = sns->sns_clk;
++    lane_divide_mode_t hs = (lane_divide_mode_t)sns->hs_mode;
+     ext_data_type_t ext;
+     int fd, ok = 1;
+ 
+@@ -176,8 +227,13 @@ static int mipi_setup(void) {
+     attr.img_rect.height = CAP_H;
+     attr.mipi_attr.input_data_type = DATA_TYPE_RAW_10BIT;
+     attr.mipi_attr.wdr_mode = OT_MIPI_WDR_MODE_NONE;
+-    for (int i = 0; i < MIPI_LANE_NUM; i++)
+-        attr.mipi_attr.lane_id[i] = (i < 2) ? (short)(1 + i * 2) : (short)-1;
++    attr.mipi_attr.lane_id[0] = sns->lane0;
++    attr.mipi_attr.lane_id[1] = sns->lane1;
++    attr.mipi_attr.lane_id[2] = -1;
++    attr.mipi_attr.lane_id[3] = -1;
++    vi_dev_id = sns->vi_dev;
++    printf("camera: mipi dev %u hs %u lanes %d,%d vi %d\n",
++           (unsigned)dev, (unsigned)hs, sns->lane0, sns->lane1, vi_dev_id);
+     memset(&ext, 0, sizeof(ext));
+     ext.devno = dev;
+     ext.num = 3;
+@@ -298,37 +354,123 @@ static void *isp_run(void *arg) {
+ // The sensor, found the way the stock app does: each candidate's two ID
+ // registers, in order. A unit with neither is not supported: the camera does
+ // not start on it.
+-static int sensor_read(int fd, unsigned reg) {
+-    unsigned char a[2] = { reg >> 8, reg & 0xff }, v = 0;
+-    if (write(fd, a, 2) != 2 || read(fd, &v, 1) != 1) return -1;
++static int sensor_read(int fd, unsigned reg, int i2c_8bit) {
++    unsigned char v = 0;
++    if (i2c_8bit) {
++        unsigned char a = (unsigned char)reg;
++        if (write(fd, &a, 1) != 1 || read(fd, &v, 1) != 1) return -1;
++    } else {
++        unsigned char a[2] = { (unsigned char)(reg >> 8), (unsigned char)(reg & 0xff) };
++        if (write(fd, a, 2) != 2 || read(fd, &v, 1) != 1) return -1;
++    }
+     return v;
+ }
+ 
+-static int sensor_detect(void) {
++static int sensor_write8(int fd, unsigned char reg, unsigned char val) {
++    unsigned char b[2] = { reg, val };
++    return write(fd, b, 2) == 2 ? 0 : -1;
++}
++
++static unsigned xclk_now(void) {
++    unsigned cur = 0;
++    int fd = open("/dev/mem", O_RDWR | O_SYNC);
++    if (fd >= 0) {
++        volatile uint32_t *r = mmap(NULL, 0x10000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x11010000);
++        if (r != MAP_FAILED) {
++            cur = (r[0x8440 / 4] >> 12) & 0xf;
++            munmap((void *)r, 0x10000);
++        }
++        close(fd);
++    }
++    return cur;
++}
++
++// The other sensor clock, then both reset pads. A PS5280 does not answer
++// at 24 MHz, and a CV2004 does not answer at 27 MHz.
++static void xclk_try(unsigned sel) {
++    int fd = open("/dev/mem", O_RDWR | O_SYNC);
++    if (fd >= 0) {
++        volatile uint32_t *r = mmap(NULL, 0x10000, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0x11010000);
++        if (r != MAP_FAILED) {
++            uint32_t v = r[0x8440 / 4];
++            r[0x8440 / 4] = (v & ~0xf000u) | (sel << 12);
++            munmap((void *)r, 0x10000);
++        }
++        close(fd);
++    }
++    if ((fd = open("/dev/ot_mipi_rx", O_RDWR)) < 0) return;
++    sns_clk_source_t c0 = 0, c1 = 1;
++    sns_rst_source_t r0 = 0, r1 = 1;
++    ioctl(fd, OT_MIPI_ENABLE_SENSOR_CLOCK, &c0);
++    ioctl(fd, OT_MIPI_ENABLE_SENSOR_CLOCK, &c1);
++    ioctl(fd, OT_MIPI_RESET_SENSOR, &r0);
++    ioctl(fd, OT_MIPI_RESET_SENSOR, &r1);
++    usleep(10000);
++    ioctl(fd, OT_MIPI_UNRESET_SENSOR, &r0);
++    ioctl(fd, OT_MIPI_UNRESET_SENSOR, &r1);
++    usleep(50000);
++    close(fd);
++}
++
++static int sensor_scan(int *buses) {
+     char dev[16];
+-    int fd, id0 = -1, id1 = -1;
++    int fd, id0, id1;
+ 
+-    snprintf(dev, sizeof(dev), "/dev/i2c-%d", SNS_I2C);
+-    if ((fd = open(dev, O_RDWR)) < 0) return 1;
+-    if (ioctl(fd, 0x0706 /* I2C_SLAVE_FORCE */, SNS_ADDR) == 0) {
++    usleep(5000);
++    for (int bus = 0; bus < 4; bus++) {
++        snprintf(dev, sizeof(dev), "/dev/i2c-%d", bus);
++        if ((fd = open(dev, O_RDWR)) < 0) continue;
++        if (buses) *buses += 1;
+         for (unsigned i = 0; i < sizeof(sensors) / sizeof(sensors[0]); i++) {
+             const cv610_sensor *c = &sensors[i];
+-            id0 = sensor_read(fd, c->id_reg);
+-            id1 = sensor_read(fd, c->id_reg + 1);
+-            printf("camera: sensor id 0x%x/%x = %02x %02x: %s\n", c->id_reg, c->id_reg + 1,
+-                   id0 & 0xff, id1 & 0xff, (id0 == c->id_val[0] && id1 == c->id_val[1]) ? c->name : "not it");
+-            if (id0 == c->id_val[0] && id1 == c->id_val[1]) {
++            if (ioctl(fd, 0x0706 /* I2C_SLAVE_FORCE */, (int)c->i2c_addr) != 0)
++                continue;
++            // PS5280 pages via 0xEF. After streaming the ID window is not
++            // page 0 (09 03 was read instead of 52 80), so a restart never
++            // matched and VI/VPSS were not brought back.
++            if (c->i2c_8bit)
++                sensor_write8(fd, 0xef, 0x00);
++            id0 = sensor_read(fd, c->id_reg, c->i2c_8bit);
++            id1 = sensor_read(fd, c->id_reg + 1, c->i2c_8bit);
++            if (id0 < 0 || id1 < 0) continue;
++            int match = (id0 == c->id_val[0] && id1 == c->id_val[1]);
++            printf("camera: i2c-%d 0x%02x id 0x%x/%x = %02x %02x: %s\n",
++                   bus, c->i2c_addr, c->id_reg, c->id_reg + 1, id0, id1,
++                   match ? c->name : "not it");
++            if (match || (sns_found && sns == c)) {
++                if (!match)
++                    printf("camera: keeping %s on i2c-%d (already running)\n", c->name, bus);
+                 sns = c;
++                sns_i2c = bus;
++                sns_found = 1;
++                vi_dev_id = c->vi_dev;
+                 close(fd);
++                sensor_set_xclk();
+                 return 1;
+             }
+         }
+-        fprintf(stderr, "camera: an image sensor kestrel-air does not know\n");
+         close(fd);
+-        return 0;
+     }
+-    close(fd);
+-    return 1;
++    if (sns_found) {
++        printf("camera: ID lost after pipeline restart, keeping %s on i2c-%d\n",
++               sns->name, sns_i2c);
++        sensor_set_xclk();
++        return 1;
++    }
++    return 0;
++}
++
++static int sensor_detect(void) {
++    int buses = 0;
++    if (sensor_scan(&buses)) return 1;
++    if (!buses) return 1;
++    unsigned cur = xclk_now();
++    unsigned alt = cur == 10 ? 4 : 10;
++    printf("camera: no sensor at XCLK %u, trying %u\n", cur, alt);
++    xclk_try(alt);
++    if (sensor_scan(&buses)) return 1;
++    fprintf(stderr, "camera: no image sensor kestrel-air knows on i2c-0..3\n");
++    return 0;
+ }
+ 
+ void cv610_capture_size(int *w, int *h) { *w = cap_w; *h = cap_h; }
+@@ -343,8 +485,10 @@ uint32_t cv610_readout_us(void) {
+     double row_us;
+     if (sns == &sensors[0]) {
+         row_us = 8.8889;
+-    } else {
++    } else if (sns == &sensors[1]) {
+         row_us = (fps == 144 || fps == 120 ? 805.0 : 831.0) / 108.3;   // its window modes' line
++    } else {
++        return 0;   // PS5280 readout is not measured; the ground shows the rest
+     }
+     return (uint32_t)(row_us * cap_h + 0.5);
+ }
+@@ -357,12 +501,14 @@ uint32_t cv610_readout_us(void) {
+ // os02k10_120fps); the sensor is the one found last (cv610_sensor_probe finds
+ // it before the first pipeline).
+ int cv610_has_864p120(void) {
+-    static const char *const mark[] = { "cv2004_864p120", "os02k10_120fps" };
+-    static int known[] = { -1, -1 };
++    static const char *const mark[] = { "cv2004_864p120", "os02k10_120fps", NULL };
++    static int known[] = { -1, -1, -1 };
+     const int i = (int)(sns - sensors);
+     if (known[i] < 0) {
+-        void *h = dlopen(sns->lib, RTLD_NOW);
+-        known[i] = h && dlsym(h, mark[i]) != NULL;
++        void *h = NULL;
++        known[i] = 0;
++        if (mark[i] && (h = dlopen(sns->lib, RTLD_NOW)))
++            known[i] = dlsym(h, mark[i]) != NULL;
+         if (h) dlclose(h);
+         printf("camera: 864p120 %s (%s)\n", known[i] ? "available" : "not in this driver", sns->name);
+     }
+@@ -375,7 +521,7 @@ int cv610_has_864p120(void) {
+ // frame holds ~780 rows, and a window must end before the frame does - a
+ // 720-row one would sit well above the centre.
+ int cv610_has_864p144(void) {
+-    static int known[] = { -1, -1 };
++    static int known[] = { -1, -1, -1 };
+     const int i = (int)(sns - sensors);
+     if (known[i] < 0) {
+         known[i] = 0;
+@@ -397,10 +543,14 @@ int cv610_sensor_probe(void) {
+     int fd = open("/dev/ot_mipi_rx", O_RDWR);
+     if (fd >= 0) {
+         lane_divide_mode_t hs = LANE_DIVIDE_MODE_1;
+-        sns_clk_source_t clk = 0;
+-        sns_rst_source_t rst = 0;
+-        if (ioctl(fd, OT_MIPI_SET_HS_MODE, &hs) || ioctl(fd, OT_MIPI_ENABLE_SENSOR_CLOCK, &clk) ||
+-            ioctl(fd, OT_MIPI_RESET_SENSOR, &rst) || ioctl(fd, OT_MIPI_UNRESET_SENSOR, &rst))
++        sns_clk_source_t clk0 = 0, clk1 = 1;
++        sns_rst_source_t rst0 = 0, rst1 = 1;
++        // Both pads: the Lite is source 0, the GT PS5280 is source 1.
++        // A lane mode has to be programmed before the kernel accepts a clock.
++        if (ioctl(fd, OT_MIPI_SET_HS_MODE, &hs) ||
++            ioctl(fd, OT_MIPI_ENABLE_SENSOR_CLOCK, &clk0) || ioctl(fd, OT_MIPI_ENABLE_SENSOR_CLOCK, &clk1) ||
++            ioctl(fd, OT_MIPI_RESET_SENSOR, &rst0) || ioctl(fd, OT_MIPI_RESET_SENSOR, &rst1) ||
++            ioctl(fd, OT_MIPI_UNRESET_SENSOR, &rst0) || ioctl(fd, OT_MIPI_UNRESET_SENSOR, &rst1))
+             fprintf(stderr, "camera: sensor clock for the probe: %s\n", strerror(errno));
+         close(fd);
+         usleep(50000);
+@@ -429,7 +579,7 @@ static int isp_setup(void) {
+         sns_obj->pfn_mirror_flip(VI_PIPE, sns_angle ? ISP_SNS_MIRROR_FLIP : ISP_SNS_NORMAL);
+     CHECK(sns_obj->pfn_register_callback(VI_PIPE, &ae_lib, &awb_lib));
+     if (sns_obj->pfn_set_bus_info) {
+-        bus.i2c_dev = SNS_I2C;
++        bus.i2c_dev = (int8_t)sns_i2c;
+         CHECK(sns_obj->pfn_set_bus_info(VI_PIPE, bus));
+     }
+     CHECK(ss_mpi_ae_register(VI_PIPE, &ae_lib));
+@@ -521,8 +671,8 @@ int cv610_pipeline_create(char sensor, short width, short height, char framerate
+     out_w = width;
+     out_h = height;
+     fps = (unsigned char)framerate;
+-    cap_w = fps == 144 && sns->win144_w ? sns->win144_w : fps == 120 ? sns->win120_w : 1920;
+-    cap_h = fps == 144 && sns->win144_w ? sns->win144_h : fps == 120 ? sns->win120_h : 1080;
++    cap_w = fps == 144 && sns->win144_w ? sns->win144_w : fps == 120 && sns->win120_w ? sns->win120_w : 1920;
++    cap_h = fps == 144 && sns->win144_w ? sns->win144_h : fps == 120 && sns->win120_h ? sns->win120_h : 1080;
+     printf("camera: capture %dx%d@%d -> %dx%d\n", CAP_W, CAP_H, fps, out_w, out_h);
+ 
+     if (sys_setup() || mipi_setup() || vi_setup() || isp_setup() || vpss_setup())
+diff --git a/src/camera/pipeline.h b/src/camera/pipeline.h
+index 483b0a0..f16da14 100644
+--- a/src/camera/pipeline.h
++++ b/src/camera/pipeline.h
+@@ -1,6 +1,7 @@
+ #pragma once
+ 
+-// HiSilicon Hi3516CV610 - the Caddx Ascent air unit's SoC, CV2004 or OS02K10 sensor.
++// HiSilicon Hi3516CV610 - the Caddx Ascent air unit's SoC.
++// Lite / Lite+: CV2004 or OS02K10. GT (board 4861): PS5280.
+ // It links the SDK's MPI libraries directly (see the Makefile).
+ 
+ int  cv610_pipeline_create(char sensor, short width, short height, char framerate, int slice_count);
+diff --git a/src/unit/model.c b/src/unit/model.c
+index 6cc5ca4..012ecd8 100644
+--- a/src/unit/model.c
++++ b/src/unit/model.c
+@@ -16,6 +16,8 @@
+ // Not done: the Lite+ also sends audio, which kestrel-air does not.
+ // The radio chip firmware and config (bb_demo_sky_cx472.img and
+ // bb_config_sky_cx472*.json on the Lite+) are picked by air/start.sh.
++// The GT (board 4861, project 5, G_Sky) uses the Lite's 3v3 radio image
++// and has no Lite+ FEM. Its camera is a PS5280, not the CV2004 or OS02K10.
+ #include "unit/model.h"
+ 
+ #include "app/settings.h"
+@@ -29,6 +31,7 @@
+ static const struct { int board_type, prj, cam_imu; const char *name; } models[] = {
+     { 482, 4, 1, "Ascent Lite" },
+     { 472, 7, 0, "Ascent Lite+" },
++    { 4861, 5, 0, "Ascent GT" },
+ };
+ static int cur;
+ 
+@@ -54,12 +57,13 @@ int model_init(const char *board_type_file) {
+             printf("model: %s (board type %d, from %s)\n", models[i].name, bt, from);
+             return 0;
+         }
+-    printf("model: board type %d (from %s) is not a Lite or Lite+\n", bt, from);
++    printf("model: board type %d (from %s) is not a Lite, Lite+ or GT\n", bt, from);
+     return -1;
+ }
+ 
+ int model_board_type(void) { return models[cur].board_type; }
+ int model_prj(void) { return models[cur].prj; }
+ int model_lite_plus(void) { return models[cur].board_type == 472; }
++int model_gt(void) { return models[cur].board_type == 4861; }
+ int model_cam_imu(void) { return models[cur].cam_imu; }
+ const char *model_name(void) { return models[cur].name; }
+diff --git a/src/unit/model.h b/src/unit/model.h
+index dd5096f..6d452ee 100644
+--- a/src/unit/model.h
++++ b/src/unit/model.h
+@@ -1,11 +1,12 @@
+-// Which air unit this is: the Ascent Lite or the Ascent Lite+ (see model.c).
++// Which air unit this is: the Ascent Lite, the Ascent Lite+, or the Ascent GT (see model.c).
+ #pragma once
+ 
+ #define BOARD_TYPE_FILE "/usrdata/fpv/fpv_board_type"
+ 
+ int  model_init(const char *board_type_file);  // 0, or -1: a board kestrel-air does not run on
+-int  model_board_type(void);    // stock's board type: 482 (Lite) or 472 (Lite+)
+-int  model_prj(void);           // stock's project number for it: 4 or 7
++int  model_board_type(void);    // stock's board type: 482 (Lite), 472 (Lite+), 4861 (GT)
++int  model_prj(void);           // stock's project number for it: 4, 7 or 5
+ int  model_lite_plus(void);     // the Lite+: four power offsets, a high-power FEM
+-int  model_cam_imu(void);       // an IMU on the camera head: the Lite yes, the Lite+ no
++int  model_gt(void);            // the GT: board 4861, PS5280, the Lite's 3v3 radio
++int  model_cam_imu(void);       // an IMU on the camera head: the Lite yes, the Lite+ and the GT no
+ const char *model_name(void);
+diff --git a/tests/test_model.c b/tests/test_model.c
+index 0b2d1c6..8f1b68e 100644
+--- a/tests/test_model.c
++++ b/tests/test_model.c
+@@ -29,8 +29,10 @@ void test_model(void) {
+     setenv("KA_BOARD_TYPE", "472", 1);
+     CHECK(model_init("/nonexistent") == 0 && model_prj() == 7);
+ 
+-    setenv("KA_BOARD_TYPE", "4861", 1);         // a GT: not ours
+-    CHECK(model_init("/nonexistent") == -1);
++    setenv("KA_BOARD_TYPE", "4861", 1);         // the GT
++    CHECK(model_init("/nonexistent") == 0);
++    CHECK(model_board_type() == 4861 && model_prj() == 5 && model_gt() && !model_lite_plus());
++    CHECK(!model_cam_imu());
+     unsetenv("KA_BOARD_TYPE");
+     CHECK(model_init(write_file("492\n")) == -1);   // the RC: not ours either
+     remove("/tmp/ka-test-board-type");
