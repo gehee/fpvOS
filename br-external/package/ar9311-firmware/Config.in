@@ -1,9 +1,28 @@
 config BR2_PACKAGE_AR9311_FIRMWARE
-	bool "AR9311 Wave521C firmware (local binary)"
+	bool "AR9311 Wave521C firmware"
 	depends on BR2_aarch64
 	help
-	  Install locally extracted chagall.bin into the RAM filesystem.
-	  Supply the validated Ascent 17.5.8 binary in
-	  vendor/ar9311-firmware/ before building. The binary is not
-	  included in this repository; redistribution rights are
-	  unverified.
+	  Download pinned vendor firmware and extract chagall.bin
+	  into the RAM filesystem using Buildroot host tools. Both
+	  the download and extracted binary are hash-checked.
+	  Redistribution rights are unverified; the binary is not
+	  included in this repository.
+
+if BR2_PACKAGE_AR9311_FIRMWARE
+
+choice
+	prompt "Validated codec firmware source"
+	default BR2_PACKAGE_AR9311_FIRMWARE_ASCENT_17_5_15
+	help
+	  Boards select a validated source profile. Compatible boards
+	  may share the same profile and cached download.
+
+config BR2_PACKAGE_AR9311_FIRMWARE_ASCENT_17_5_15
+	bool "Caddx Ascent VRX 17.5.15"
+	help
+	  Extract from Caddx's official Ascent_G_Gnd update image.
+	  Its codec binary matches the validated 17.5.8 binary.
+
+endchoice
+
+endif

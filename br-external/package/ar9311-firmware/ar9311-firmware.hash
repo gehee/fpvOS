@@ -1,2 +1,5 @@
-# Locally extracted Ascent 17.5.8 userapp/usr/bin/chagall.bin
+# Caddx's release manifest and independently computed download hash:
+# https://github.com/CaddxFPV-Tech/Caddx-Ascent-Firmware-Release/releases/tag/V17.5.15
+sha256  d5fba9a867bd5c6b664750937e2185a2b2db01d49b0b586815f1199db747791f  Ascent_G_Gnd_17_5_15.img
+# Extracted userapp/usr/bin/chagall.bin; identical to validated Ascent 17.5.8.
 sha256  99bc74cdf1e7ded785c2b65440c983f4e128727eb2bbdf309b14ddde668fd8ac  chagall.bin
