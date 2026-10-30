@@ -100,7 +100,7 @@ class NandTests(unittest.TestCase):
                 self.run_sim(f'bad{part}')
                 self.assertEqual(self.hashes(), self.before)
 
-    def test_vendor_restore_leaves_entire_inactive_bank_unchanged(self):
+    def vendor_restore_fixture(self):
         kernel = bytearray((self.dir / 'images/kernel.img').read_bytes())
         struct.pack_into('<I', kernel, 12, 0x200a0000)
         struct.pack_into('>II', kernel, 80, 0x200a0000, 0x200a0000)
@@ -113,13 +113,25 @@ class NandTests(unittest.TestCase):
         (self.dir / 'kernel.before.bin').write_bytes(kernel)
         (self.dir / 'dtb.before.bin').write_bytes(dtb)
         self.package.write_bytes(test_update.PACKAGE.build(self.dir, test_update.BOARD, vendor_restore=True))
-        for bank in (0, 1):
-            with self.subTest(bank=bank):
-                self.run_sim(f'restore-stock{bank}')
-                self.assertEqual((self.dir / 'part1').read_bytes(), kernel)
-                self.assertEqual((self.dir / 'part2').read_bytes(), dtb)
-                self.assertEqual(self.hashes()[0], self.before[0])
-                self.assertEqual(self.hashes()[3], self.before[3])
+        return kernel, dtb
+
+    def test_vendor_restore_leaves_entire_inactive_bank_unchanged(self):
+        kernel, dtb = self.vendor_restore_fixture()
+        for runtime in ('stock0', 'stock1', 'native'):
+            for region in ('control', 'tail'):
+                with self.subTest(runtime=runtime, bad_region=region):
+                    self.run_sim(f'restore-{runtime}-{region}')
+                    self.assertEqual((self.dir / 'part1').read_bytes(), kernel)
+                    self.assertEqual((self.dir / 'part2').read_bytes(), dtb)
+                    self.assertEqual(self.hashes()[0], self.before[0])
+                    self.assertEqual(self.hashes()[3], self.before[3])
+
+    def test_vendor_restore_bad_kernel_or_dtb_refuses_before_erasing(self):
+        self.vendor_restore_fixture()
+        for part in (1, 2):
+            with self.subTest(part=part):
+                self.run_sim(f'restore-bad{part}')
+                self.assertEqual(self.hashes(), self.before)
 
     def test_layout_crc_and_active_bank(self):
         raw = bytearray(b'\xff' * 0xb40000)

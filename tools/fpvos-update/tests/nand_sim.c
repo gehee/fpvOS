@@ -110,11 +110,17 @@ int main(int argc, char **argv)
         assert(install(argv[2]) == -1 && erased_blocks == 0);
         return 0;
     }
-    if (!strncmp(argv[1], "restore-stock", 13)) {
-        stock_runtime = 1;
-        stock_bank = atoi(argv[1] + 13);
+    if (!strncmp(argv[1], "restore-bad", 11)) {
+        bad_part = atoi(argv[1] + 11); bad_offset = 0;
+        assert(install(argv[2]) == -1 && erased_blocks == 0);
+        return 0;
+    }
+    if (!strncmp(argv[1], "restore-", 8)) {
+        stock_runtime = !strncmp(argv[1], "restore-stock", 13);
+        if (stock_runtime) stock_bank = atoi(argv[1] + 13);
         /* Even unusable control blocks in the inactive bank are irrelevant. */
-        bad_part = 3; bad_offset = 0;
+        bad_part = 3;
+        bad_offset = strstr(argv[1], "tail") ? parts[3].size - BLOCK : 0;
     }
     if (!strncmp(argv[1], "fail", 4)) fail_part = atoi(argv[1] + 4);
     int result = install(argv[2]);

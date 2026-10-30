@@ -1,4 +1,5 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
+import hashlib
 import importlib.util
 import os
 from pathlib import Path
@@ -172,6 +173,27 @@ class RuntimePreflight(unittest.TestCase):
         self.run_preflight(False, TEST_BADBLOCK='1')
         for command in ('boot','clean'): self.run_preflight(False, command=command)
 
+    def test_recovery_preflight_does_not_require_healthy_update_targets(self):
+        # Readiness must allow repair/restoration even when boot or a particular
+        # install cannot use these blocks. GPT discovery still has to succeed.
+        for native in (False, True):
+            if native:
+                (self.root/'proc/device-tree/model').write_text('Caddx Ascent Gnd485 (AR9311)\0')
+                (self.root/'sys/class/mtd/mtd0/name').write_text('boot-protected\n')
+                with (self.root/'dev/mtd0').open('r+b') as f: f.truncate(0xb40000)
+                (self.root/'sys/class/mtd/mtd17/name').write_text('fpvos\n')
+                for number, offset in ((0,0),(14,0xb40000),(15,0x1140000),(17,0x26a0000)):
+                    (self.root/f'sys/class/mtd/mtd{number}/offset').write_text(hex(offset)+'\n')
+            before = {p.name: hashlib.sha256(p.read_bytes()).digest()
+                      for p in (self.root/'dev').iterdir()}
+            for mtd, offset in ((14,0), (15,0), (17,0), (17,0x20000),
+                                (17,0x40000), (17,0x14e0000)):
+                with self.subTest(native=native, mtd=mtd, offset=offset):
+                    self.run_preflight(TEST_BAD_MTD=str(mtd), TEST_BAD_OFFSET=hex(offset))
+            self.run_preflight(False, TEST_BAD_MTD='0', TEST_BAD_OFFSET='0x100000')
+            self.assertEqual({p.name: hashlib.sha256(p.read_bytes()).digest()
+                              for p in (self.root/'dev').iterdir()}, before)
+
     def test_changed_map_board_geometry_and_attached_ubi_rejected(self):
         p = self.root/'etc/app.version'; p.write_text('BOARD_TYPE=Gnd486\n'); self.run_preflight(False)
         p.write_text('BOARD_TYPE=Gnd485\n')
@@ -217,8 +239,8 @@ class RuntimePreflight(unittest.TestCase):
                                      (self.root/'images/rootfs.cpio.uboot').read_bytes())
                 shutil.rmtree(self.root/'root', ignore_errors=True)
                 (self.root/'work/boot.fwu').unlink(missing_ok=True)
-        # Installation preflight still refuses the same unused bad block.
-        self.run_preflight(False, TEST_BAD_MTD='17', TEST_BAD_OFFSET='0x14e0000')
+        # Recovery readiness is independent of install write-range checks.
+        self.run_preflight(TEST_BAD_MTD='17', TEST_BAD_OFFSET='0x14e0000')
 
     def test_preserved_stock_root_may_be_attached_but_geometry_must_match(self):
         d = self.root/'sys/class/mtd/mtd16'; d.mkdir(); (d/'name').write_text('userapp0\n')

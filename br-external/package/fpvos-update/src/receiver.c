@@ -452,12 +452,19 @@ int main(int argc, char **argv)
 	if (state >= 0)
 		reset_transfer();
 	if (state >= 0 && access(CLEAN_BOOT_MARKER, F_OK) == 0) {
-		if (run_helper("clean")) {
-			fprintf(stderr, "clean-mode startup failed; receiver not started\n");
-			return 1;
+		int clean_result = run_helper("clean");
+		if (clean_result) {
+			/* Keep info/status and a later clean retry available. Uploads
+			 * remain blocked until readiness actually succeeds. */
+			clean = prepared = 0;
+			state = -1;
+			snprintf(detail, sizeof(detail),
+				 "clean-mode startup failed (helper status %d)", clean_result);
+			fprintf(stderr, "%s\n", detail);
+		} else {
+			clean = 1;
+			snprintf(detail, sizeof(detail), "clean RAM mode");
 		}
-		clean = 1;
-		snprintf(detail, sizeof(detail), "clean RAM mode");
 	}
 	for (;;) {
 		refresh_worker();

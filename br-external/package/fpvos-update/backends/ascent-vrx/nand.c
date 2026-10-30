@@ -646,8 +646,11 @@ int main(int argc, char **argv)
 	}
 	int result;
 	if (is_preflight) {
-		for (unsigned i = 1; i < 4; i++)
-			if (good_range(&parts[i], 0, parts[i].size)) return 1;
+		/* Recovery readiness checks identity, layout, geometry and UBI
+		 * ownership, not the health of a still-unknown operation's ranges.
+		 * Even damaged control/header blocks must not prevent a vendor
+		 * restore, which never accesses the fpvOS bank. Boot/clean check
+		 * their reads and install checks all erase ranges before writing. */
 		printf("Gnd485 %s NAND layout verified; stock=userapp%u fpvOS=userapp%u; no writes\n",
 		       stock_runtime ? "stock" : "fpvOS", stock_bank, stock_bank ^ 1);
 		result = 0;

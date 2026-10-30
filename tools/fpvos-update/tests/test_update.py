@@ -182,7 +182,7 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         self.assertTrue(self.client.verify(path, install=True)['installed'])
         self.assertEqual((self.dir / 'calls').read_text(), 'clean\ninstall\n')
 
-    def test_clean_boot_runs_readiness_once_and_fails_closed(self):
+    def test_clean_boot_runs_readiness_once(self):
         args = self.process.args
         self.process.terminate(); self.process.wait(timeout=3)
         (self.bin / 'clean-boot').touch()
@@ -190,12 +190,36 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         self.client.info()
         self.client.ack(0x72)  # Ready without another explicit clean request.
         self.assertEqual((self.dir / 'calls').read_text(), 'clean\n')
+
+    def test_clean_boot_failure_remains_queryable_and_retryable(self):
+        args = self.process.args
         self.process.terminate(); self.process.wait(timeout=3)
-        (self.dir / 'helper').write_text('#!/bin/sh\nexit 1\n')
-        self.process = subprocess.Popen(args, stderr=subprocess.PIPE)
-        self.assertNotEqual(self.process.wait(timeout=3), 0)
-        self.assertIn(b'clean-mode startup failed', self.process.stderr.read())
-        self.process.stderr.close()
+        (self.bin / 'clean-boot').touch()
+        helper = self.dir / 'helper'
+        helper.write_text(f'#!/bin/sh\necho "$1" >> "{self.dir / "calls"}"\nexit 7\n')
+        self.process = subprocess.Popen(args)
+        for _ in range(2):
+            self.assertIn('clean-mode startup failed', self.client.info()['detail'])
+            status = self.client.exchange(0x76)
+            self.assertEqual(struct.unpack_from('<Ii', status), (0, -1))
+            self.assertIn(b'clean-mode startup failed', status[8:])
+            self.assertIsNone(self.process.poll())
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\n')
+        for command, payload in ((0x72, b''), (0x73, bytes(328)),
+                                 (0x74, b'payload'), (0x75, b'')):
+            with self.assertRaisesRegex(ValueError, 'clean mode'):
+                self.client.ack(command, payload)
+        self.assertFalse((self.dir / 'stage/package.fwu').exists())
+        with self.assertRaisesRegex(ValueError, 'clean-mode preparation failed'):
+            self.client.clean()
+        self.assertIn('clean-mode preparation failed', self.client.info()['detail'])
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\nclean\n')
+        # Readiness can be retried after fixing the cause, without restarting
+        # the daemon or weakening the guard on incoming packages.
+        helper.write_text(f'#!/bin/sh\necho "$1" >> "{self.dir / "calls"}"\n')
+        path = self.dir / 'test.fwu'; path.write_bytes(b'retry after clean failure')
+        self.assertEqual(self.client.verify(path)['state'], 2)
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\nclean\nclean\nverify\n')
 
     def test_failed_restore_status_is_not_overridden_by_clean_boot(self):
         args = self.process.args
