@@ -53,8 +53,12 @@ BR2_PACKAGE_AIR_BUSYBOX=y
 # The radio through ar_libre (arlink.ko + libar8030_client.so, no daemon) instead
 # of Artosyn's artosyn_sdio.ko and daemon_sdiov12; kestrel-air selects it.
 BR2_PACKAGE_AR_LIBRE=y
-# Open8030, the open radio firmware, next to stock's, built only when its board
-# profiles are in vendor/open8030; the Lite and the Lite+ start it, the
-# default (the open8030/always flag ships).
+# Open8030, the open radio firmware, next to stock's, built with the
+# published Lite+ profile. Lite and Lite+ start it by default
+# (the open8030/always flag ships).
 BR2_PACKAGE_OPEN8030=y
+BR2_PACKAGE_OPEN8030_PROFILE="ascent-lite-plus.c"
+BR2_PACKAGE_OPEN8030_TRANSPORT_SDIO=y
+BR2_PACKAGE_OPEN8030_ROLE_AP=y
+BR2_PACKAGE_OPEN8030_FACTORY_OPTIONAL=y
 BR2_PACKAGE_OPEN8030_AIR_DEFAULT=y

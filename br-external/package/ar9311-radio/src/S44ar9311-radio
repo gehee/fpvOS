@@ -7,7 +7,7 @@ case "$1" in
 		modprobe gpio-regulator || exit 1
 		modprobe ar9311_radio_pwrseq || exit 1
 		modprobe dw_mci-artosyn || exit 1
-		modprobe arlink fw_name=open8030-gnd485-sdio.img cfg_name=bb_config_gnd_open8030.json || exit 1
+		modprobe arlink fw_name=open8030.img cfg_name=open8030.json || exit 1
 		i=0
 		while [ "$i" -lt 20 ]; do
 			if [ -c /dev/arlink0 ]; then

@@ -143,17 +143,42 @@ scripts/open8030-private.sh ../Open8030   # -> vendor/open8030 (git-ignored)
 make OPEN8030_PRIVATE_DIR=$PWD/vendor/open8030 ...
 ```
 
+Board defconfigs select `BR2_PACKAGE_OPEN8030_PROFILE`, a transport choice,
+the optional `BR2_PACKAGE_OPEN8030_ROLE_AP` air role and factory-data policy.
+The firmware recipe does not infer these from a host application or board name.
+
+| Board | Profile | Transport | Role |
+| --- | --- | --- | --- |
+| VRX Pro | `ascent-vrx-pro.c` | USB | Ground/station |
+| Ascent Lite/Lite+ | `ascent-lite-plus.c` | SDIO | Air/AP; factory data optional |
+| Ascent VRX | private `vendor/open8030/ascent-vrx.c` | SDIO | Ground/station |
+
+Bare profile filenames resolve in the published archive; absolute paths select
+private inputs. `OPEN8030_PRIVATE_DIR` overrides the profile directory using its
+basename. Ground configuration is selected independently with
+`BR2_PACKAGE_OPEN8030_CONFIG`: a published filename or absolute path, optionally
+overridden by `OPEN8030_CONFIG_DIR`. To override both from a private directory,
+pass both directory variables. SDIO keeps the pinned firmware's active-bus
+detection; USB adds `AR_FORCE_USB`. The source pin and existing role flags stay
+the same for all three boards.
+
 The images then carry:
 
-- the goggle gets `/lib/firmware/open8030-vrxpro-usb.img` and its radio config,
+- the goggle gets `/lib/firmware/open8030.img` and `open8030.json`,
   and runs it by default; kestrel-gnd's RADIO > VRX Radio Firmware switches
   between it and stock's at the next radio start (the goggle's radio only, not
   the air unit's).
-- the air unit gets `/usrdata/fpv/air/open8030/open8030-ap.img`. A Lite or Lite+
+- the air unit gets `/usrdata/fpv/air/open8030/open8030.img`. A Lite or Lite+
   uses it when `/usrdata/fpv/air/open8030/always` exists, which the air image
   ships (`BR2_PACKAGE_OPEN8030_AIR_DEFAULT=y` in `ascentlite_defconfig`); remove
   the file over ssh to go back to stock's. Both ends must run the same firmware
   family: an Open8030 air unit needs an Open8030 goggle.
+
+Compatibility links retain the published USB and air firmware filenames;
+Kestrel still probes `open8030-vrxpro-usb.img` directly. Loaders use the stable
+`open8030.img` basename regardless of the selected board profile. Reapply the
+board defconfig when updating an existing output directory, then rebuild the
+Open8030 and affected host-radio packages.
 
 `OPEN8030_OVERRIDE_SRCDIR` (in the board output directory's `local.mk`) builds a local Open8030 checkout
 instead of the pinned commit.
