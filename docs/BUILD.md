@@ -207,7 +207,7 @@ Sub-commands for iterating:
 ./build.sh air        # the air unit's image, into output/ascent-lite/ (see below)
 ```
 
-The VRX Pro images are in `output/vrxpro/images/`:
+The VRX Pro images are in `output/ascent-vrx-pro/images/`:
 
 - `sdcard.img` — the raw image, for `dd`
 - `sdcard.img.xz` — the same image compressed, for balenaEtcher or Raspberry
@@ -219,17 +219,18 @@ Each board uses a separate output directory:
 
 | Build command | Output directory |
 | --- | --- |
-| `./build.sh` | `output/vrxpro/` |
+| `./build.sh` (or `./build.sh ascent-vrx-pro`) | `output/ascent-vrx-pro/` |
 | `./build.sh air` | `output/ascent-lite/` |
 | `./build.sh ascent-vrx` | `output/ascent-vrx/` |
 
 Each contains its own `.config`, `build/`, `host/`, `target/` and `images/`.
 Build outputs are Git-ignored. Run package and configuration commands against
-that board's directory, for example `make -C output/vrxpro menuconfig`, after
+that board's directory, for example `make -C output/ascent-vrx-pro menuconfig`, after
 `./build.sh config`. Put local package overrides in that directory's `local.mk`.
 
 Older checkouts used `buildroot/output/`, `output-air/` and `output-ar9311/`.
-`output/ascent-gnd485/` was also used before the product-name rename.
+`output/ascent-gnd485/` was also used before the product-name rename, and
+`output/vrxpro/` before the VRX Pro's board folder became `ascent-vrx-pro`.
 Those folders are left untouched and remain ignored. Start a fresh build at the
 new location; moving an existing Buildroot output can leave embedded absolute
 paths pointing to the old directory. Copy any intentional `local.mk` overrides
@@ -241,7 +242,7 @@ See [INSTALL.md](INSTALL.md) for flashing, first boot, and recovery back to
 stock. The easy way is balenaEtcher with `sdcard.img.xz`; from a Linux shell:
 
 ```sh
-sudo dd if=output/vrxpro/images/sdcard.img of=/dev/sdX bs=4M conv=fsync
+sudo dd if=output/ascent-vrx-pro/images/sdcard.img of=/dev/sdX bs=4M conv=fsync
 # If the card is larger than the image, extend the backup GPT:
 sudo sgdisk -e /dev/sdX
 ```
@@ -324,7 +325,7 @@ the stock one, and `ascent-kernel-check.py` are for that).
 - **Buildroot fails on first package** — confirm you cloned the exact pinned
   version from `br-external/BUILDROOT_VERSION`.
 - **Boots to a black screen** — almost always the loader; confirm
-  `output/vrxpro/images/uboot-patched.bin` exists (the fpvos-bootchain
+  `output/ascent-vrx-pro/images/uboot-patched.bin` exists (the fpvos-bootchain
   package makes it from `vendor/stock/uboot.img`).
 
 ## AR9311 / Ascent Gnd485

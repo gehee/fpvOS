@@ -79,7 +79,7 @@ installing it so the from-source build is never silently overwritten.
 
 `scripts/extract-vendor.py` pulls the proprietary pieces (and that MPP
 fallback) from firmware the user owns; they're merged into the image at
-build time by `br-external/board/vrxpro/post-build.sh`. See
+build time by `br-external/board/ascent-vrx-pro/post-build.sh`. See
 [`vendor/MANIFEST`](../vendor/MANIFEST).
 
 ## The image

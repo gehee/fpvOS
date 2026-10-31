@@ -9,9 +9,9 @@ tree, and its source was never published.
 | | |
 |---|---|
 | Tree | Rockchip `develop-6.12`, [rockchip-linux/kernel](https://github.com/rockchip-linux/kernel) |
-| Commit | `470f9dccbdc4` (2026-06-25), Linux 6.12.69. The tarball is checked against `br-external/board/vrxpro/linux.hash` (`external.mk`): Buildroot itself skips the check for a kernel that is not its own latest |
-| Config | `br-external/board/vrxpro/linux-5.10.198-stock.config`, read out of the stock kernel image (`CONFIG_IKCONFIG`), carried forward by `olddefconfig`, plus `linux.fragment` |
-| Patches | `br-external/board/vrxpro/linux-patches/` (below) |
+| Commit | `470f9dccbdc4` (2026-06-25), Linux 6.12.69. The tarball is checked against `br-external/board/ascent-vrx-pro/linux.hash` (`external.mk`): Buildroot itself skips the check for a kernel that is not its own latest |
+| Config | `br-external/board/ascent-vrx-pro/linux-5.10.198-stock.config`, read out of the stock kernel image (`CONFIG_IKCONFIG`), carried forward by `olddefconfig`, plus `linux.fragment` |
+| Patches | `br-external/board/ascent-vrx-pro/linux-patches/` (below) |
 | Device tree | the stock one as `boot/mkbootchain.py` has always made it, plus the edits below |
 
 Rockchip's 6.12 tree keeps the vendor drivers the goggle depends on - VOP2

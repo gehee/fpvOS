@@ -26,11 +26,11 @@ jobs:
       - name: Shell syntax
         run: |
           for f in build.sh boot/mk-sd-image.sh scripts/release.sh \
-                   br-external/board/vrxpro/post-build.sh \
-                   $(git ls-files 'br-external/board/vrxpro/rootfs-overlay/etc/init.d/*') \
-                   br-external/board/vrxpro/rootfs-overlay/usr/sbin/fpvos-wifi \
-                   br-external/board/vrxpro/rootfs-overlay/root/bb-restart.sh \
-                   br-external/board/vrxpro/rootfs-overlay/ar8030soc/bb_only.sh \
+                   br-external/board/ascent-vrx-pro/post-build.sh \
+                   $(git ls-files 'br-external/board/ascent-vrx-pro/rootfs-overlay/etc/init.d/*') \
+                   br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-wifi \
+                   br-external/board/ascent-vrx-pro/rootfs-overlay/root/bb-restart.sh \
+                   br-external/board/ascent-vrx-pro/rootfs-overlay/ar8030soc/bb_only.sh \
                    br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/start.sh; do
             head -1 "$f" | grep -q bash && sh=bash || sh=sh
             $sh -n "$f" || { echo "syntax error: $f"; exit 1; }

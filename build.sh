@@ -1,8 +1,9 @@
 #!/bin/bash
 # fpvOS end-to-end build: Buildroot rootfs (with kestrel) -> SD image.
 #
-#   ./build.sh              # full build
-#   ./build.sh config       # configure the VRX Pro build in ./output/vrxpro
+#   ./build.sh              # full build (the VRX Pro goggle; any of these VRX Pro
+#                           # commands may also be spelled ./build.sh ascent-vrx-pro ...)
+#   ./build.sh config       # configure the VRX Pro build in ./output/ascent-vrx-pro
 #   ./build.sh kestrel      # rebuild only kestrel into the buildroot sysroot
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
@@ -33,9 +34,12 @@ need_vendor() {
 }
 
 # Each board has an independent Buildroot configuration, toolchain and images.
-VRXPRO_OUT="$ROOT/output/vrxpro"
+ASCENT_VRX_PRO_OUT="$ROOT/output/ascent-vrx-pro"
 AIR_OUT="$ROOT/output/ascent-lite"
 ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
+
+# The VRX Pro is the default board; ascent-vrx-pro names it like the others.
+[ "${1:-}" = ascent-vrx-pro ] && shift
 
 case "${1:-all}" in
   ascent-vrx)
@@ -59,15 +63,15 @@ case "${1:-all}" in
       *) echo "usage: $0 air [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   config)
-    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT" vrxpro_defconfig ;;
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" ascentvrxpro_defconfig ;;
   kestrel)
-    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT" kestrel-rebuild ;;
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" kestrel-rebuild ;;
   image)
     need_vendor; "$ROOT/boot/mk-sd-image.sh" ;;
   all)
     need_vendor
-    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT" vrxpro_defconfig
-    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT"
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" ascentvrxpro_defconfig
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {all|config|kestrel|image|air [config|kernel|all]|ascent-vrx [config|kernel|all]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]}" >&2; exit 1 ;;
 esac

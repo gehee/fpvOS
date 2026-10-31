@@ -8,7 +8,7 @@
 # board unreachable until something re-assigned it - the intermittent
 # "No route to host" seen during development.
 #
-# vrxpro_defconfig leaves BR2_SYSTEM_DHCP unset. Keep it that way, or a rebuild
+# ascentvrxpro_defconfig leaves BR2_SYSTEM_DHCP unset. Keep it that way, or a rebuild
 # regenerates the dhcp stanza and reintroduces this.
 
 auto lo

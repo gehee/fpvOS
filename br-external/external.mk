@@ -10,7 +10,7 @@ ifeq ($(BR2_PACKAGE_MESA3D_GALLIUM_DRIVER_PANFROST),y)
 MESA3D_CONF_OPTS += -Dllvm=disabled
 endif
 
-# The kernel against its board's linux.hash (board/vrxpro for the goggle,
+# The kernel against its board's linux.hash (board/ascent-vrx-pro for the goggle,
 # board/ascent-lite for the air unit, common/ar9311 for Gnd485: the folder
 # of the first kernel config fragment): its tarball, and its licence files for legal-info. Buildroot's own
 # linux.hash only knows upstream's licence files, which Rockchip's tree does not

@@ -57,8 +57,8 @@ BR2_PACKAGE_WAYLAND=y
 BR2_PACKAGE_LIBPNG=y
 BR2_PACKAGE_FREETYPE=y
 BR2_PACKAGE_PIXMAN=y
-BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/rootfs-overlay"
-BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/post-build.sh"
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx-pro/rootfs-overlay"
+BR2_ROOTFS_POST_BUILD_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx-pro/post-build.sh"
 BR2_PACKAGE_ROCKCHIP_MPP=y
 BR2_PACKAGE_FPVOS_VENDOR_LIBS=y
 BR2_PACKAGE_KESTREL=y
@@ -94,7 +94,7 @@ BR2_PACKAGE_BTOP=y
 # WiFi access point (usr/sbin/fpvos-wifi, toggled from kestrel's SYSTEM tab):
 # hostapd for the AP, iw for the scan that picks the channel, and busybox's
 # udhcpd for addresses.
-BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/busybox.fragment"
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx-pro/busybox.fragment"
 BR2_PACKAGE_HOSTAPD=y
 # BR2_PACKAGE_HOSTAPD_DRIVER_HOSTAP is not set
 # BR2_PACKAGE_HOSTAPD_ACS is not set
@@ -103,16 +103,16 @@ BR2_PACKAGE_IW=y
 # The SD boot chain, made from the stock boot images (boot/mkbootchain.py).
 BR2_PACKAGE_FPVOS_BOOTCHAIN=y
 # The kernel, built from source: Rockchip's develop-6.12 tree, with the stock
-# 5.10 config carried forward plus board/vrxpro/linux.fragment. The boot chain
+# 5.10 config carried forward plus board/ascent-vrx-pro/linux.fragment. The boot chain
 # puts it in the SD FIT in place of the stock kernel; the device tree stays
 # the stock one, with fpvOS's edits. See docs/KERNEL.md.
 BR2_LINUX_KERNEL=y
 BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
 BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="$(call github,rockchip-linux,kernel,470f9dccbdc42e7b8a824d0a5c5640a10e9457d2)/kernel-470f9dccbdc42e7b8a824d0a5c5640a10e9457d2.tar.gz"
 BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
-BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/linux-5.10.198-stock.config"
-BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/linux.fragment"
-BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_FPVOS_PATH)/board/vrxpro/linux-patches"
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx-pro/linux-5.10.198-stock.config"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx-pro/linux.fragment"
+BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx-pro/linux-patches"
 BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 # The AR8030 radio stack: arlink.ko, built from source against that kernel, and
 # the client library. Artosyn's driver, daemon and library are not shipped.

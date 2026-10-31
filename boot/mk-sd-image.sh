@@ -23,7 +23,7 @@
 set -e
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-BR="${BR_IMAGES:-$ROOT/output/vrxpro/images}"
+BR="${BR_IMAGES:-$ROOT/output/ascent-vrx-pro/images}"
 V="$BR"   # boot chain: fpvos-bootchain installs it next to rootfs.ext2
 OUT="${OUT:-$BR/sdcard.img}"
 COMPRESS="${COMPRESS:-1}"

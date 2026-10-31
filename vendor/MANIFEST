@@ -3,7 +3,7 @@
 # Paths on the left are where the file lands under vendor/; paths on the
 # right are where it lives in the stock Caddx/Ascent VRX Pro firmware.
 #
-# rootfs/ is merged into the target rootfs by br-external/board/vrxpro/post-build.sh.
+# rootfs/ is merged into the target rootfs by br-external/board/ascent-vrx-pro/post-build.sh.
 # boot/ feeds boot/mk-sd-image.sh.
 
 # --- AR8030 baseband userland (stock rootfs: /ar8030soc) ---
