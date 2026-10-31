@@ -13,7 +13,10 @@ OPEN8030_PROFILE = $(call qstrip,$(BR2_PACKAGE_OPEN8030_PROFILE))
 OPEN8030_CONFIG ?= $(call qstrip,$(BR2_PACKAGE_OPEN8030_CONFIG))
 
 # Bare filenames come from the published archive; absolute paths name private
-# inputs. Keep make-time directory overrides for profile/config development.
+# inputs. Keep make-time directory overrides for profile/config development:
+# OPEN8030_PRIVATE_DIR (scripts/open8030-private.sh fills it with the profiles
+# and the ground radio config) overrides both, OPEN8030_CONFIG_DIR the config.
+OPEN8030_CONFIG_DIR ?= $(OPEN8030_PRIVATE_DIR)
 OPEN8030_PROFILE_SOURCE = $(if $(OPEN8030_PRIVATE_DIR),$(OPEN8030_PRIVATE_DIR)/$(notdir $(OPEN8030_PROFILE)),$(if $(filter /%,$(OPEN8030_PROFILE)),$(OPEN8030_PROFILE),$(OPEN8030_PROFILES_DIR)/$(OPEN8030_PROFILE)))
 OPEN8030_CONFIG_SOURCE = $(if $(OPEN8030_CONFIG_DIR),$(OPEN8030_CONFIG_DIR)/$(notdir $(OPEN8030_CONFIG)),$(if $(filter /%,$(OPEN8030_CONFIG)),$(OPEN8030_CONFIG),$(OPEN8030_PROFILES_DIR)/$(OPEN8030_CONFIG)))
 OPEN8030_DEPENDENCIES = open8030-profiles
@@ -47,6 +50,8 @@ OPEN8030_DEPENDENCIES += \
 define OPEN8030_BUILD_CMDS
 	test -n "$(OPEN8030_PROFILE)" && test -f "$(OPEN8030_PROFILE_SOURCE)" || \
 		{ echo "Missing Open8030 profile: $(OPEN8030_PROFILE_SOURCE); set BR2_PACKAGE_OPEN8030_PROFILE or OPEN8030_PRIVATE_DIR" >&2; exit 1; }
+	$(if $(BR2_PACKAGE_OPEN8030_ROLE_AP),,test -f "$(OPEN8030_CONFIG_SOURCE)" || \
+		{ echo "Missing Open8030 radio config: $(OPEN8030_CONFIG_SOURCE); set BR2_PACKAGE_OPEN8030_CONFIG or OPEN8030_CONFIG_DIR" >&2; exit 1; })
 	cd $(@D) && $(HOST_MAKE_ENV) USER_CACHE_DIR=$(@D)/build/cache \
 		$(HOST_DIR)/bin/python3 ./open8030 image \
 		--profile "$(OPEN8030_PROFILE_SOURCE)" \

@@ -62,9 +62,10 @@ config BR2_PACKAGE_OPEN8030_CONFIG
 	help
 	  Configuration filename from open8030-profiles, or an
 	  absolute path. Installed as open8030.json independently of
-	  the input name. OPEN8030_CONFIG_DIR can override the source
-	  directory at make time. Air units use their runtime
-	  board-specific stock configuration.
+	  the input name. OPEN8030_CONFIG_DIR (by default
+	  OPEN8030_PRIVATE_DIR) can override the source directory at
+	  make time. Air units use their runtime board-specific stock
+	  configuration.
 
 config BR2_PACKAGE_OPEN8030_AIR_DEFAULT
 	bool "air unit boots on Open8030"

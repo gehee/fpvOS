@@ -155,10 +155,11 @@ The firmware recipe does not infer these from a host application or board name.
 
 Bare profile filenames resolve in the published archive; absolute paths select
 private inputs. `OPEN8030_PRIVATE_DIR` overrides the profile directory using its
-basename. Ground configuration is selected independently with
-`BR2_PACKAGE_OPEN8030_CONFIG`: a published filename or absolute path, optionally
-overridden by `OPEN8030_CONFIG_DIR`. To override both from a private directory,
-pass both directory variables. SDIO keeps the pinned firmware's active-bus
+basename, and the ground configuration's directory too (`open8030-private.sh`
+copies both). Ground configuration is selected with
+`BR2_PACKAGE_OPEN8030_CONFIG`: a published filename or absolute path; set
+`OPEN8030_CONFIG_DIR` to take it from another directory than
+`OPEN8030_PRIVATE_DIR`. SDIO keeps the pinned firmware's active-bus
 detection; USB adds `AR_FORCE_USB`. The source pin and existing role flags stay
 the same for all three boards.
 
