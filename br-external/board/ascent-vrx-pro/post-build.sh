@@ -2,7 +2,7 @@
 # Buildroot post-build hook: merge the extracted vendor runtime into the target.
 #
 # The proprietary pieces fpvOS cannot ship (AR8030 baseband userland + firmware,
-# libmali, librga) are fetched by scripts/extract-vendor.py into vendor/rootfs/.
+# libmali, librga) are fetched by scripts/extract-ascent-vrx-pro-firmware.py into vendor/rootfs/.
 # They are laid over the target here rather than through BR2_ROOTFS_OVERLAY so
 # that a build with NO vendor blobs still succeeds: CI builds the open tree
 # without them and the image simply comes up with kestrel unable to reach the
@@ -47,7 +47,7 @@ ls "$TARGET"/lib/modules/*/*/arlink.ko >/dev/null 2>&1 && OPEN_RADIO=1
 # The image does not need to carry one. At every boot S50factory merges in the
 # air units stock has paired, read from the goggle's own NAND, and a unit
 # never paired under stock is bound once from the menu. A copy pulled with
-# `extract-vendor.py --from-device` still lands here via the merge below, but
+# `extract-ascent-vrx-pro-firmware.py --from-device` still lands here via the merge below, but
 # only for a build meant for that one goggle - never ship it in a release.
 mkdir -p "$TARGET/factory"
 
@@ -129,7 +129,7 @@ fi
 
 if [ ! -d "$VENDOR" ]; then
     echo ">>> vendor runtime absent - building blob-free."
-    echo ">>>   supply it with: scripts/extract-vendor.py"
+    echo ">>>   supply it with: scripts/extract-ascent-vrx-pro-firmware.py"
     exit 0
 fi
 

@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""Read a pinned NAND OTRA image; extract one file from its UBI/SquashFS root.
+"""Extract the codec firmware (chagall.bin) from the Caddx Ascent VRX firmware.
+
+Read a pinned NAND OTRA image; extract one file from its UBI/SquashFS root.
 
 This handles factory-generated dynamic UBI volumes, not live NAND dumps or
 UBIFS. Input and output SHA-256 checks are performed by the Buildroot recipe.

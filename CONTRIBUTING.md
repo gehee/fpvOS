@@ -7,7 +7,7 @@ an open HUD, there's room.
 ## Ground rules
 
 **Never commit vendor firmware.** The AR8030 baseband stack, the Mali GPU
-driver, and the Rockchip media libraries are proprietary. `scripts/extract-vendor.py`
+driver, and the Rockchip media libraries are proprietary. `scripts/extract-ascent-vrx-pro-firmware.py`
 takes them from Caddx's public stock firmware download (or from your own goggle
 with `--from-device`) into `vendor/`, where everything but `vendor/MANIFEST` is
 git-ignored. Do not add them, do not vendor an SDK header, do not check in an
@@ -33,7 +33,7 @@ so once a kestrel change is merged, a one-line fpvOS PR moves the pin.
 
 1. `git clone --recurse-submodules https://github.com/gehee/fpvOS.git`
    (Buildroot comes down pinned).
-2. Fetch the vendor blobs: `scripts/extract-vendor.py` (downloads the stock
+2. Fetch the vendor blobs: `scripts/extract-ascent-vrx-pro-firmware.py` (downloads the stock
    firmware once and caches it).
 3. Build: `./build.sh` — see [docs/BUILD.md](docs/BUILD.md). About 20 minutes
    from scratch on a recent machine; tested on a clean Ubuntu 24.04.

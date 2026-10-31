@@ -9,7 +9,7 @@ import zlib
 
 
 spec = importlib.util.spec_from_file_location(
-    "extract", Path(__file__).parents[1] / "extract.py")
+    "extract", Path(__file__).parents[1] / "extract-ascent-vrx-firmware.py")
 extract = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(extract)
 

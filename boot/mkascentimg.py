@@ -7,7 +7,7 @@ tool flashes: unpack a stock ASW image, and repack it with sections of ours.
     mkascentimg.py pack --base STOCK.img --fpv DIR [--rootfs DIR] -o OUT.img
     mkascentimg.py info IMG                       header, sections, UBI parameters
 
-STOCK.img is vendor/stock/air/Ascent_H_Sky_*.img (scripts/extract-vendor.py).
+STOCK.img is vendor/stock/air/Ascent_H_Sky_*.img (scripts/extract-ascent-vrx-pro-firmware.py).
 Sections not replaced stay byte-identical to the base. The PC tool's receiver
 (ar_fpvhs_upgrade, in the app volume) and the clean-system update boot (in the
 rootfs) must survive every image, or the unit can only be reflashed over the

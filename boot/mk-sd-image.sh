@@ -37,7 +37,7 @@ for f in "$V/uboot-patched.bin" "$V/boot-sd3.img" "$V/Image" \
          "$V/rk3568-pro-patched.dtb" "$BR/rootfs.ext2"; do
     [ -f "$f" ] || { echo "MISSING: $f" >&2
         echo "  run ./build.sh - it builds the boot chain and rootfs.ext2 (after" >&2
-        echo "  scripts/extract-vendor.py has filled vendor/)" >&2; exit 1; }
+        echo "  scripts/extract-ascent-vrx-pro-firmware.py has filled vendor/)" >&2; exit 1; }
 done
 for t in sfdisk mformat mcopy mmd dd truncate $([ "$COMPRESS" = 1 ] && echo xz); do
     command -v "$t" >/dev/null || { echo "need '$t' (Debian/Ubuntu: apt install mtools fdisk xz-utils)" >&2; exit 1; }

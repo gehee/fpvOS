@@ -1,20 +1,22 @@
 #!/usr/bin/env python3
-"""Populate vendor/ with the proprietary files fpvOS needs but cannot ship.
+"""Populate vendor/ from the Caddx Ascent VRX Pro firmware: the proprietary
+files the VRX Pro image needs but fpvOS cannot ship, plus the stock Ascent
+Lite/Lite+ air image from the same release zip (vendor/stock/air/).
 
 Every file comes from Caddx's own firmware - fpvOS never hosts or redistributes
 it. Sources, easiest first:
 
-  extract-vendor.py                       (the default: --download)
+  extract-ascent-vrx-pro-firmware.py      (the default: --download)
       Download the stock Caddx firmware from the official URL, cache it under
       ~/.cache/fpvos, and extract. No manual firmware hunting. Configure the
       link with FPVOS_FIRMWARE_URL (see the download center link below) or the
       FIRMWARE_URL constant. Needs `ubireader` (pip install ubi_reader).
 
-  extract-vendor.py --from-ota Ascent_..._.img
+  extract-ascent-vrx-pro-firmware.py --from-ota Ascent_..._.img
       Extract from a firmware image you already downloaded. The image's rootfs
       is a UBI volume; needs `ubireader` on the PATH.
 
-  extract-vendor.py --from-device root@192.168.3.1
+  extract-ascent-vrx-pro-firmware.py --from-device root@192.168.3.1
       Pull from a VRX Pro you have shell access to (stock or fpvOS image).
       Uses ssh + tar; dropbear on the stock image has no sftp/scp server.
 
@@ -22,7 +24,7 @@ The wanted-file list lives in vendor/MANIFEST next to this script's output.
 
 The Ascent VRX (AR9311) build does not use this script: the ar9311-firmware
 Buildroot package downloads its codec firmware and extracts it itself
-(br-external/package/ar9311-firmware/extract.py: OTRA image, SquashFS root).
+(br-external/package/ar9311-firmware/extract-ascent-vrx-firmware.py: OTRA image, SquashFS root).
 """
 import argparse
 import hashlib

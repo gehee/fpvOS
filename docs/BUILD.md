@@ -69,15 +69,15 @@ caches it under `~/.cache/fpvos`, and extracts:
 
 ```sh
 # Default: download stock Caddx firmware (cached) and extract
-scripts/extract-vendor.py
+scripts/extract-ascent-vrx-pro-firmware.py
 
 # ...or the runtime files from a goggle you can SSH into (stock or fpvOS);
 # the boot images still come from a firmware image, so run one of the others
 # once as well:
-scripts/extract-vendor.py --from-device root@192.168.3.1
+scripts/extract-ascent-vrx-pro-firmware.py --from-device root@192.168.3.1
 
 # ...or from a firmware image you already downloaded:
-scripts/extract-vendor.py --from-ota Ascent_..._.img
+scripts/extract-ascent-vrx-pro-firmware.py --from-ota Ascent_..._.img
 ```
 
 The download URL is set by `FPVOS_FIRMWARE_URL` (or the `FIRMWARE_URL` constant
@@ -87,7 +87,7 @@ The blobs land in `vendor/` (git-ignored). Re-run any time; the script reports
 exactly what it found and what's missing. See [`vendor/MANIFEST`](../vendor/MANIFEST)
 for the full list and where each file comes from.
 
-The Ascent VRX (AR9311) image needs no `extract-vendor.py` run: its only
+The Ascent VRX (AR9311) image needs no `extract-ascent-vrx-pro-firmware.py` run: its only
 vendor file, the codec firmware `chagall.bin`, is downloaded and extracted by
 the `ar9311-firmware` Buildroot package itself, from a pinned Caddx release
 with both the image and the file hash-checked (see [AR9311.md](AR9311.md)).
@@ -130,7 +130,7 @@ exists to protect.
 The card boots through the stock U-Boot and kernel, adapted for the SD card at
 build time: the `fpvos-bootchain` package runs
 [`boot/mkbootchain.py`](../boot/mkbootchain.py) on the stock `uboot.img` and
-`boot.img` that `extract-vendor.py` saves under `vendor/stock/` (from the
+`boot.img` that `extract-ascent-vrx-pro-firmware.py` saves under `vendor/stock/` (from the
 download or `--from-ota`). Everything it changes is in that script: three
 U-Boot functions stubbed out so it can boot from SD, and a device tree whose
 kernel command line mounts the card. It refuses a U-Boot build it does not
@@ -262,7 +262,7 @@ fpvOS also builds firmware for the Caddx Ascent Lite and Lite+ air units
 reflash with Caddx's own update.
 
 ```sh
-scripts/extract-vendor.py      # also saves the stock Ascent_H_Sky_*.img to vendor/stock/air/
+scripts/extract-ascent-vrx-pro-firmware.py      # also saves the stock Ascent_H_Sky_*.img to vendor/stock/air/
 ./build.sh air                 # -> output/ascent-lite/images/Ascent_H_Sky_18_21_10.img
 ./build.sh air kernel          # just the toolchain and the kernel
 boot/ascent-kernel-check.py    # compare our kernel with the stock one
@@ -320,7 +320,7 @@ the stock one, and `ascent-kernel-check.py` are for that).
 
 ## Troubleshooting
 
-- **`vendor blobs missing`** — run `extract-vendor.py` (step 2); it prints what
+- **`vendor blobs missing`** — run `extract-ascent-vrx-pro-firmware.py` (step 2); it prints what
   it couldn't find.
 - **Buildroot fails on first package** — confirm you cloned the exact pinned
   version from `br-external/BUILDROOT_VERSION`.

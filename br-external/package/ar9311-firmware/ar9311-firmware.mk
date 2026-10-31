@@ -28,7 +28,7 @@ endef
 define AR9311_FIRMWARE_BUILD_CMDS
 	$(TOPDIR)/support/download/check-hash $(@D)/$(AR9311_FIRMWARE_SOURCE) \
 		$(AR9311_FIRMWARE_SOURCE) $(AR9311_FIRMWARE_PKGDIR)/ar9311-firmware.hash
-	$(HOST_DIR)/bin/python3 $(AR9311_FIRMWARE_PKGDIR)/extract.py \
+	$(HOST_DIR)/bin/python3 $(AR9311_FIRMWARE_PKGDIR)/extract-ascent-vrx-firmware.py \
 		--image $(@D)/$(AR9311_FIRMWARE_SOURCE) \
 		--partition $(AR9311_FIRMWARE_PARTITION) \
 		--peb-size $(AR9311_FIRMWARE_PEB_SIZE) \

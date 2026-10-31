@@ -32,7 +32,7 @@ belong to Caddx, Artosyn, Rockchip and HiSilicon and are not ours: the AR8030's
 firmware, the stock boot chain, Rockchip's `librga`, and on the air unit the
 Hi3516CV610's camera and encoder libraries (HiSilicon's MPI), which only exist
 prebuilt. Not one line of them lives in the repositories.
-`scripts/extract-vendor.py` takes the goggle's from Caddx's own published
+`scripts/extract-ascent-vrx-pro-firmware.py` takes the goggle's from Caddx's own published
 firmware when an image is built, and the air unit's libraries come in as one
 archive, pinned by hash. Licences and the corresponding sources ship with every
 release.
@@ -63,7 +63,7 @@ commit:
 |---|---|
 | [`br-external/`](../br-external/) | Buildroot external tree: the goggle's and the air unit's defconfigs, packages, rootfs overlays |
 | [`boot/`](../boot/) | SD-image assembly and the boot-chain recipes |
-| [`scripts/`](../scripts/) | `extract-vendor.py` fetches the vendor files; `release.sh` cuts a release |
+| [`scripts/`](../scripts/) | `extract-ascent-vrx-pro-firmware.py` fetches the vendor files; `release.sh` cuts a release |
 | [`docs/`](.) | install, user, build and architecture guides |
 
 To build the images yourself, see [BUILD.md](BUILD.md).
@@ -114,4 +114,4 @@ the Bitstream Vera license. The idle-screen background
 (`etc/kestrel/background.png` and `background.mp4` in the rootfs overlay) was
 generated for fpvOS with Google Gemini; it contains no third-party footage and
 ships under the same terms as the rest of the repository. The proprietary
-files `extract-vendor.py` fetches are **not** covered by this license.
+files `extract-ascent-vrx-pro-firmware.py` fetches are **not** covered by this license.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the VRX Pro SD-card boot chain from the stock firmware's own images.
 
-Inputs are the two stock boot images, unmodified, as extract-vendor.py puts
+Inputs are the two stock boot images, unmodified, as extract-ascent-vrx-pro-firmware.py puts
 them under vendor/stock/:
 
   uboot.img  U-Boot, ARM Trusted Firmware and OP-TEE in one FIT (4 MB: two

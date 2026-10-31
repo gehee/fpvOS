@@ -73,11 +73,11 @@ Hardware video *decode* is deliberately not on that list: `librockchip_mpp`
 is genuinely open source (Apache-2.0/MIT) and built from source by
 [`br-external/package/rockchip-mpp/`](../br-external/package/rockchip-mpp/),
 pinned to the commit kestrel's decoder was validated against.
-`extract-vendor.py` does still pull a copy of the vendor `librockchip_mpp`,
+`extract-ascent-vrx-pro-firmware.py` does still pull a copy of the vendor `librockchip_mpp`,
 but only as a documented fallback - `fpvos-vendor-libs.mk` explicitly skips
 installing it so the from-source build is never silently overwritten.
 
-`scripts/extract-vendor.py` pulls the proprietary pieces (and that MPP
+`scripts/extract-ascent-vrx-pro-firmware.py` pulls the proprietary pieces (and that MPP
 fallback) from firmware the user owns; they're merged into the image at
 build time by `br-external/board/ascent-vrx-pro/post-build.sh`. See
 [`vendor/MANIFEST`](../vendor/MANIFEST).

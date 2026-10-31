@@ -2,7 +2,7 @@
 # fpvos-bootchain
 #
 # The SD card's boot chain, built from the stock boot images the user's own
-# firmware holds (vendor/stock/, from scripts/extract-vendor.py). All of what
+# firmware holds (vendor/stock/, from scripts/extract-ascent-vrx-pro-firmware.py). All of what
 # fpvOS changes - three U-Boot stubs, the SD-card device tree - is in
 # boot/mkbootchain.py; nothing prebuilt is shipped or needed.
 ################################################################################

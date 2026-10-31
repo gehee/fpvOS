@@ -2,7 +2,7 @@
 # Assemble a flashable fpvOS release image.
 #
 # Extracts the vendor runtime and the stock boot chain from Caddx's own
-# firmware release (scripts/extract-vendor.py), builds, and emits a card image
+# firmware release (scripts/extract-ascent-vrx-pro-firmware.py), builds, and emits a card image
 # plus what has to go out with it, and checksums:
 #
 #   out/fpvOS-vrxpro-<version>.img.xz
@@ -18,13 +18,13 @@
 # Publish all of them together.
 #
 # The vendor files are proprietary and are never committed to this repository;
-# extract-vendor.py downloads the stock firmware (cached under ~/.cache/fpvos)
+# extract-ascent-vrx-pro-firmware.py downloads the stock firmware (cached under ~/.cache/fpvos)
 # the same way anyone building fpvOS does. A release pins it: the download must
 # match the known-good release zip below, so a Caddx update behind the same
 # link cannot slip different blobs into a release unnoticed.
 #
 #   FPVOS_FIRMWARE_SHA256  the release zip's SHA-256 (default: the known-good
-#                          one, see extract-vendor.py)
+#                          one, see extract-ascent-vrx-pro-firmware.py)
 #   FIRMWARE_OTA           extract from this VRX Pro image instead of the
 #                          download - checked against FIRMWARE_OTA_SHA256
 #                          (default: the known-good Ascent_VRX_Pro_18_21_10.img)
@@ -71,7 +71,7 @@ set -e
 
 VERSION=${1:?usage: release.sh VERSION   (e.g. 2026.09.alpha1)}
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-# Known-good stock firmware, as recorded in extract-vendor.py.
+# Known-good stock firmware, as recorded in extract-ascent-vrx-pro-firmware.py.
 export FPVOS_FIRMWARE_SHA256=${FPVOS_FIRMWARE_SHA256:-833dc686a71e8e834096bdd97d8fc1392eee550e04bd219d1d6e04dd435a7997}
 FIRMWARE_OTA_SHA256=${FIRMWARE_OTA_SHA256:-8e06ee54db882ac8d8c84a96f94bbaf87e245ddb0cc8e59dab460e10cd898389}
 OUT="$ROOT/out"
@@ -152,7 +152,7 @@ trap '[ -e "$work/local.mk" ] && mv "$work/local.mk" "$LOCAL_MK"; rm -rf "$work"
 # --- 1. vendor runtime + stock boot chain -----------------------------------
 # From scratch every time: nothing left from an earlier extraction - a
 # --from-device one in particular, which can carry one goggle's pairing - may
-# end up in a release. extract-vendor.py fills vendor/rootfs (the runtime) and
+# end up in a release. extract-ascent-vrx-pro-firmware.py fills vendor/rootfs (the runtime) and
 # vendor/stock (the unmodified uboot.img and boot.img the fpvos-bootchain
 # package turns into the boot chain).
 rm -rf "$ROOT/vendor/rootfs" "$ROOT/vendor/stock" "$ROOT/vendor/boot"
@@ -161,13 +161,13 @@ if [ -n "$FIRMWARE_OTA" ]; then
     [ "$got" = "$FIRMWARE_OTA_SHA256" ] ||
         { echo "$FIRMWARE_OTA: SHA-256 $got, expected $FIRMWARE_OTA_SHA256" >&2; exit 1; }
     echo ">>> vendor: extracting from $FIRMWARE_OTA"
-    python3 "$ROOT/scripts/extract-vendor.py" --from-ota "$FIRMWARE_OTA"
+    python3 "$ROOT/scripts/extract-ascent-vrx-pro-firmware.py" --from-ota "$FIRMWARE_OTA"
 else
     echo ">>> vendor: extracting from the stock firmware release (pinned $FPVOS_FIRMWARE_SHA256)"
-    python3 "$ROOT/scripts/extract-vendor.py" --download
+    python3 "$ROOT/scripts/extract-ascent-vrx-pro-firmware.py" --download
 fi
 for d in rootfs stock; do
-    [ -d "$ROOT/vendor/$d" ] || { echo "extract-vendor.py left no vendor/$d" >&2; exit 1; }
+    [ -d "$ROOT/vendor/$d" ] || { echo "extract-ascent-vrx-pro-firmware.py left no vendor/$d" >&2; exit 1; }
 done
 # Per-unit identity never goes into a release - see step 2 for why. Drop it
 # here, before the build can see it, whatever the extraction carried.

@@ -3,7 +3,7 @@
 #
 # Installs the extracted vendor shared libraries into BOTH staging (so kestrel
 # can link) and target (so it runs). Everything here comes from
-# scripts/extract-vendor.py, i.e. from firmware the user owns - nothing is
+# scripts/extract-ascent-vrx-pro-firmware.py, i.e. from firmware the user owns - nothing is
 # redistributed by fpvOS.
 #
 # Two reasons this exists rather than leaving it all to post-build.sh:

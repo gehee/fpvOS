@@ -11,7 +11,7 @@ BOARD=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$BOARD/../../.." && pwd)
 MKIMG=$ROOT/boot/mkascentimg.py
 STOCK=$(ls "$ROOT"/vendor/stock/air/Ascent_H_Sky_*.img 2>/dev/null | tail -n 1)
-[ -n "$STOCK" ] || { echo "no stock air image: run scripts/extract-vendor.py" >&2; exit 1; }
+[ -n "$STOCK" ] || { echo "no stock air image: run scripts/extract-ascent-vrx-pro-firmware.py" >&2; exit 1; }
 
 WORK=$BUILD_DIR/air-image
 rm -rf "$WORK"

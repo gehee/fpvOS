@@ -1,5 +1,5 @@
 # Vendor-origin files fpvOS needs but does not distribute.
-# Populate this directory with: scripts/extract-vendor.py (see --help).
+# Populate this directory with: scripts/extract-ascent-vrx-pro-firmware.py (see --help).
 # Paths on the left are where the file lands under vendor/; paths on the
 # right are where it lives in the stock Caddx/Ascent VRX Pro firmware.
 #

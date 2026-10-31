@@ -154,7 +154,7 @@ def main():
                     help="where the full symbol lists go")
     a = ap.parse_args()
     if not a.stock:
-        die("no stock image: run scripts/extract-vendor.py")
+        die("no stock image: run scripts/extract-ascent-vrx-pro-firmware.py")
     linux, out = Path(a.linux), Path(a.out)
     for need in (".config", "Module.symvers", "arch/arm/boot/zImage", "arch/arm/boot/Image"):
         if not (linux / need).is_file():

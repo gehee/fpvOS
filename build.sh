@@ -12,7 +12,7 @@
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
 #     or: git submodule update --init)
-#   - vendor blobs extracted: scripts/extract-vendor.py
+#   - vendor blobs extracted: scripts/extract-ascent-vrx-pro-firmware.py
 set -e
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
@@ -29,7 +29,7 @@ need_vendor() {
     [ -f "$ROOT/vendor/rootfs/ar8030soc/daemon" ] &&
     [ -f "$ROOT/vendor/stock/uboot.img" ] && [ -f "$ROOT/vendor/stock/boot.img" ] || {
         echo "vendor blobs missing - run:" >&2
-        echo "  scripts/extract-vendor.py        (downloads the stock firmware)" >&2
+        echo "  scripts/extract-ascent-vrx-pro-firmware.py        (downloads the stock firmware)" >&2
         exit 1; }
 }
 

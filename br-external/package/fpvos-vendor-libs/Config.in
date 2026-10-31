@@ -7,5 +7,5 @@ config BR2_PACKAGE_FPVOS_VENDOR_LIBS
 	  target. Required to link kestrel. With Mesa providing EGL/GLES/GBM,
 	  libmali is left out.
 
-	  Populate them first with scripts/extract-vendor.py; they come from
+	  Populate them first with scripts/extract-ascent-vrx-pro-firmware.py; they come from
 	  firmware you own and are not redistributed by fpvOS.

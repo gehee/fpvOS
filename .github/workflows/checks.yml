@@ -38,8 +38,8 @@ jobs:
 
       - name: Python
         run: |
-          python3 -m py_compile scripts/extract-vendor.py boot/mkbootchain.py
-          python3 scripts/extract-vendor.py --help >/dev/null
+          python3 -m py_compile scripts/extract-ascent-vrx-pro-firmware.py boot/mkbootchain.py
+          python3 scripts/extract-ascent-vrx-pro-firmware.py --help >/dev/null
 
       - name: AR9311 shell syntax
         run: |
