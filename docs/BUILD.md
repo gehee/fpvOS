@@ -87,6 +87,14 @@ The blobs land in `vendor/` (git-ignored). Re-run any time; the script reports
 exactly what it found and what's missing. See [`vendor/MANIFEST`](../vendor/MANIFEST)
 for the full list and where each file comes from.
 
+The Ascent VRX (AR9311) image needs no `extract-vendor.py` run: its only
+vendor file, the codec firmware `chagall.bin`, is downloaded and extracted by
+the `ar9311-firmware` Buildroot package itself, from a pinned Caddx release
+with both the image and the file hash-checked (see [AR9311.md](AR9311.md)).
+That firmware ships as an OTRA image with a SquashFS root, a different format
+from the goggle firmware this script unpacks, so the two extractors share no
+code.
+
 ### `/factory` — which air units your goggle is paired with
 
 Everything above is code shared by every VRX Pro. The pairing list is not:

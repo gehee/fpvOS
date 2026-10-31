@@ -19,6 +19,10 @@ it. Sources, easiest first:
       Uses ssh + tar; dropbear on the stock image has no sftp/scp server.
 
 The wanted-file list lives in vendor/MANIFEST next to this script's output.
+
+The Ascent VRX (AR9311) build does not use this script: the ar9311-firmware
+Buildroot package downloads its codec firmware and extracts it itself
+(br-external/package/ar9311-firmware/extract.py: OTRA image, SquashFS root).
 """
 import argparse
 import hashlib
