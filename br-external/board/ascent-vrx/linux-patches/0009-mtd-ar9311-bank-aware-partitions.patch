@@ -1,0 +1,99 @@
+From: fpvOS developers
+Subject: [PATCH] mtd: ofpart: preserve either AR9311 stock bank read-only
+
+The stock updater alternates userapp banks. Decode the unchanged GPT before
+registering the board's fixed physical partitions, assigning vendor-rootfs
+to the active stock bank and fpvos to the inactive bank. The strict decoder
+is shared with the updater and copied by the external tree's kernel hook.
+Invalid metadata leaves the entire master read-only, never a writable fallback.
+
+--- a/drivers/mtd/parsers/ofpart_core.c
++++ b/drivers/mtd/parsers/ofpart_core.c
+@@ -18,6 +18,7 @@
+ 
+ #include "ofpart_bcm4908.h"
+ #include "ofpart_linksys_ns.h"
++#include "ofpart_ar9311.h"
+ 
+ struct fixed_partitions_quirks {
+ 	int (*post_parse)(struct mtd_info *mtd, struct mtd_partition *parts, int nr_parts);
+@@ -179,6 +180,15 @@ static int parse_fixed_partitions(struct mtd_info *master,
+ 	if (!nr_parts)
+ 		goto ofpart_none;
+ 
++	if (of_device_is_compatible(ofpart_node, "fpvos,ar9311-partitions")) {
++		ret = ar9311_partitions_post_parse(master, parts, nr_parts);
++		if (ret) {
++			master->flags &= ~MTD_WRITEABLE;
++			pr_err("AR9311: unsafe GPT/layout; NAND remains read-only\n");
++			goto ofpart_none;
++		}
++	}
++
+ 	if (quirks && quirks->post_parse)
+ 		quirks->post_parse(master, parts, nr_parts);
+ 
+@@ -204,6 +214,7 @@ static const struct of_device_id parse_ofpart_match_table[] = {
+ 	/* Generic */
+ 	{ .compatible = "fixed-partitions" },
+ 	/* Customized */
++	{ .compatible = "fpvos,ar9311-partitions" },
+ 	{ .compatible = "brcm,bcm4908-partitions", .data = &bcm4908_partitions_quirks, },
+ 	{ .compatible = "linksys,ns-partitions", .data = &linksys_ns_partitions_quirks, },
+ 	{},
+--- /dev/null
++++ b/drivers/mtd/parsers/ofpart_ar9311.h
+@@ -0,0 +1,53 @@
++/* SPDX-License-Identifier: GPL-2.0-or-later */
++#include <linux/string.h>
++#include "fpvos_ar9311_layout.h"
++
++static int ar9311_partitions_post_parse(struct mtd_info *mtd,
++				       struct mtd_partition *parts, unsigned int count)
++{
++	static const char * const names[] = {"boot-protected", "kernel", "dtb",
++		"vendor-rootfs", "fpvos", "vendor-data"};
++	static const u32 offsets[] = {0, 0xb40000, 0x1140000, 0x11a0000,
++		0x26a0000, 0x3ba0000};
++	static const u32 sizes[] = {0xb40000, 0x600000, 0x60000, 0x1500000,
++		0x1500000, 0x4460000};
++	u8 (*records)[AR9311_GPT_BYTES];
++	unsigned int bank, i;
++	size_t length;
++	int ret;
++
++	if (count != ARRAY_SIZE(names) || mtd->type != MTD_NANDFLASH ||
++	    mtd->size != 0x8000000 || mtd->erasesize != 0x20000 ||
++	    mtd->writesize != 2048 || mtd->oobsize != 128)
++		return -EINVAL;
++	for (i = 0; i < count; i++)
++		if (!parts[i].name || strcmp(parts[i].name, names[i]) ||
++		    parts[i].offset != offsets[i] || parts[i].size != sizes[i])
++			return -EINVAL;
++	records = kmalloc(2 * AR9311_GPT_BYTES, GFP_KERNEL);
++	if (!records)
++		return -ENOMEM;
++	for (i = 0; i < 2; i++) {
++		ret = mtd_read(mtd, 0x100000 + i * 0x40000,
++			       AR9311_GPT_BYTES, &length, records[i]);
++		if ((ret && !mtd_is_bitflip(ret)) || length != AR9311_GPT_BYTES) {
++			ret = -EIO;
++			goto done;
++		}
++	}
++	ret = ar9311_stock_bank(records, &bank);
++	if (ret) {
++		ret = -EINVAL;
++		goto done;
++	}
++	parts[3].offset = bank ? 0x26a0000 : 0x11a0000;
++	parts[3].mask_flags |= MTD_WRITEABLE;
++	parts[4].offset = bank ? 0x11a0000 : 0x26a0000;
++	parts[4].mask_flags &= ~MTD_WRITEABLE;
++	pr_info("AR9311: preserving stock userapp%u read-only; fpvOS in userapp%u\n",
++		bank, bank ^ 1);
++	ret = 0;
++done:
++	kfree(records);
++	return ret;
++}

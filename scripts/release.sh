@@ -128,8 +128,8 @@ done
 # never removes a deselected package from target/ - so an old output ships
 # without new patches, device-tree edits or library switches. From scratch,
 # unless only re-assembling (SKIP_BUILD=1).
-if [ "${SKIP_BUILD:-0}" != "1" ] && [ -n "$(ls -A "$ROOT/buildroot/output" 2>/dev/null)" ]; then
-    echo "buildroot/output is not empty - a release builds from scratch: rm -rf buildroot/output" >&2
+if [ "${SKIP_BUILD:-0}" != "1" ] && [ -n "$(ls -A "$ROOT/output/vrxpro" 2>/dev/null)" ]; then
+    echo "output/vrxpro is not empty - a release builds from scratch: rm -rf output/vrxpro" >&2
     echo "(or SKIP_BUILD=1 to re-assemble the image from the build that is there)" >&2
     exit 1
 fi
@@ -139,13 +139,13 @@ export KESTREL_VERSION="$KCOMMIT"
 # kestrel menu (kestrel.mk passes it on) - all come from VERSION. Write it now,
 # before the build; step 5 commits it with the release.
 echo "$VERSION" > "$ROOT/VERSION"
-# A workspace buildroot/local.mk builds kestrel from a local checkout instead
+# A workspace output/vrxpro/local.mk builds kestrel from a local checkout instead
 # of the commit being released. Keep it out of the way until we are done.
 work=$(mktemp -d)
-LOCAL_MK="$ROOT/buildroot/local.mk"
+LOCAL_MK="$ROOT/output/vrxpro/local.mk"
 if [ -e "$LOCAL_MK" ]; then
     mv "$LOCAL_MK" "$work/local.mk"
-    echo ">>> moved buildroot/local.mk aside for the release build"
+    echo ">>> moved output/vrxpro/local.mk aside for the release build"
 fi
 trap '[ -e "$work/local.mk" ] && mv "$work/local.mk" "$LOCAL_MK"; rm -rf "$work"' EXIT
 
@@ -191,7 +191,7 @@ echo ">>> vendor: $(find "$ROOT/vendor/rootfs" -type f | wc -l) runtime files, $
 # image. Step 3 then checks the finished image rather than trusting any of this.
 # Each downloader's own list is merged from their goggle's NAND at boot
 # (S50factory); the empty /factory directory stays so that path exists.
-T="$ROOT/buildroot/output/target"
+T="$ROOT/output/vrxpro/target"
 for f in user_cfg.json fact_env.json; do
     if [ -e "$T/factory/$f" ]; then
         rm -f "$T/factory/$f"
@@ -209,10 +209,10 @@ fi
 # --- 2b. what the build holds is what this tree says ----------------------
 # Checked before anything is assembled or tagged: an output that missed a
 # patch, a device-tree edit or a library switch passes every step above.
-BO="$ROOT/buildroot/output"
+BO="$ROOT/output/vrxpro"
 fail() { echo "RELEASE ABORTED: $*" >&2; exit 1; }
 kver=$(strings "$BO/images/Image" 2>/dev/null | sed -n 's/^Linux version \([0-9.]*\).*/\1/p' | head -1)
-[ -n "$kver" ] || fail "no kernel banner in output/images/Image"
+[ -n "$kver" ] || fail "no kernel banner in output/vrxpro/images/Image"
 ls "$BO/target/lib/modules" 2>/dev/null | grep -q "^$kver" || fail "kernel $kver but target/lib/modules has $(ls "$BO/target/lib/modules" 2>/dev/null | tr '\n' ' ')"
 for p in "$ROOT"/br-external/board/vrxpro/linux-patches/*.patch; do
     grep -q "$(basename "$p")" "$BO"/build/linux-*/.applied_patches_list 2>/dev/null ||
@@ -246,12 +246,12 @@ IMG="$OUT/fpvOS-vrxpro-$VERSION.img"
 # Read the rootfs partition back out of the assembled image and list /factory
 # with debugfs (no mount, no root). Buildroot builds debugfs for the host as
 # part of the ext4 rootfs; a system one works too.
-DEBUGFS="$ROOT/buildroot/output/host/sbin/debugfs"
+DEBUGFS="$ROOT/output/vrxpro/host/sbin/debugfs"
 [ -x "$DEBUGFS" ] || DEBUGFS=$(command -v debugfs || true)
 [ -n "$DEBUGFS" ] || { echo "debugfs not found - cannot verify the image (apt install e2fsprogs)" >&2; exit 1; }
 P2_START=$(sed -n 's/^P2_START=\([0-9]*\);.*/\1/p' "$ROOT/boot/mk-sd-image.sh")
 [ -n "$P2_START" ] || { echo "could not read P2_START from boot/mk-sd-image.sh" >&2; exit 1; }
-FS_BYTES=$(stat -c %s "$ROOT/buildroot/output/images/rootfs.ext2")
+FS_BYTES=$(stat -c %s "$ROOT/output/vrxpro/images/rootfs.ext2")
 dd if="$IMG" of="$work/rootfs.ext4" bs=512 skip="$P2_START" count=$(( FS_BYTES / 512 )) status=none
 # A listing of / that lacks etc means debugfs could not read the filesystem,
 # and an empty /factory listing from that would prove nothing.
@@ -274,9 +274,9 @@ echo ">>> verified: no /factory pairing data in the image"
 # not redistributable, so they are listed in the manifest but contribute no
 # files.
 echo ">>> collecting licences and sources (legal-info)"
-LEGAL="$ROOT/buildroot/output/legal-info"
+LEGAL="$ROOT/output/vrxpro/legal-info"
 rm -rf "$LEGAL"
-make -C "$ROOT/buildroot" BR2_EXTERNAL="$ROOT/br-external" legal-info >/dev/null
+make -C "$ROOT/buildroot" BR2_EXTERNAL="$ROOT/br-external" O="$BO" legal-info >/dev/null
 tar -C "$LEGAL" --transform "s,^\.,fpvOS-vrxpro-$VERSION-licenses," -cJf \
     "$OUT/fpvOS-vrxpro-$VERSION-licenses.tar.xz" \
     ./README ./manifest.csv ./licenses ./buildroot.config

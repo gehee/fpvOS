@@ -37,8 +37,8 @@ so once a kestrel change is merged, a one-line fpvOS PR moves the pin.
    firmware once and caches it).
 3. Build: `./build.sh` — see [docs/BUILD.md](docs/BUILD.md). About 20 minutes
    from scratch on a recent machine; tested on a clean Ubuntu 24.04.
-4. Flash `sdcard.img.xz` with balenaEtcher (or `sdcard.img` with `dd`) and boot
-   it — see [docs/INSTALL.md](docs/INSTALL.md).
+4. Flash `output/vrxpro/images/sdcard.img.xz` with balenaEtcher (or its
+   uncompressed `.img` with `dd`) and boot it — see [docs/INSTALL.md](docs/INSTALL.md).
 
 ## Iterating on kestrel
 
@@ -47,12 +47,12 @@ Buildroot tree, then swap the binary on a running goggle over the USB link:
 
 ```sh
 # in fpvOS; dirclean matters - kestrel-rebuild re-uses the last sources it copied
-make -C buildroot BR2_EXTERNAL=$PWD/br-external \
+make -C buildroot BR2_EXTERNAL=$PWD/br-external O=$PWD/output/vrxpro \
      KESTREL_OVERRIDE_SRCDIR=/path/to/kestrel-gnd kestrel-dirclean kestrel
 
 # onto the goggle (root password: fpvos). Piped, not scp: the goggle has no
 # sftp-server, which current scp needs.
-cat buildroot/output/target/usr/bin/kestrel-gnd |
+cat output/vrxpro/target/usr/bin/kestrel-gnd |
   ssh root@192.168.3.1 'cat > /tmp/kestrel-gnd && chmod +x /tmp/kestrel-gnd &&
     { /etc/init.d/S70kestrel stop; cp /tmp/kestrel-gnd /usr/bin/; } &&
     /etc/init.d/S70kestrel start'

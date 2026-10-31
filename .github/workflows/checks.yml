@@ -30,7 +30,8 @@ jobs:
                    $(git ls-files 'br-external/board/vrxpro/rootfs-overlay/etc/init.d/*') \
                    br-external/board/vrxpro/rootfs-overlay/usr/sbin/fpvos-wifi \
                    br-external/board/vrxpro/rootfs-overlay/root/bb-restart.sh \
-                   br-external/board/vrxpro/rootfs-overlay/ar8030soc/bb_only.sh; do
+                   br-external/board/vrxpro/rootfs-overlay/ar8030soc/bb_only.sh \
+                   br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/start.sh; do
             head -1 "$f" | grep -q bash && sh=bash || sh=sh
             $sh -n "$f" || { echo "syntax error: $f"; exit 1; }
           done
@@ -39,3 +40,23 @@ jobs:
         run: |
           python3 -m py_compile scripts/extract-vendor.py boot/mkbootchain.py
           python3 scripts/extract-vendor.py --help >/dev/null
+
+      - name: AR9311 shell syntax
+        run: |
+          for f in $(git ls-files 'br-external/board/ascent-vrx/*' \
+                     'br-external/board/common/ar9311/*' \
+                     'br-external/package/ar9311-radio/src/*' \
+                     'br-external/package/ascent-vrx-recovery/src/*' \
+                     'br-external/package/fpvos-update/*'); do
+            if head -1 "$f" | grep -q '^#!/bin/sh'; then
+              sh -n "$f" || exit 1
+            fi
+          done
+
+      - name: AR9311 host tools and updater tests
+        run: |
+          python3 -m py_compile boot/mkar9311img.py scripts/ar9311-ram-transfer.py
+          python3 -m unittest discover -s tools/fpvos-update/tests -v
+
+      - name: AR9311 firmware extraction tests
+        run: python3 -m unittest discover -s br-external/package/ar9311-firmware/tests -v

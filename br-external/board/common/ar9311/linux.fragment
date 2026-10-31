@@ -1,0 +1,24 @@
+# External RAM filesystem, unlike the vendor kernel's NAND-only root path.
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+# CONFIG_RD_BZIP2 is not set
+# CONFIG_RD_LZMA is not set
+# CONFIG_RD_XZ is not set
+# CONFIG_RD_LZO is not set
+# CONFIG_RD_LZ4 is not set
+# CONFIG_RD_ZSTD is not set
+# U-Boot may leave the watchdog armed. Let the kernel feed it until a
+# userspace watchdog client takes ownership; zero means no open deadline.
+CONFIG_WATCHDOG=y
+CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y
+CONFIG_WATCHDOG_OPEN_TIMEOUT=0
+CONFIG_WATCHDOG_SYSFS=y
+CONFIG_DW_WATCHDOG=y
+# Keep crash evidence in reserved DRAM across a warm reset. The RAM boot
+# loader must not overwrite the board's ramoops reservation.
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_PMSG=y
+# Restart after a panic so UART/U-Boot recovery remains available.
+CONFIG_PANIC_TIMEOUT=5

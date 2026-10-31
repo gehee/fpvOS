@@ -2,10 +2,11 @@
 # fpvOS end-to-end build: Buildroot rootfs (with kestrel) -> SD image.
 #
 #   ./build.sh              # full build
-#   ./build.sh config       # just run the defconfig into ./buildroot
+#   ./build.sh config       # configure the VRX Pro build in ./output/vrxpro
 #   ./build.sh kestrel      # rebuild only kestrel into the buildroot sysroot
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
-#   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output-air
+#   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
+#   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
 #
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
@@ -31,10 +32,22 @@ need_vendor() {
         exit 1; }
 }
 
-# The air unit builds into its own output directory, so it never touches the goggle's.
-AIR_OUT="$ROOT/output-air"
+# Each board has an independent Buildroot configuration, toolchain and images.
+VRXPRO_OUT="$ROOT/output/vrxpro"
+AIR_OUT="$ROOT/output/ascent-lite"
+ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
 
 case "${1:-all}" in
+  ascent-vrx)
+    # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
+    case "${2:-all}" in
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig ;;
+      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig
+              make -C "$ASCENT_VRX_OUT" linux-reconfigure ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig
+              make -C "$ASCENT_VRX_OUT" ;;
+      *) echo "usage: $0 ascent-vrx [config|kernel|all]" >&2; exit 1 ;;
+    esac ;;
   air)
     case "${2:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$AIR_OUT" ascentlite_defconfig ;;
@@ -46,15 +59,15 @@ case "${1:-all}" in
       *) echo "usage: $0 air [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   config)
-    make -C "$BR" BR2_EXTERNAL="$EXT" vrxpro_defconfig ;;
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT" vrxpro_defconfig ;;
   kestrel)
-    make -C "$BR" BR2_EXTERNAL="$EXT" kestrel-rebuild ;;
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT" kestrel-rebuild ;;
   image)
     need_vendor; "$ROOT/boot/mk-sd-image.sh" ;;
   all)
     need_vendor
-    make -C "$BR" BR2_EXTERNAL="$EXT" vrxpro_defconfig
-    make -C "$BR" BR2_EXTERNAL="$EXT"
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT" vrxpro_defconfig
+    make -C "$BR" BR2_EXTERNAL="$EXT" O="$VRXPRO_OUT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {all|config|kestrel|image}" >&2; exit 1 ;;
+  *) echo "usage: $0 {all|config|kestrel|image|air [config|kernel|all]|ascent-vrx [config|kernel|all]}" >&2; exit 1 ;;
 esac

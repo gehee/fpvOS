@@ -1,0 +1,84 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] dt-bindings: describe AR9311 SDMMC clock provider
+
+Move SD/SDIO clock ownership into CCF with per-controller board settings.
+Preserve unrelated gate bits and do not touch shared PLL power registers.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+--- a/include/dt-bindings/clock/artosyn,ar9311-mmc.h
++++ b/include/dt-bindings/clock/artosyn,ar9311-mmc.h
+@@ -0,0 +1,8 @@
++/* SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause) */
++#ifndef _DT_BINDINGS_CLK_ARTOSYN_AR9311_MMC_H
++#define _DT_BINDINGS_CLK_ARTOSYN_AR9311_MMC_H
++
++#define AR9311_CLK_SDMMC0 0
++#define AR9311_CLK_SDMMC1 1
++
++#endif
+--- a/Documentation/devicetree/bindings/clock/artosyn,ar9311-mmc-clock.yaml
++++ b/Documentation/devicetree/bindings/clock/artosyn,ar9311-mmc-clock.yaml
+@@ -0,0 +1,61 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/clock/artosyn,ar9311-mmc-clock.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++
++title: Artosyn AR9311 SDMMC source clocks
++
++maintainers:
++  - fpvOS contributors <dev@fpvos.local>
++
++description: |
++  The two SDMMC controllers each have a source-rate selector and a five-bit
++  phase configuration, plus FIX/SAMPLE/DRIVE gates in shared CGU registers.
++  Clock index 0 is SDMMC0 (radio); index 1 is SDMMC1 (removable SD).
++  This is not the CPU/DDR or display PLL provider.
++
++properties:
++  compatible:
++    const: artosyn,ar9311-mmc-clock
++
++  reg:
++    items:
++      - description: Shared gate words at 0x0a104020, size 0x10
++      - description: SDMMC0 SEL and CFG at 0x0a108088, size 8
++      - description: SDMMC1 SEL and CFG at 0x0a1080c0, size 8
++
++  '#clock-cells':
++    const: 1
++
++  artosyn,clock-config:
++    $ref: /schemas/types.yaml#/definitions/uint32-matrix
++    description: |
++      Initial SEL and CFG-phase pair for each controller, in clock-index order.
++      SEL bits 7:6 select 25/50/100/200 MHz; its low six bits are preserved
++      when changing rate. Phase occupies CFG bits 4:0. Values are board-specific;
++      higher CFG bits are preserved. This does not enable UHS voltage switching
++      or automatic tuning.
++    minItems: 2
++    maxItems: 2
++    items:
++      items:
++        - maximum: 255
++        - maximum: 31
++
++required:
++  - compatible
++  - reg
++  - '#clock-cells'
++  - artosyn,clock-config
++
++additionalProperties: false
++
++examples:
++  - |
++    clock-controller@a104020 {
++        compatible = "artosyn,ar9311-mmc-clock";
++        reg = <0x0a104020 0x10>, <0x0a108088 8>, <0x0a1080c0 8>;
++        #clock-cells = <1>;
++        artosyn,clock-config = <0x87 2>, <0x80 0>;
++    };

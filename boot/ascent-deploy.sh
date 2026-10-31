@@ -4,7 +4,7 @@
 # from the same app volume the PC tool would flash, so the result is the same.
 #
 #   boot/ascent-deploy.sh [--dry] [--reboot] [HOST]       (HOST default root@192.168.5.104)
-#   IMG=path/to/Ascent_H_Sky_*.img                        (default: output-air/images/)
+#   IMG=path/to/Ascent_H_Sky_*.img                        (default: output/ascent-lite/images/)
 #
 # Needs ssh to the unit (build with FPVOS_AIR_SSH_KEYS, enable_rndis.py, and the
 # host address and route; see docs/BUILD.md). Nothing is run on the unit but tar,
@@ -32,7 +32,7 @@ for a in "$@"; do
         *) HOST=$a ;;
     esac
 done
-IMG=${IMG:-$ROOT/output-air/images/Ascent_H_Sky_18_21_10.img}
+IMG=${IMG:-$ROOT/output/ascent-lite/images/Ascent_H_Sky_18_21_10.img}
 [ -f "$IMG" ] || { echo "no image: $IMG (./build.sh air)" >&2; exit 1; }
 # DEPLOY_SH replaces "ssh HOST" in the tests: the unit's side runs locally under UNIT_ROOT.
 UNIT_ROOT=${UNIT_ROOT:-/usrdata}

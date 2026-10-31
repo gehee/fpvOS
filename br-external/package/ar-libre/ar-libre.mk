@@ -55,6 +55,18 @@ endef
 
 else
 
+ifeq ($(BR2_STATIC_LIBS),y)
+define AR_LIBRE_BUILD_CMDS
+	$(TARGET_CC) $(TARGET_CFLAGS) -pthread -c $(@D)/lib/arlink.c -o $(@D)/lib/arlink.o
+	$(TARGET_AR) rcs $(@D)/lib/libar8030_client.a $(@D)/lib/arlink.o
+endef
+
+define AR_LIBRE_INSTALL_STAGING_CMDS
+	$(INSTALL) -D -m 0644 $(@D)/lib/libar8030_client.a $(STAGING_DIR)/usr/lib/libar8030_client.a
+	$(INSTALL) -D -m 0644 $(@D)/lib/arlink.h $(STAGING_DIR)/usr/include/arlink.h
+endef
+else
+
 # CFLAGS through the environment: the Makefile adds -fPIC and friends to it.
 define AR_LIBRE_BUILD_CMDS
 	CFLAGS="$(TARGET_CFLAGS)" $(TARGET_MAKE_ENV) $(MAKE) -C $(@D)/lib CC="$(TARGET_CC)"
@@ -69,6 +81,8 @@ define AR_LIBRE_INSTALL_TARGET_CMDS
 	rm -f $(TARGET_DIR)/usr/lib/libar8030_client.so
 	$(INSTALL) -D -m 0755 $(@D)/lib/libar8030_client.so $(TARGET_DIR)/usr/lib/libar8030_client.so
 endef
+
+endif
 
 endif
 

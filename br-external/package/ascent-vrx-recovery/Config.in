@@ -1,0 +1,9 @@
+config BR2_PACKAGE_ASCENT_VRX_RECOVERY
+	bool "Ascent VRX built-in NAND recovery environment"
+	depends on BR2_aarch64 && BR2_STATIC_LIBS
+	depends on BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX
+	select BR2_PACKAGE_DROPBEAR
+	help
+	  Build a small independent initramfs into the NAND kernel. It loads
+	  and verifies the main fpvOS RAM root from NAND, or provides the USB
+	  updater and SSH recovery service without an SD card.

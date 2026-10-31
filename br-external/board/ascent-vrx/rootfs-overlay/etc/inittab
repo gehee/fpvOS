@@ -1,0 +1,27 @@
+# Minimal RAM bring-up. Buildroot's cpio /init mounts devtmpfs first.
+# Start USB networking and SSH, then mount existing removable SD storage.
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t sysfs sysfs /sys
+::sysinit:/bin/mount -t pstore pstore /sys/fs/pstore
+::sysinit:/bin/mkdir -p /dev/pts /run /tmp
+::sysinit:/bin/mount -t devpts devpts /dev/pts
+::sysinit:/bin/mount -t tmpfs tmpfs /run
+::sysinit:/bin/mount -t tmpfs tmpfs /tmp
+::sysinit:/bin/hostname -F /etc/hostname
+::sysinit:/sbin/ip link set lo up
+::sysinit:/etc/init.d/S40ar9311-usb start
+::sysinit:/etc/init.d/S50dropbear start
+::sysinit:/bin/sh -c '[ ! -x /etc/init.d/S44ar9311-radio ] || /etc/init.d/S44ar9311-radio start'
+::sysinit:/etc/init.d/S45ar9311-sd start
+::sysinit:/usr/sbin/ar9311-media-start
+::sysinit:/bin/cat /etc/issue
+
+# Local development shell: press Enter; no password. Keep the kernel's baud.
+ttyS0::askfirst:-/bin/sh
+::respawn:/usr/sbin/fpvos-update-service
+
+::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/init.d/S50dropbear stop
+::shutdown:/etc/init.d/S45ar9311-sd stop
+::shutdown:/etc/init.d/S40ar9311-usb stop
+::shutdown:/bin/umount -a -r

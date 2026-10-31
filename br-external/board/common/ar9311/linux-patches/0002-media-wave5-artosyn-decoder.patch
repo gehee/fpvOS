@@ -1,0 +1,230 @@
+From: fpvOS developers
+Subject: [PATCH] media: wave5: add AR9311 decoder integration
+
+Adapt the Artosyn power sequence, reset bus-idle mask, decoder capability,
+secondary-AXI and FBC-height fixes from Missing-Lynk/ml-kernel commit
+ e3885c6394a7025eacd3a23f473276d9823beb25 (patches 0220, 0260, 0270).
+Select these quirks only with artosyn,ar9311-wave521c. Expose decoding only;
+leave TI behavior, encoder features and the global DMA allocator unchanged.
+Require a dedicated reserved DMA pool and address power registers through
+named DT resources. Fail before VPU access if power acknowledgement times out.
+The firmware remains a separately supplied vendor blob.
+
+--- a/drivers/media/platform/chips-media/wave5/Kconfig
++++ b/drivers/media/platform/chips-media/wave5/Kconfig
+@@ -3,7 +3,7 @@
+ 	tristate "Chips&Media Wave Codec Driver"
+ 	depends on V4L_MEM2MEM_DRIVERS
+ 	depends on VIDEO_DEV && OF
+-	depends on ARCH_K3 || COMPILE_TEST
++	depends on ARCH_K3 || ARM64 || COMPILE_TEST
+ 	select VIDEOBUF2_DMA_CONTIG
+ 	select VIDEOBUF2_VMALLOC
+ 	select V4L2_MEM2MEM_DEV
+--- a/drivers/media/platform/chips-media/wave5/wave5-hw.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-hw.c
+@@ -173,6 +173,10 @@
+ 	    vpu_dev->product_code == WAVE521E1_CODE)
+ 		gdi_status_check_value = 0x00ff1f3f;
+ 
++	/* AR9311 has a narrower combined backbone than the TI integration. */
++	if (vpu_dev->artosyn)
++		gdi_status_check_value = 0x3f;
++
+ 	return wave5_wait_fio_readl(vpu_dev, addr, gdi_status_check_value);
+ }
+ 
+@@ -391,6 +395,11 @@
+ 		p_attr->support_vcore_backbone = FIELD_GET(W521_FEATURE_VCORE_BACKBONE,
+ 							   hw_config_def0);
+ 	}
++
++	/* This integration under-reports decoder support in STD_DEF1. */
++	if (vpu_dev->artosyn && vpu_dev->product_code == WAVE521C_CODE &&
++	    !p_attr->support_decoders)
++		p_attr->support_decoders = BIT(STD_HEVC) | BIT(STD_AVC);
+ 
+ 	setup_wave5_interrupts(vpu_dev);
+ 
+@@ -934,6 +943,10 @@
+ 	u32 width = inst->src_fmt.width;
+ 
+ 	if (!sram_size)
++		return 0;
++
++	/* AR9311 vendor firmware uses DRAM; unaccounted sec-AXI corrupts output. */
++	if (inst->dev->artosyn)
+ 		return 0;
+ 
+ 	/*
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-dec.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-dec.c
+@@ -999,7 +999,8 @@
+ 		struct vpu_buf *vframe = &inst->frame_vbuf[i];
+ 
+ 		fb_stride = ALIGN(inst->dst_fmt.width * bitdepth / 8, 32);
+-		fb_height = ALIGN(inst->dst_fmt.height, 32);
++		/* WAVE521C FBC storage on AR9311 uses CTU-aligned coded height. */
++		fb_height = ALIGN(inst->dst_fmt.height, inst->dev->artosyn ? 64 : 32);
+ 		luma_size = fb_stride * fb_height;
+ 
+ 		chroma_size = ALIGN(fb_stride / 2, 16) * fb_height;
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu.c
+@@ -12,6 +12,8 @@
+ #include <linux/interrupt.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/reset.h>
++#include <linux/of_reserved_mem.h>
++#include <linux/iopoll.h>
+ #include "wave5-vpu.h"
+ #include "wave5-regdefine.h"
+ #include "wave5-vpuconfig.h"
+@@ -22,6 +24,7 @@
+ 
+ #define WAVE5_IS_ENC BIT(0)
+ #define WAVE5_IS_DEC BIT(1)
++#define WAVE5_IS_ARTOSYN BIT(2)
+ 
+ struct wave5_match_data {
+ 	int flags;
+@@ -229,7 +232,8 @@
+ 	if (vpu->irq < 0)
+ 		hrtimer_cancel(&vpu->hrtimer);
+ 
+-	wave5_vpu_sleep_wake(dev, true, NULL, 0);
++	if (!vpu->artosyn)
++		wave5_vpu_sleep_wake(dev, true, NULL, 0);
+ 	clk_bulk_disable_unprepare(vpu->num_clks, vpu->clks);
+ 
+ 	return 0;
+@@ -240,7 +244,8 @@
+ 	struct vpu_device *vpu = dev_get_drvdata(dev);
+ 	int ret = 0;
+ 
+-	wave5_vpu_sleep_wake(dev, false, NULL, 0);
++	if (!vpu->artosyn)
++		wave5_vpu_sleep_wake(dev, false, NULL, 0);
+ 	ret = clk_bulk_prepare_enable(vpu->num_clks, vpu->clks);
+ 	if (ret) {
+ 		dev_err(dev, "Enabling clocks, fail: %d\n", ret);
+@@ -257,6 +262,51 @@
+ static const struct dev_pm_ops wave5_pm_ops = {
+ 	SET_RUNTIME_PM_OPS(wave5_pm_suspend, wave5_pm_resume, NULL)
+ };
++
++/* AR9311 codec-only power sequence, recovered by Missing-Lynk from the
++ * vendor HAL. Keep this separate from the display CRG at 0x0a106018.
++ * A future clock/power-domain provider can own these named DT resources.
++ */
++static int wave5_artosyn_power_on(struct platform_device *pdev)
++{
++	void __iomem *crg, *iso, *clock;
++	u32 status;
++	int ret;
++
++	crg = devm_platform_ioremap_resource_byname(pdev, "media-crg");
++	if (IS_ERR(crg))
++		return PTR_ERR(crg);
++	iso = devm_platform_ioremap_resource_byname(pdev, "isolation");
++	if (IS_ERR(iso))
++		return PTR_ERR(iso);
++	clock = devm_platform_ioremap_resource_byname(pdev, "codec-clock");
++	if (IS_ERR(clock))
++		return PTR_ERR(clock);
++
++	/* Enable the existing codec clock source, without changing its mux/rate. */
++	writel(readl(clock) | BIT(12), clock);
++	writel((readl(crg + 0x008) & 0xffffe000) | BIT(13), crg + 0x008);
++	writel(0x00acce55, crg + 0x200);
++	writel(readl(crg + 0x204) | 0x00404040, crg + 0x204);
++	ret = readl_poll_timeout(crg + 0x208, status,
++				 (status & 0x4040) == 0x4040, 10, 10000);
++	/* Always clear the power-up request pulse; do not access VPU on timeout. */
++	writel(readl(crg + 0x204) & ~BIT(22), crg + 0x204);
++	if (ret)
++		return dev_err_probe(&pdev->dev, ret,
++				     "codec power-up timeout: %#x\n", status);
++	writel(readl(iso + 0x004) | BIT(26), iso + 0x004);
++	writel(readl(iso + 0x014) | BIT(2), iso + 0x014);
++	usleep_range(1000, 2000);
++	dev_info(&pdev->dev, "AR9311 codec powered; clock register %#x\n",
++		 readl(clock));
++	return 0;
++}
++
++static void wave5_release_reserved_mem(void *data)
++{
++	of_reserved_mem_device_release(data);
++}
+ 
+ static int wave5_vpu_probe(struct platform_device *pdev)
+ {
+@@ -293,6 +343,18 @@
+ 	spin_lock_init(&dev->irq_spinlock);
+ 	dev_set_drvdata(&pdev->dev, dev);
+ 	dev->dev = &pdev->dev;
++	dev->artosyn = match_data->flags & WAVE5_IS_ARTOSYN;
++	if (dev->artosyn) {
++		/* Never fall back to general Linux RAM on this board. */
++		ret = of_reserved_mem_device_init(&pdev->dev);
++		if (ret)
++			return dev_err_probe(&pdev->dev, ret, "missing codec DMA pool\n");
++		ret = devm_add_action_or_reset(&pdev->dev,
++					       wave5_release_reserved_mem, &pdev->dev);
++		if (ret)
++			return ret;
++	}
++
+ 
+ 	dev->resets = devm_reset_control_array_get_optional_exclusive(&pdev->dev);
+ 	if (IS_ERR(dev->resets)) {
+@@ -324,6 +386,12 @@
+ 		dev_warn(&pdev->dev, "sram node not found\n");
+ 
+ 	dev->sram_size = match_data->sram_size;
++	if (dev->artosyn) {
++		ret = wave5_artosyn_power_on(pdev);
++		if (ret)
++			goto err_clk_dis;
++	}
++
+ 
+ 	dev->product_code = wave5_vdi_read_register(dev, VPU_PRODUCT_CODE_REGISTER);
+ 	ret = wave5_vdi_init(&pdev->dev);
+@@ -395,7 +463,9 @@
+ 	pm_runtime_set_autosuspend_delay(&pdev->dev, 500);
+ 	pm_runtime_use_autosuspend(&pdev->dev);
+ 	pm_runtime_enable(&pdev->dev);
+-	wave5_vpu_sleep_wake(&pdev->dev, true, NULL, 0);
++	/* AR9311 sleep/wake handshake does not complete; keep the VPU awake. */
++	if (!dev->artosyn)
++		wave5_vpu_sleep_wake(&pdev->dev, true, NULL, 0);
+ 
+ 	return 0;
+ 
+@@ -455,7 +525,14 @@
+ 	.sram_size = (64 * 1024),
+ };
+ 
++static const struct wave5_match_data artosyn_wave521c_data = {
++	.flags = WAVE5_IS_DEC | WAVE5_IS_ARTOSYN,
++	.fw_name = "artosyn/chagall.bin",
++	.sram_size = SZ_64K,
++};
++
+ static const struct of_device_id wave5_dt_ids[] = {
++	{ .compatible = "artosyn,ar9311-wave521c", .data = &artosyn_wave521c_data },
+ 	{ .compatible = "ti,j721s2-wave521c", .data = &ti_wave521c_data },
+ 	{ /* sentinel */ }
+ };
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
+@@ -752,6 +752,7 @@
+ 	int irq;
+ 	enum product_id product;
+ 	struct vpu_attr attr;
++	bool artosyn; /* AR9311 integration quirks, selected by DT compatible */
+ 	struct vpu_buf common_mem;
+ 	u32 last_performance_cycles;
+ 	u32 sram_size;

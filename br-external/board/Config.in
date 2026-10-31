@@ -1,0 +1,17 @@
+config BR2_FPVOS_SOC_AR9311
+	bool "Artosyn AR9311 SoC"
+	depends on BR2_aarch64
+	help
+	  Enable packages for the AR9311 host controllers. Boards
+	  still supply their wiring, firmware profiles and storage
+	  policy.
+
+config BR2_FPVOS_BOARD_ASCENT_VRX
+	bool "Caddx Ascent VRX (Gnd485, AR9311)"
+	depends on BR2_aarch64
+	select BR2_FPVOS_SOC_AR9311
+	help
+	  Select Gnd485 board integration, including its NAND
+	  partition parser. Other AR9311 boards can reuse
+	  board/common/ar9311 without selecting this board's wiring,
+	  stock firmware layout or update backend.

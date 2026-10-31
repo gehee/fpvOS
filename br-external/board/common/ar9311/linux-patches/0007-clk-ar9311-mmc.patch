@@ -1,0 +1,271 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] clk: own AR9311 SDMMC source clocks and gates
+
+Move SD/SDIO clock ownership into CCF with per-controller board settings.
+Preserve unrelated gate bits and do not touch shared PLL power registers.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+--- a/drivers/clk/Kconfig
++++ b/drivers/clk/Kconfig
+@@ -320,6 +320,15 @@
+ 	  Enable the external functional clock support on OMAP4+ platforms for
+ 	  McPDM. McPDM module is using the external bit clock on the McPDM bus
+ 	  as functional clock.
++
++config COMMON_CLK_AR9311_MMC
++	bool "Artosyn AR9311 SDMMC source clocks"
++	depends on OF && (ARM64 || COMPILE_TEST)
++	help
++	  Own the SD and radio source clock selectors, phase configuration
++	  and gates on the AR9311. Other SoC clocks are unaffected.
++	  Select this for the Gnd485 SD and radio MMC hosts; both controllers
++	  require board-specific source and phase settings in device tree.
+ 
+ config COMMON_CLK_AXI_CLKGEN
+ 	tristate "AXI clkgen driver"
+--- a/drivers/clk/Makefile
++++ b/drivers/clk/Makefile
+@@ -45,6 +45,7 @@
+ # hardware specific clock types
+ # please keep this section sorted lexicographically by file path name
+ obj-$(CONFIG_COMMON_CLK_APPLE_NCO)  	+= clk-apple-nco.o
++obj-$(CONFIG_COMMON_CLK_AR9311_MMC)	+= clk-ar9311-mmc.o
+ obj-$(CONFIG_MACH_ASM9260)		+= clk-asm9260.o
+ obj-$(CONFIG_COMMON_CLK_AXI_CLKGEN)	+= clk-axi-clkgen.o
+ obj-$(CONFIG_ARCH_AXXIA)		+= clk-axm5516.o
+--- a/drivers/clk/clk-ar9311-mmc.c
++++ b/drivers/clk/clk-ar9311-mmc.c
+@@ -0,0 +1,231 @@
++// SPDX-License-Identifier: GPL-2.0-or-later
++/*
++ * Artosyn AR9311 SDMMC source clocks.
++ *
++ * SEL/CFG programming follows the Gnd485 vendor dw_mci_proxima_init and the
++ * Missing-Lynk e3885c6 MMC glue. Gate layout follows that revision's CGU leaf
++ * table: FIX, SAMPLE and DRIVE use bits 12/28, not the stale bit22/23 comments
++ * in its MMC glue (which never actually writes those gates).
++ *
++ * This provider owns only the two MMC clock paths. CPU, DDR, USB, codec and
++ * display PLL/reset sequencing remain outside it. Keep unrelated halves of
++ * shared gate registers unchanged, and never touch PLL power at 0xa108000.
++ */
++#include <linux/clk-provider.h>
++#include <linux/delay.h>
++#include <linux/io.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/spinlock.h>
++
++#define AR_MMC_COUNT 2
++#define AR_MMC_SEL 0
++#define AR_MMC_CFG 4
++#define AR_MMC_RATE_MASK GENMASK(7, 6)
++#define AR_MMC_PHASE_MASK GENMASK(4, 0)
++
++struct ar_mmc_clocks;
++struct ar_mmc_clock {
++	struct clk_hw hw;
++	struct ar_mmc_clocks *owner;
++	void __iomem *regs;
++	u32 select;
++	u32 phase;
++	unsigned int index;
++};
++
++struct ar_mmc_clocks {
++	void __iomem *gates;
++	spinlock_t lock; /* shared CGU words, including adjacent controller gates */
++	struct ar_mmc_clock clocks[AR_MMC_COUNT];
++	struct clk_hw_onecell_data *data;
++};
++
++/* Offsets relative to 0xa104020; the other halves belong to MIPI/eMMC. */
++static const struct {
++	u32 offset[2];
++	u32 mask[2];
++} ar_mmc_gates[AR_MMC_COUNT] = {
++	{ { 0x0, 0x4 }, { BIT(28), BIT(12) | BIT(28) } },
++	{ { 0x8, 0xc }, { BIT(12) | BIT(28), BIT(12) } },
++};
++
++#define to_ar_mmc(_hw) container_of(_hw, struct ar_mmc_clock, hw)
++
++static void ar_mmc_gate(struct ar_mmc_clock *clock, bool enable)
++{
++	struct ar_mmc_clocks *cgu = clock->owner;
++	unsigned long flags;
++	unsigned int i;
++
++	spin_lock_irqsave(&cgu->lock, flags);
++	for (i = 0; i < 2; i++) {
++		void __iomem *reg = cgu->gates + ar_mmc_gates[clock->index].offset[i];
++		u32 mask = ar_mmc_gates[clock->index].mask[i];
++		u32 value = readl(reg);
++
++		writel(enable ? value | mask : value & ~mask, reg);
++		readl(reg);
++	}
++	spin_unlock_irqrestore(&cgu->lock, flags);
++}
++
++static int ar_mmc_enable(struct clk_hw *hw)
++{
++	ar_mmc_gate(to_ar_mmc(hw), true);
++	return 0;
++}
++
++static void ar_mmc_disable(struct clk_hw *hw)
++{
++	ar_mmc_gate(to_ar_mmc(hw), false);
++}
++
++static int ar_mmc_is_enabled(struct clk_hw *hw)
++{
++	struct ar_mmc_clock *clock = to_ar_mmc(hw);
++	unsigned int i;
++
++	for (i = 0; i < 2; i++) {
++		u32 mask = ar_mmc_gates[clock->index].mask[i];
++		u32 value = readl(clock->owner->gates + ar_mmc_gates[clock->index].offset[i]);
++
++		if ((value & mask) != mask)
++			return 0;
++	}
++	return 1;
++}
++
++static int ar_mmc_prepare(struct clk_hw *hw)
++{
++	struct ar_mmc_clock *clock = to_ar_mmc(hw);
++	u32 value = readl(clock->regs + AR_MMC_CFG);
++
++	writel((value & ~AR_MMC_PHASE_MASK) | clock->phase,
++	       clock->regs + AR_MMC_CFG);
++	writel(clock->select, clock->regs + AR_MMC_SEL);
++	readl(clock->regs + AR_MMC_SEL);
++	usleep_range(200, 250);
++	return 0;
++}
++
++static unsigned long ar_mmc_recalc_rate(struct clk_hw *hw, unsigned long parent_rate)
++{
++	u32 select = readl(to_ar_mmc(hw)->regs + AR_MMC_SEL);
++
++	/* Vendor's four source taps; not the card clock divider in dw_mmc. */
++	return 25000000UL << ((select & AR_MMC_RATE_MASK) >> 6);
++}
++
++static long ar_mmc_round_rate(struct clk_hw *hw, unsigned long rate, unsigned long *parent_rate)
++{
++	switch (rate) {
++	case 25000000:
++	case 50000000:
++	case 100000000:
++	case 200000000:
++		return rate;
++	default:
++		return -EINVAL;
++	}
++}
++
++static int ar_mmc_set_rate(struct clk_hw *hw, unsigned long rate, unsigned long parent_rate)
++{
++	struct ar_mmc_clock *clock = to_ar_mmc(hw);
++	unsigned int tap;
++
++	if (ar_mmc_round_rate(hw, rate, &parent_rate) < 0)
++		return -EINVAL;
++	for (tap = 0; (25000000UL << tap) != rate; tap++)
++		;
++	clock->select = (clock->select & ~AR_MMC_RATE_MASK) | (tap << 6);
++	writel(clock->select, clock->regs + AR_MMC_SEL);
++	readl(clock->regs + AR_MMC_SEL);
++	usleep_range(200, 250);
++	return 0;
++}
++
++static const struct clk_ops ar_mmc_ops = {
++	.prepare = ar_mmc_prepare,
++	.enable = ar_mmc_enable,
++	.disable = ar_mmc_disable,
++	.is_enabled = ar_mmc_is_enabled,
++	.recalc_rate = ar_mmc_recalc_rate,
++	.round_rate = ar_mmc_round_rate,
++	.set_rate = ar_mmc_set_rate,
++};
++
++static int ar_mmc_clocks_probe(struct platform_device *pdev)
++{
++	struct device *dev = &pdev->dev;
++	struct ar_mmc_clocks *cgu;
++	const char * const names[] = { "ar9311_sdmmc0", "ar9311_sdmmc1" };
++	u32 config[AR_MMC_COUNT * 2];
++	unsigned int i;
++	int ret;
++
++	if (of_property_count_u32_elems(dev->of_node, "artosyn,clock-config") != ARRAY_SIZE(config))
++		return dev_err_probe(dev, -EINVAL, "need SEL/CFG pairs for both MMC clocks\n");
++	ret = of_property_read_u32_array(dev->of_node, "artosyn,clock-config",
++					 config, ARRAY_SIZE(config));
++	if (ret)
++		return ret;
++	for (i = 0; i < AR_MMC_COUNT; i++)
++		if (config[i * 2] > 0xff || config[i * 2 + 1] > AR_MMC_PHASE_MASK)
++			return dev_err_probe(dev, -EINVAL, "invalid MMC clock configuration\n");
++
++	cgu = devm_kzalloc(dev, sizeof(*cgu), GFP_KERNEL);
++	if (!cgu)
++		return -ENOMEM;
++	cgu->data = devm_kzalloc(dev, struct_size(cgu->data, hws, AR_MMC_COUNT), GFP_KERNEL);
++	if (!cgu->data)
++		return -ENOMEM;
++	spin_lock_init(&cgu->lock);
++	cgu->gates = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(cgu->gates))
++		return PTR_ERR(cgu->gates);
++	cgu->data->num = AR_MMC_COUNT;
++
++	for (i = 0; i < AR_MMC_COUNT; i++) {
++		struct ar_mmc_clock *clock = &cgu->clocks[i];
++		struct clk_init_data init = {
++			.name = names[i],
++			.ops = &ar_mmc_ops,
++			.flags = CLK_IGNORE_UNUSED | CLK_GET_RATE_NOCACHE,
++		};
++
++		clock->regs = devm_platform_ioremap_resource(pdev, i + 1);
++		if (IS_ERR(clock->regs))
++			return PTR_ERR(clock->regs);
++		clock->owner = cgu;
++		clock->index = i;
++		clock->select = config[i * 2];
++		clock->phase = config[i * 2 + 1];
++		clock->hw.init = &init;
++		ret = devm_clk_hw_register(dev, &clock->hw);
++		if (ret)
++			return ret;
++		cgu->data->hws[i] = &clock->hw;
++	}
++	return devm_of_clk_add_hw_provider(dev, of_clk_hw_onecell_get, cgu->data);
++}
++
++static const struct of_device_id ar_mmc_clocks_match[] = {
++	{ .compatible = "artosyn,ar9311-mmc-clock" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, ar_mmc_clocks_match);
++
++static struct platform_driver ar_mmc_clocks_driver = {
++	.probe = ar_mmc_clocks_probe,
++	.driver = {
++		.name = "ar9311-mmc-clock",
++		.of_match_table = ar_mmc_clocks_match,
++		.suppress_bind_attrs = true,
++	},
++};
++builtin_platform_driver(ar_mmc_clocks_driver);
++MODULE_DESCRIPTION("Artosyn AR9311 SDMMC source clocks");
++MODULE_LICENSE("GPL");

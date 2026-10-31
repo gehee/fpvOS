@@ -118,8 +118,10 @@ BR2_LINUX_KERNEL_NEEDS_HOST_OPENSSL=y
 # the client library. Artosyn's driver, daemon and library are not shipped.
 BR2_PACKAGE_AR_LIBRE=y
 # Open8030, the open radio firmware, next to stock's (RADIO > Radio Firmware
-# picks it); built only when its board profiles are in vendor/open8030.
+# picks it); built with the published VRX Pro profile.
 BR2_PACKAGE_OPEN8030=y
+BR2_PACKAGE_OPEN8030_PROFILE="ascent-vrx-pro.c"
+BR2_PACKAGE_OPEN8030_TRANSPORT_USB=y
 # Firmware for the onboard WiFi (rtlwifi/rtl8188fufw.bin), which the kernel's
 # rtl8xxxu driver loads.
 BR2_PACKAGE_LINUX_FIRMWARE=y

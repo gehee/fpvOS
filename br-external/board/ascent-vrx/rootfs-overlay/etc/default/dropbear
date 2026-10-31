@@ -1,0 +1,2 @@
+# Development login: root / root. Listen only on the direct USB link.
+DROPBEAR_ARGS="-p 192.168.3.102:22"

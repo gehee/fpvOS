@@ -1,0 +1,21 @@
+config BR2_PACKAGE_FPVOS_UPDATE
+	bool "fpvOS firmware updater"
+	depends on BR2_USE_MMU
+	# Gnd485 is currently the only supplied hardware backend.
+	depends on BR2_aarch64
+	help
+	  USB CDC transport, bundle verification and update service. Storage,
+	  image validation and clean-mode policy come from a board backend.
+
+if BR2_PACKAGE_FPVOS_UPDATE
+choice
+	prompt "Updater board backend"
+
+config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX
+	bool "Ascent VRX NAND (Gnd485, AR9311)"
+	depends on BR2_FPVOS_BOARD_ASCENT_VRX
+	help
+	  Fixed NAND layout, readback and rollback, clean-mode selection and
+	  original vendor kernel/DTB restoration for Gnd485.
+endchoice
+endif

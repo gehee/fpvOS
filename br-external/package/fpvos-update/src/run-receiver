@@ -1,0 +1,16 @@
+#!/bin/sh
+# BusyBox init respawns this supervisor. No reader competes with ttyGS0.
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+[ ! -r /etc/default/fpvos-update ] || . /etc/default/fpvos-update
+tty=${FPVOS_UPDATE_TTY:-/dev/ttyGS0}
+umask 077
+mkdir -p /run/fpvos-update
+chmod 700 /run/fpvos-update
+[ -f /run/fpvos-clean-boot ] || rm -f /run/fpvos-update/clean
+while :; do
+    if [ -c "$tty" ]; then
+        /usr/sbin/fpvos-update-receiver "$tty" /run/fpvos-update /usr/libexec/fpvos-update-backend || :
+    fi
+    sleep 1
+done

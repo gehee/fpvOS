@@ -1,0 +1,58 @@
+#!/bin/sh
+# CDC-ECM development link plus vendor-framed CDC-ACM updates. All state lives in the RAM filesystem/configfs.
+set -eu
+
+g=/sys/kernel/config/usb_gadget/fpvos
+
+start() {
+	modprobe dwc2
+	modprobe libcomposite
+	modprobe usb_f_ecm
+	modprobe usb_f_acm
+	mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
+	if [ ! -d "$g" ]; then
+		mkdir "$g"
+		echo 0x1d6b > "$g/idVendor"
+		echo 0x0104 > "$g/idProduct"
+		mkdir "$g/strings/0x409"
+		echo fpvos-ar9311 > "$g/strings/0x409/serialnumber"
+		echo fpvOS > "$g/strings/0x409/manufacturer"
+		echo 'AR9311 development network' > "$g/strings/0x409/product"
+		mkdir "$g/configs/c.1"
+		mkdir "$g/configs/c.1/strings/0x409"
+		echo 'USB Ethernet + firmware transfer' > "$g/configs/c.1/strings/0x409/configuration"
+		echo 0xc0 > "$g/configs/c.1/bmAttributes"
+		echo 2 > "$g/configs/c.1/MaxPower"
+		mkdir "$g/functions/ecm.usb0"
+		echo 02:93:11:00:00:01 > "$g/functions/ecm.usb0/dev_addr"
+		echo 02:93:11:00:00:02 > "$g/functions/ecm.usb0/host_addr"
+		ln -s "$g/functions/ecm.usb0" "$g/configs/c.1/ecm.usb0"
+		mkdir "$g/functions/acm.usb0"
+		ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
+	fi
+	if [ -z "$(cat "$g/UDC")" ]; then
+		# Bind only the receiver's native controller.
+		test -d /sys/class/udc/8000000.usb
+		echo 8000000.usb > "$g/UDC"
+	fi
+	# ECM registers its netdev when the gadget is bound to the controller.
+	ip address replace 192.168.3.102/24 dev usb0
+	ip link set usb0 up
+	echo 'USB Ethernet ready: 192.168.3.102 (host: 192.168.3.100)'
+}
+
+stop() {
+	[ -d "$g" ] || return 0
+	printf '\n' > "$g/UDC"
+	ip link set usb0 down
+	rm "$g/configs/c.1/ecm.usb0" "$g/configs/c.1/acm.usb0"
+	rmdir "$g/functions/acm.usb0" "$g/functions/ecm.usb0" "$g/configs/c.1/strings/0x409" \
+		"$g/configs/c.1" "$g/strings/0x409" "$g"
+}
+
+case "${1:-}" in
+	start) start ;;
+	stop) stop ;;
+	restart) stop; start ;;
+	*) echo "Usage: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

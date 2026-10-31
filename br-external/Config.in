@@ -1,3 +1,4 @@
+source "$BR2_EXTERNAL_FPVOS_PATH/board/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-vendor-libs/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/rockchip-mpp/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/kestrel/Config.in"
@@ -8,5 +9,17 @@ source "$BR2_EXTERNAL_FPVOS_PATH/package/kestrel-air/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/air-dropbear/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/air-busybox/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar-libre/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-mmc/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-media-test/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-firmware/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-radio/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/open8030/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/open8030-profiles/Config.in"
+
+config BR2_PACKAGE_HOST_LZ4
+	bool "host lz4 image compressor"
+	help
+	  Build the host LZ4 tool for the AR9311 post-image wrapper.
+	  The package recipe is provided by Buildroot.
+source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-update/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ascent-vrx-recovery/Config.in"

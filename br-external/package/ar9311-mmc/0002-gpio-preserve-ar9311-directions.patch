@@ -1,0 +1,85 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] gpio: preserve AR9311 boot-time direction state
+
+Treat readable direction registers as an AR9311 controller capability,
+selected by artosyn,ar9311-gpio rather than a board compatible. The vendor
+GPIO driver passes DIRIN with flags=0 to bgpio_init, which reads it into
+the direction shadow; measured readback agrees across all seven banks.
+Seed from hardware before registering consumers so the first direction
+write preserves neighboring bootloader outputs. Keep the legacy fallback
+for unidentified controllers matched only by artosyn,gpio.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+--- a/modules/artosyn_gpio.c
++++ b/modules/artosyn_gpio.c
+@@ -2,14 +2,14 @@
+ /*
+  * artosyn_gpio.c - open reimplementation of the vendor "artosyn,gpio" controller
+  * (@0x0A10A000), needed to drive the AR8030 RF reset line (GPIO23). The SoC has no
+- * mainline gpio driver; ad-hoc /dev/mem pokes don't work because the direction
+- * register is effectively write-only/unreadable. This registers proper gpiochips so
++ * mainline gpio driver. Preserve boot-time directions on AR9311, whose
++ * direction registers support readback. This registers proper gpiochips so
+  * GPIO23 can be driven via gpiolib (the vendor's start_ar813x.sh reset pulse).
+  *
+  * Register map recovered from artosyn_gpio_probe (bgpio_init args): the controller has 7
+  * banks; per bank N the register block is at base + 0xBC + N*0xC, with
+  *   SET   @+0  : output-value latch (read/write, RMW)
+- *   DIRIN @+4  : direction, 1 = input  (write-only on this SoC -> we shadow it)
++ *   DIRIN @+4  : direction, 1 = input  (readable on AR9311; shadow updates)
+  *   DAT   @+8  : input read
+  * NOTE: base offset is 0xBC (vendor of_match data[0], confirmed by disasm).
+  * (0x00..0x3c is pinmux, owned by the bootloader.) Bank gpio bases/sizes match the
+@@ -38,7 +38,8 @@
+ 	struct gpio_chip	gc;
+ 	void __iomem		*regs;		/* base + 0xBC + N*0xC */
+ 	spinlock_t		lock;
+-	u32			dir_shadow;	/* DIRIN is unreadable; mirror it */
++	bool			dir_readable;
++	u32			dir_shadow;	/* serialized direction updates */
+ 	u32			out_shadow;	/* SET readback mixes in input-pin
+ 						 * state, so a read-modify-write
+ 						 * corrupts other pins; shadow the
+@@ -108,8 +109,11 @@
+ {
+ 	struct ar_gpio_bank *b = gpiochip_get_data(gc);
+ 
+-	/* DIRIN is write-only here; report from the shadow (1 = input). */
+-	return (b->dir_shadow & BIT(off)) ?
++	/* AR9311 has working readback; legacy matches retain shadow semantics. */
++	u32 dir = b->dir_readable ? readl(b->regs + AR_REG_DIRIN) :
++				   READ_ONCE(b->dir_shadow);
++
++	return (dir & BIT(off)) ?
+ 		GPIO_LINE_DIRECTION_IN : GPIO_LINE_DIRECTION_OUT;
+ }
+ 
+@@ -149,8 +153,16 @@
+ 
+ 		b->regs = base + AR_BANK_REG_BASE + i * AR_BANK_STRIDE;
+ 		spin_lock_init(&b->lock);
+-		/* DIRIN is unreadable; seed the shadow as all-input (safe default). */
+-		b->dir_shadow = 0xffffffff;
++		/*
++		 * The vendor AR9311 driver seeds its shadow from DIRIN too.
++		 * Preserve firmware outputs before any consumer changes a
++		 * direction in this bank; probing must not write directions.
++		 * Keep the legacy fallback for unidentified Artosyn variants.
++		 */
++		b->dir_readable = of_device_is_compatible(pdev->dev.of_node,
++							  "artosyn,ar9311-gpio");
++		b->dir_shadow = b->dir_readable ?
++			readl(b->regs + AR_REG_DIRIN) : 0xffffffff;
+ 		/* Seed the output shadow from the current latch so the first write
+ 		 * preserves pins the bootloader/regulators already drive.
+ 		 */
+@@ -181,6 +193,7 @@
+ }
+ 
+ static const struct of_device_id ar_gpio_match[] = {
++	{ .compatible = "artosyn,ar9311-gpio" },
+ 	{ .compatible = "artosyn,gpio" },
+ 	{}
+ };

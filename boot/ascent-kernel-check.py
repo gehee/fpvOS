@@ -148,9 +148,9 @@ def main():
     stock = sorted(glob.glob(str(ROOT / "vendor/stock/air/Ascent_H_Sky_*.img")))
     ap.add_argument("--stock", default=stock[-1] if stock else None,
                     help="stock H_Sky image (default: vendor/stock/air/)")
-    ap.add_argument("--linux", default=str(ROOT / "output-air/build/linux-custom"),
+    ap.add_argument("--linux", default=str(ROOT / "output/ascent-lite/build/linux-custom"),
                     help="our kernel build directory")
-    ap.add_argument("--out", default=str(ROOT / "output-air/kernel-check"),
+    ap.add_argument("--out", default=str(ROOT / "output/ascent-lite/kernel-check"),
                     help="where the full symbol lists go")
     a = ap.parse_args()
     if not a.stock:

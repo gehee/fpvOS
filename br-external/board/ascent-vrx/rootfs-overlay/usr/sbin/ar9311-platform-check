@@ -1,0 +1,129 @@
+#!/bin/sh
+# Check the Gnd485 RAM-boot platform. No reboot, flash or radio commands.
+# Optional tests use disposable SD files and 16 MiB of userspace RAM.
+set -u
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+storage=0
+memory=0
+failures=0
+scratch=
+for arg in "$@"; do
+	case "$arg" in
+		--storage) storage=1 ;;
+		--memory) memory=1 ;;
+		*) echo "Usage: $0 [--storage] [--memory]" >&2; exit 2 ;;
+	esac
+done
+pass() { echo "PASS: $*"; }
+fail() { echo "FAIL: $*"; failures=$((failures + 1)); }
+warn() { echo "NOTE: $*"; }
+cleanup() { [ -z "$scratch" ] || rm -rf "$scratch"; }
+trap cleanup EXIT
+trap 'exit 1' HUP INT TERM
+
+[ "$(id -u)" = 0 ] || { echo 'Run as root' >&2; exit 2; }
+model=$(tr -d '\000' < /proc/device-tree/model)
+[ "$model" = 'Caddx Ascent Gnd485 (AR9311)' ] || {
+	echo "Unsupported board: $model" >&2; exit 2;
+}
+echo "Kernel: $(uname -r); boot: $(cat /proc/sys/kernel/random/boot_id)"
+[ "$(cat /sys/devices/system/cpu/online)" = 0-1 ] &&
+	pass 'both CPUs online' || fail 'expected CPUs 0-1 online'
+if awk '$2 == "/" && $3 ~ /^(rootfs|tmpfs)$/ { found=1 } END { exit !found }' /proc/mounts; then
+	pass 'RAM root filesystem'
+else
+	fail 'root filesystem is not the expected RAM root'
+fi
+if awk '$3 ~ /^(ubi|jffs)/ { found=1 } END { exit !found }' /proc/mounts; then
+	fail 'unexpected NAND-backed filesystem mounted'
+else
+	pass 'no NAND-backed filesystem mounted'
+fi
+[ -c /dev/ttyS0 ] && pass 'UART console device present' || fail 'missing ttyS0'
+warn 'RTC disabled: internal counter has not passed ticking/readback tests'
+if [ -c /dev/watchdog0 ] &&
+	[ "$(cat /sys/class/watchdog/watchdog0/identity)" = 'Synopsys DesignWare Watchdog' ]; then
+	pass 'watchdog registered'
+	warn 'watchdog remains armed after close/halt; no verified reset control'
+else
+	fail 'watchdog missing'
+fi
+mountpoint -q /sys/fs/pstore && pass 'persistent crash store mounted' || fail 'pstore missing'
+if [ "$(cat /sys/kernel/config/usb_gadget/fpvos/UDC 2>/dev/null)" = 8000000.usb ] &&
+	ip -4 addr show dev usb0 | grep -q '192.168.3.102/24'; then
+	pass 'native USB ECM configured (host reachability needs a host test)'
+else
+	fail 'USB ECM configuration'
+fi
+
+mountpoint -q /sys/kernel/debug || mount -t debugfs debugfs /sys/kernel/debug
+if [ -r /sys/kernel/debug/clk/clk_summary ]; then
+	for clock in ar9311_sdmmc0 ar9311_sdmmc1; do
+		# Match the provider's registered clock names, not MMC enumeration.
+		if awk -v name="$clock" '$1 == name && $2 > 0 && $3 > 0 && $5 == 100000000 { ok=1 } END { exit !ok }' /sys/kernel/debug/clk/clk_summary; then
+			pass "$clock prepared/enabled at 100 MHz"
+		else
+			fail "$clock clock state"
+		fi
+	done
+else
+	fail 'clock debug state unavailable'
+fi
+deferred=$(cat /sys/kernel/debug/devices_deferred 2>/dev/null)
+if [ -n "$deferred" ]; then
+	fail 'devices remain deferred'
+	printf '%s\n' "$deferred"
+fi
+taint=$(cat /proc/sys/kernel/tainted)
+if [ "$((taint & ~4096))" -eq 0 ]; then
+	pass "kernel taint=$taint (external modules allowed)"
+else
+	fail "unexpected kernel taint=$taint"
+fi
+[ -c /dev/arlink0 ] && pass 'radio driver node present' || fail 'radio driver node missing'
+if [ -r /sys/class/misc/arlink0/stats ]; then
+	if awk '$1 == "bus_errors" && $2 == 0 { ok=1 } END { exit !ok }' /sys/class/misc/arlink0/stats; then
+		pass 'radio bus reports zero errors'
+	else
+		fail 'radio bus errors'
+	fi
+fi
+decoder=0
+for node in /sys/class/video4linux/video*; do
+	case "$(readlink -f "$node")" in
+		*/a080000.video-codec/video4linux/*) decoder=1 ;;
+	esac
+done
+[ "$decoder" = 1 ] && pass 'Wave5 decoder registered' || fail 'decoder missing'
+[ -c /dev/dri/card0 ] && pass 'DRM device registered' || fail 'DRM device missing'
+warn 'device nodes do not prove RF reception, decoded pixels or HDMI signal'
+
+if [ "$storage" = 1 ]; then
+	device=$(awk '$2 == "/mnt/sd" { print $1 }' /proc/mounts)
+	case "$(readlink -f "/sys/class/block/${device##*/}")" in
+		*/1c00000.mmc/mmc_host/*)
+			if mountpoint -q /mnt/sd && [ ! -L /mnt/sd/fpvos ] &&
+				scratch=$(mktemp -d /mnt/sd/fpvos/platform-check.XXXXXX); then
+				if dd if=/dev/urandom of="$scratch/data" bs=1048576 count=8 2>/dev/null &&
+					(cd "$scratch" && sha256sum data > checksum && fsync data &&
+					sha256sum -c checksum); then
+					pass 'SD 8 MiB write, fsync and checksum reread'
+				else
+					fail 'SD I/O test'
+				fi
+			else
+				fail 'cannot create SD test directory'
+			fi
+			;;
+		*) fail 'SD is not mounted from the removable SD controller' ;;
+	esac
+else
+	warn 'SD write test skipped; use --storage'
+fi
+if [ "$memory" = 1 ]; then
+	if memtester 16M 1; then pass '16 MiB memory test'; else fail 'memory test'; fi
+else
+	warn 'memory test skipped; use --memory'
+fi
+echo "Failures: $failures"
+[ "$failures" -eq 0 ]

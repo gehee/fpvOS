@@ -1,0 +1,71 @@
+#!/bin/sh
+# The current profile is already a complete RAM root, including libraries.
+# Clean mode must fail if users of persistent storage cannot be quiesced.
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+[ "$(id -u)" = 0 ]
+stock=0
+model=$(tr -d '\000' < /proc/device-tree/model)
+if [ "$model" = 'Artosyn, Proxima Development Board' ] && [ -f /etc/fpvos-stock-bootstrap ]; then
+    stock=1
+else
+    [ "$model" = 'Caddx Ascent Gnd485 (AR9311)' ]
+fi
+check_mounts() {
+    # Stock's preserved, read-only root may remain mounted. Nothing
+    # else persistent is allowed, even when it is not an update destination.
+    # PID 1 retains the host root; self/mounts hides mounts outside our chroot.
+    mounts=/proc/mounts
+    [ "$stock" = 0 ] || mounts=/proc/1/mounts
+    [ -r "$mounts" ] || return 1
+    awk -v stock="$stock" '
+      $3 ~ /^(rootfs|tmpfs|devtmpfs|proc|sysfs|devpts|configfs|debugfs|pstore)$/ { next }
+      stock && ($1 == "/dev/root" || $1 == "/dev/ubiblock0_0") && $2 == "/" && $3 == "squashfs" && $4 ~ /(^|,)ro(,|$)/ { root=1; next }
+      { bad=1 } END { exit bad || (stock && !root) }' "$mounts"
+}
+if [ "$stock" = 0 ]; then
+    awk '$2 == "/" && $3 ~ /^(rootfs|tmpfs)$/ { found=1 } END { exit !found }' /proc/mounts
+fi
+case "${1:-}" in
+    clean)
+        if [ "$stock" = 0 ] && [ -f /etc/fpvos-nand-boot ] && [ ! -f /run/fpvos-clean-boot ]; then
+            /usr/sbin/ar9311-nandctl clean
+            exit 10
+        fi
+        rm -f /run/fpvos-update/clean
+        # No ground application is packaged yet. Refuse active clients rather
+        # than racing an unknown application's automatic restart policy.
+        for fd in /proc/[0-9]*/fd/*; do
+            case "$(readlink "$fd" 2>/dev/null || :)" in
+                /dev/arlink*|/dev/video*|/dev/dri/*)
+                    echo "Active media/radio client: $fd" >&2
+                    exit 1 ;;
+            esac
+        done
+        sync
+        [ ! -x /etc/init.d/S45ar9311-sd ] || /etc/init.d/S45ar9311-sd stop
+        # Allow only RAM and virtual filesystems. This is stronger than merely
+        # copying an updater executable off the filesystem being changed.
+        check_mounts
+        /usr/sbin/ar9311-nandctl preflight
+        mkdir -p /run/fpvos-update
+        : > /run/fpvos-update/clean
+        ;;
+    verify|install)
+        [ -f /run/fpvos-update/clean ]
+        check_mounts
+        if [ "$1" = install ]; then
+            # The NAND transaction verifies its private package snapshot once.
+            exec /usr/sbin/ar9311-nandctl install "$2"
+        fi
+        work=$(mktemp -d /run/fpvos-update/verify.XXXXXX)
+        trap 'rm -rf "$work"' EXIT
+        trap 'exit 1' HUP INT TERM
+        /usr/libexec/fpvos-update-verify "$2" "$work"
+        ;;
+    reboot)
+        sync
+        if [ "$stock" = 1 ]; then /bin/reboot -f; else /sbin/reboot; fi
+        ;;
+    *) echo 'Usage: update-helper {clean|verify|install|reboot} PACKAGE' >&2; exit 2 ;;
+esac

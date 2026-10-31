@@ -28,9 +28,9 @@ BB_PROFILE="${BB_PROFILE:-$(cat /usrdata/bb_profile 2>/dev/null || echo caddx)}"
 # Radio Firmware says STOCK (ar8030_firmware: 0), or without the image.
 # kestrel-gnd decides the same way. BB_FW / BB_CFG in the environment still win.
 if [ -z "$BB_FW" ] && ! grep -q '^ar8030_firmware: 0$' /etc/kestrel/kestrel-gnd.yaml 2>/dev/null &&
-   [ -f /lib/firmware/open8030-vrxpro-usb.img ]; then
-    BB_FW=open8030-vrxpro-usb.img
-    BB_CFG="${BB_CFG:-bb_config_gnd_open8030.json}"
+   [ -f /lib/firmware/open8030.img ]; then
+    BB_FW=open8030.img
+    BB_CFG="${BB_CFG:-open8030.json}"
 fi
 case "$BB_PROFILE" in
     caddx) BB_CFG="${BB_CFG:-bb_config_gnd_pro.json}" ;;

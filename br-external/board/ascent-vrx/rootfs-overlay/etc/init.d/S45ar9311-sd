@@ -1,0 +1,98 @@
+#!/bin/sh
+# Mount existing removable-card storage only. Never format or repair a card.
+# Restrict discovery to the Gnd485 SD controller, not an enumeration number.
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+mount_dir=/mnt/sd
+
+find_card() {
+	for block in /sys/class/block/mmcblk*; do
+		[ -e "$block/partition" ] && continue
+		case "$(readlink -f "$block")" in
+			*/1c00000.mmc/mmc_host/*)
+				[ "$(cat "$block/device/type" 2>/dev/null)" = SD ] || continue
+				printf '%s\n' "$block"
+				;;
+		esac
+	done
+}
+
+start() {
+	# Repeated start must not mount twice or hide an existing mount.
+	if mountpoint -q "$mount_dir"; then
+		echo "SD: $mount_dir is already mounted"
+		return 0
+	fi
+	modprobe artosyn_gpio || return 1
+	modprobe gpio-regulator || return 1
+	modprobe mmc_block || return 1
+	modprobe dw_mci-artosyn || return 1
+
+	# The platform probe and card scan run asynchronously. Wait for a card
+	# and for the kernel to finish registering its block device/partitions.
+	i=0
+	while [ "$i" -lt 10 ]; do
+		card=$(find_card)
+		[ -n "$card" ] && [ -b "/dev/${card##*/}" ] && break
+		sleep 1
+		i=$((i + 1))
+	done
+	if [ -z "$card" ] || [ ! -b "/dev/${card##*/}" ]; then
+		echo "SD: no card; persistent storage unavailable"
+		return 0
+	fi
+	# Reading the device for blkid waits for the kernel's partition scan.
+	name=${card##*/}
+	blkid "/dev/$name" >/dev/null
+	devices=
+	for partition in "$card"/"$name"p*; do
+		[ -f "$partition/partition" ] || continue
+		devices="$devices /dev/${partition##*/}"
+	done
+	# Stock firmware can format FAT directly on the entire card.
+	[ -n "$devices" ] || devices="/dev/$name"
+
+	count=0
+	for device in $devices; do
+		type=$(blkid "$device" | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p')
+		case "$type" in
+			vfat|exfat|ext4)
+				selected=$device
+				fs=$type
+				count=$((count + 1))
+				;;
+		esac
+	done
+	if [ "$count" -ne 1 ]; then
+		echo "SD: found $count supported filesystems; mount the desired one manually"
+		return 0
+	fi
+
+	modprobe "$fs" || return 1
+	mkdir -p "$mount_dir" || return 1
+	options=rw,noatime,nodev,nosuid
+	case "$fs" in
+		vfat) options="$options,umask=0077,utf8=1,errors=remount-ro" ;;
+		exfat) options="$options,umask=0077,errors=remount-ro" ;;
+		ext4) options="$options,errors=remount-ro" ;;
+	esac
+	mount -t "$fs" -o "$options" "$selected" "$mount_dir" || return 1
+	if [ -L "$mount_dir/fpvos" ] || ! mkdir -p "$mount_dir/fpvos"; then
+		echo "SD: cannot create the fpvos directory"
+		umount "$mount_dir"
+		return 1
+	fi
+	echo "SD: $selected ($fs) mounted; persistent files: $mount_dir/fpvos"
+}
+
+case "$1" in
+	start) start ;;
+	stop)
+		if mountpoint -q "$mount_dir"; then
+			sync
+			umount "$mount_dir"
+		fi
+		;;
+	restart) "$0" stop && "$0" start ;;
+	*) echo "Usage: $0 {start|stop|restart}" >&2; exit 1 ;;
+esac

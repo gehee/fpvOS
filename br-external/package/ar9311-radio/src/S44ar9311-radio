@@ -1,0 +1,25 @@
+#!/bin/sh
+# Load firmware into the AR8030's RAM. The client starts/stops the radio.
+# Do not unbind/reload a running SDIO chip: recover with a cold boot.
+case "$1" in
+	start)
+		modprobe artosyn_gpio || exit 1
+		modprobe gpio-regulator || exit 1
+		modprobe ar9311_radio_pwrseq || exit 1
+		modprobe dw_mci-artosyn || exit 1
+		modprobe arlink fw_name=open8030.img cfg_name=open8030.json || exit 1
+		i=0
+		while [ "$i" -lt 20 ]; do
+			if [ -c /dev/arlink0 ]; then
+				echo "Radio: /dev/arlink0 ready; use ar9311-radio to start reception"
+				exit 0
+			fi
+			sleep 1
+			i=$((i + 1))
+		done
+		echo "Radio: SDIO firmware startup failed; inspect dmesg before a cold reboot" >&2
+		exit 1
+		;;
+	stop) : ;; # Closing the client stops/deinitializes the radio.
+	*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

@@ -1,0 +1,10 @@
+config BR2_PACKAGE_AR9311_MMC
+	bool "AR9311 MMC and GPIO platform drivers"
+	depends on BR2_aarch64
+	depends on BR2_LINUX_KERNEL
+	help
+	  Build the Artosyn MMC wrapper and Missing-Lynk GPIO controller
+	  against this image's kernel. Requires CONFIG_MMC_DW,
+	  CONFIG_MMC_DW_PLTFM, CONFIG_COMMON_CLK_AR9311_MMC and
+	  CONFIG_GPIOLIB. Source clocks and gates use the kernel's
+	  AR9311 clock provider; other SoC drivers are omitted.

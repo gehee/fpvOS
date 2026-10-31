@@ -1,0 +1,33 @@
+{
+  "board_id": 485,
+  "hardware": "Gnd485",
+  "usb_identity": [
+    "1d6b",
+    "0104",
+    "fpvos-ar9311"
+  ],
+  "legacy_service": "fpvOS AR9311 updater",
+  "legacy_destination": "/tmp/pc/fpvos-ar9311",
+  "names": [
+    "kernel.img",
+    "ascent-gnd485.dtb",
+    "rootfs.cpio.uboot"
+  ],
+  "limits": [
+    6291456,
+    393216,
+    16777216
+  ],
+  "counts": [
+    3,
+    2
+  ],
+  "bundle_limits": [
+    21757952,
+    6685184
+  ],
+  "restore_sources": [
+    "kernel.before.bin",
+    "dtb.before.bin"
+  ]
+}

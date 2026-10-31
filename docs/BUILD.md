@@ -143,19 +143,44 @@ scripts/open8030-private.sh ../Open8030   # -> vendor/open8030 (git-ignored)
 make OPEN8030_PRIVATE_DIR=$PWD/vendor/open8030 ...
 ```
 
+Board defconfigs select `BR2_PACKAGE_OPEN8030_PROFILE`, a transport choice,
+the optional `BR2_PACKAGE_OPEN8030_ROLE_AP` air role and factory-data policy.
+The firmware recipe does not infer these from a host application or board name.
+
+| Board | Profile | Transport | Role |
+| --- | --- | --- | --- |
+| VRX Pro | `ascent-vrx-pro.c` | USB | Ground/station |
+| Ascent Lite/Lite+ | `ascent-lite-plus.c` | SDIO | Air/AP; factory data optional |
+| Ascent VRX | private `vendor/open8030/ascent-vrx.c` | SDIO | Ground/station |
+
+Bare profile filenames resolve in the published archive; absolute paths select
+private inputs. `OPEN8030_PRIVATE_DIR` overrides the profile directory using its
+basename. Ground configuration is selected independently with
+`BR2_PACKAGE_OPEN8030_CONFIG`: a published filename or absolute path, optionally
+overridden by `OPEN8030_CONFIG_DIR`. To override both from a private directory,
+pass both directory variables. SDIO keeps the pinned firmware's active-bus
+detection; USB adds `AR_FORCE_USB`. The source pin and existing role flags stay
+the same for all three boards.
+
 The images then carry:
 
-- the goggle gets `/lib/firmware/open8030-vrxpro-usb.img` and its radio config,
+- the goggle gets `/lib/firmware/open8030.img` and `open8030.json`,
   and runs it by default; kestrel-gnd's RADIO > VRX Radio Firmware switches
   between it and stock's at the next radio start (the goggle's radio only, not
   the air unit's).
-- the air unit gets `/usrdata/fpv/air/open8030/open8030-ap.img`. A Lite or Lite+
+- the air unit gets `/usrdata/fpv/air/open8030/open8030.img`. A Lite or Lite+
   uses it when `/usrdata/fpv/air/open8030/always` exists, which the air image
   ships (`BR2_PACKAGE_OPEN8030_AIR_DEFAULT=y` in `ascentlite_defconfig`); remove
   the file over ssh to go back to stock's. Both ends must run the same firmware
   family: an Open8030 air unit needs an Open8030 goggle.
 
-`OPEN8030_OVERRIDE_SRCDIR` (in `local.mk`) builds a local Open8030 checkout
+Compatibility links retain the published USB and air firmware filenames;
+Kestrel still probes `open8030-vrxpro-usb.img` directly. Loaders use the stable
+`open8030.img` basename regardless of the selected board profile. Reapply the
+board defconfig when updating an existing output directory, then rebuild the
+Open8030 and affected host-radio packages.
+
+`OPEN8030_OVERRIDE_SRCDIR` (in the board output directory's `local.mk`) builds a local Open8030 checkout
 instead of the pinned commit.
 
 ## 3. Build
@@ -170,10 +195,10 @@ Sub-commands for iterating:
 ./build.sh config     # (re)generate the Buildroot .config from the defconfig
 ./build.sh kestrel    # rebuild only kestrel into the sysroot
 ./build.sh image      # re-assemble the image (rootfs already built)
-./build.sh air        # the air unit's image, into output-air/ (see below)
+./build.sh air        # the air unit's image, into output/ascent-lite/ (see below)
 ```
 
-The result, in the repo root, is the image twice:
+The VRX Pro images are in `output/vrxpro/images/`:
 
 - `sdcard.img` — the raw image, for `dd`
 - `sdcard.img.xz` — the same image compressed, for balenaEtcher or Raspberry
@@ -181,13 +206,33 @@ The result, in the repo root, is the image twice:
 
 `COMPRESS=0 ./build.sh` skips the `.xz` when you're iterating and only `dd`.
 
+Each board uses a separate output directory:
+
+| Build command | Output directory |
+| --- | --- |
+| `./build.sh` | `output/vrxpro/` |
+| `./build.sh air` | `output/ascent-lite/` |
+| `./build.sh ascent-vrx` | `output/ascent-vrx/` |
+
+Each contains its own `.config`, `build/`, `host/`, `target/` and `images/`.
+Build outputs are Git-ignored. Run package and configuration commands against
+that board's directory, for example `make -C output/vrxpro menuconfig`, after
+`./build.sh config`. Put local package overrides in that directory's `local.mk`.
+
+Older checkouts used `buildroot/output/`, `output-air/` and `output-ar9311/`.
+`output/ascent-gnd485/` was also used before the product-name rename.
+Those folders are left untouched and remain ignored. Start a fresh build at the
+new location; moving an existing Buildroot output can leave embedded absolute
+paths pointing to the old directory. Copy any intentional `local.mk` overrides
+separately. Release archives continue to be assembled under `out/`.
+
 ## 4. Flash and boot
 
 See [INSTALL.md](INSTALL.md) for flashing, first boot, and recovery back to
 stock. The easy way is balenaEtcher with `sdcard.img.xz`; from a Linux shell:
 
 ```sh
-sudo dd if=sdcard.img of=/dev/sdX bs=4M conv=fsync
+sudo dd if=output/vrxpro/images/sdcard.img of=/dev/sdX bs=4M conv=fsync
 # If the card is larger than the image, extend the backup GPT:
 sudo sgdisk -e /dev/sdX
 ```
@@ -208,7 +253,7 @@ reflash with Caddx's own update.
 
 ```sh
 scripts/extract-vendor.py      # also saves the stock Ascent_H_Sky_*.img to vendor/stock/air/
-./build.sh air                 # -> output-air/images/Ascent_H_Sky_18_21_10.img
+./build.sh air                 # -> output/ascent-lite/images/Ascent_H_Sky_18_21_10.img
 ./build.sh air kernel          # just the toolchain and the kernel
 boot/ascent-kernel-check.py    # compare our kernel with the stock one
 ```
@@ -270,5 +315,13 @@ the stock one, and `ascent-kernel-check.py` are for that).
 - **Buildroot fails on first package** — confirm you cloned the exact pinned
   version from `br-external/BUILDROOT_VERSION`.
 - **Boots to a black screen** — almost always the loader; confirm
-  `buildroot/output/images/uboot-patched.bin` exists (the fpvos-bootchain
+  `output/vrxpro/images/uboot-patched.bin` exists (the fpvos-bootchain
   package makes it from `vendor/stock/uboot.img`).
+
+## AR9311 / Ascent Gnd485
+
+The experimental `ascentvrx_defconfig` (`./build.sh ascent-vrx`) builds Linux 6.18 with decoder, HDMI,
+SDIO radio and USB recovery/update support. See the [AR9311 board guide](AR9311.md)
+for dependencies, building, RAM boot, NAND installation and known limitations.
+Shared SoC support lives under `br-external/board/common/ar9311`; Gnd485 wiring,
+display and NAND policy live under `br-external/board/ascent-vrx`.

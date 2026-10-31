@@ -1,0 +1,15 @@
+config BR2_PACKAGE_AR9311_RADIO
+	bool "AR9311 SDIO radio"
+	depends on BR2_FPVOS_SOC_AR9311
+	depends on BR2_LINUX_KERNEL
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	depends on BR2_HOSTARCH = "x86_64"
+	select BR2_PACKAGE_AR9311_MMC
+	select BR2_PACKAGE_AR_LIBRE
+	select BR2_PACKAGE_OPEN8030
+	help
+	  AR8030 radio over the AR9311 SDIO host, using ar_libre and
+	  Open8030. Select the board's Open8030 profile and radio
+	  config, SDIO transport and ground/station role. Device tree
+	  supplies the host wiring, power rails and reset GPIO.
+	  Firmware loads into radio RAM; no flash writes.
