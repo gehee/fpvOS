@@ -42,11 +42,12 @@ define FPVOS_UPDATE_INSTALL_TARGET_CMDS
 endef
 
 define FPVOS_UPDATE_INSTALL_IMAGES_CMDS
-	$(INSTALL) -D -m 0755 $(@D)/fpvos-update $(BINARIES_DIR)/fpvos-update-ar9311
+	$(INSTALL) -D -m 0755 $(@D)/fpvos-update $(BINARIES_DIR)/fpvos-update-$(FPVOS_UPDATE_BOARD)
 	$(INSTALL) -D -m 0755 $(FPVOS_UPDATE_SITE)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.sh \
-		$(BINARIES_DIR)/fpvos-ar9311-bootstrap.sh
-	# Remove the superseded artifact produced by older versions of this package.
-	rm -f $(BINARIES_DIR)/fpvos-ar9311-bootstrap.tar
+		$(BINARIES_DIR)/fpvos-$(FPVOS_UPDATE_BOARD)-bootstrap.sh
+	# Remove artifacts under the names older versions of this package used.
+	rm -f $(BINARIES_DIR)/fpvos-ar9311-bootstrap.tar $(BINARIES_DIR)/fpvos-ar9311-bootstrap.sh \
+		$(BINARIES_DIR)/fpvos-update-ar9311 $(BINARIES_DIR)/fpvos-ar9311.fwu
 endef
 
 $(eval $(generic-package))
