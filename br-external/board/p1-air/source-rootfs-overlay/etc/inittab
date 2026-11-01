@@ -1,4 +1,4 @@
-# Source kernel boots in RAM; settings persist in usr_data. No NAND updater or camera autostart.
+# Source kernel boots in RAM; settings persist in usr_data. No NAND updater.
 ::sysinit:/bin/mount -t proc proc /proc
 ::sysinit:/bin/mount -t sysfs sysfs /sys
 ::sysinit:/bin/mkdir -p /dev/pts /run /tmp
@@ -13,10 +13,12 @@
 ::sysinit:/etc/init.d/S43factory start
 ::sysinit:/etc/init.d/S44ar9311-radio start
 ::sysinit:/etc/init.d/S45settings start
+::sysinit:/etc/init.d/S60kestrel-air start
 ::sysinit:/bin/cat /etc/issue
 
 ttyS0::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/init.d/S60kestrel-air stop
 ::shutdown:/etc/init.d/S45settings stop
 ::shutdown:/etc/init.d/S43factory stop
 ::shutdown:/etc/init.d/S50dropbear stop

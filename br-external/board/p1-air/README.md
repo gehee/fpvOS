@@ -182,7 +182,7 @@ Use matching, validated Open8030 builds on air and receiver, with native SDIO
 framing. After fixing a provisioning failure, retry
 `/etc/init.d/S44ar9311-radio start`. Provide the paired
 receiver's four-byte `bb_mac_addr_0` array in
-`/var/lib/kestrel-air/peer.json`, then run `kestrel-air-run`.
+`/var/lib/kestrel-air/peer.json`. The source profile starts Kestrel automatically.
 
 The launcher shares the recorder's camera lock and supplies board tuning and
 initial white-balance settings. Kestrel currently uses automatic white balance.
@@ -286,10 +286,11 @@ cannot be confirmed after a rename; pairing logs report failed saves.
 
 ```sh
 /etc/init.d/S45settings start
-kestrel-air-run
+/etc/init.d/S60kestrel-air start
 ```
 
-Stop Kestrel before `/etc/init.d/S45settings stop`. The shutdown entry unmounts
+Stop Kestrel with `/etc/init.d/S60kestrel-air stop` before
+`/etc/init.d/S45settings stop`. The shutdown entry unmounts
 the bind and underlying volume. Stock settings are not automatically imported;
 fpvOS owns its separate directory. Pair once under fpvOS to populate its peer
 file. Firmware still boots from RAM; settings persist across power cycles and
@@ -305,3 +306,51 @@ Stock Linux mounted the same volume and both files matched byte-for-byte.
 A second fpvOS RAM boot loaded them automatically and resumed wireless video
 without re-pairing. The test preference was restored afterward; the pairing
 remains saved. Factory bytes and the vendor's user configuration were preserved.
+
+### Autostart and supervision
+
+The source profile starts the shared `S60kestrel-air` service after factory
+calibration, radio initialization and persistent settings. The launcher refuses
+to start without the radio device or required writable settings mount. Startup
+failures leave USB and SSH available. No radio reflash, system reboot or NAND
+firmware write is part of recovery.
+
+The supervisor gives each launcher, Kestrel and its AE/AWB helpers a process
+group. It reaps orphaned helpers after crashes before restarting. A shared kernel
+file lock excludes the standalone camera recorder and releases automatically
+when the last worker exits. Stop the service before using `ar9311-camera-record`
+or running `kestrel-air-run` manually.
+
+Exited applications restart after two seconds. Five consecutive runs shorter
+than 60 seconds exhaust the retry budget; a longer run resets that budget.
+The service then remains stopped until an explicit start/restart or next boot.
+Normal shutdown sends TERM to the launcher and Kestrel for camera cleanup,
+then terminates surviving helpers. After five seconds it escalates to KILL;
+if the group still exists after another five seconds, recovery stops instead of
+starting another camera owner. This is process supervision, not a general
+kernel-hang watchdog; the encoder's existing stall and helper-exit checks still
+provide application-level fault detection.
+
+```sh
+/etc/init.d/S60kestrel-air status
+/etc/init.d/S60kestrel-air stop
+/etc/init.d/S60kestrel-air start
+/etc/init.d/S60kestrel-air restart
+cat /run/kestrel-air/status
+tail /run/kestrel-air/current.log
+```
+
+`current.log` and `previous.log` are each capped at 1 MiB in RAM. Shutdown stops
+Kestrel before unmounting settings. The service is installed for the AR9311
+backend; each board chooses whether to invoke it from init. Other air backends
+retain their existing startup scripts.
+
+Host supervision checks: `python3 br-external/package/kestrel-air/tests/test_supervise.py -v`.
+
+Hardware checks covered cold-boot autostart, Kestrel SIGKILL during video,
+an exposure-worker SIGKILL, restart cleanup, missing-storage retry exhaustion,
+and clean stop during streaming. Recovered HEVC streams decoded successfully;
+the receiver repeated its stream-setup exchange after application restarts.
+Continuous playback across a crash has not been validated. The standalone
+recorder was excluded while Kestrel owned the camera and worked after service
+stop. Factory and vendor configuration remained unchanged.

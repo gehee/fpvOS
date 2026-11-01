@@ -16,6 +16,12 @@ KESTREL_AIR_DEPENDENCIES = ar-libre
 ifeq ($(BR2_PACKAGE_KESTREL_AIR_AR9311),y)
 KESTREL_AIR_DEPENDENCIES += ar9311-camera-control ar9311-capture
 KESTREL_AIR_BACKEND = ar9311
+
+define KESTREL_AIR_BUILD_SUPERVISOR
+	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror $(TARGET_LDFLAGS) \
+		$(KESTREL_AIR_PKGDIR)/supervise.c -o $(@D)/kestrel-air-supervise
+endef
+KESTREL_AIR_POST_BUILD_HOOKS += KESTREL_AIR_BUILD_SUPERVISOR
 else
 KESTREL_AIR_DEPENDENCIES += hi3516cv610-sdk
 KESTREL_AIR_BACKEND = hisilicon
@@ -47,6 +53,8 @@ endef
 ifeq ($(BR2_PACKAGE_KESTREL_AIR_AR9311),y)
 define KESTREL_AIR_INSTALL_LAUNCHER
 	$(INSTALL) -D -m 0755 $(KESTREL_AIR_PKGDIR)/ar9311-run $(TARGET_DIR)/usr/bin/kestrel-air-run
+	$(INSTALL) -D -m 0755 $(@D)/kestrel-air-supervise $(TARGET_DIR)/usr/sbin/kestrel-air-supervise
+	$(INSTALL) -D -m 0755 $(KESTREL_AIR_PKGDIR)/S60kestrel-air $(TARGET_DIR)/etc/init.d/S60kestrel-air
 endef
 KESTREL_AIR_POST_INSTALL_TARGET_HOOKS += KESTREL_AIR_INSTALL_LAUNCHER
 endif
