@@ -27,7 +27,8 @@ case "${WB_MODE:-fixed}" in
     *) exit 2;;
 esac
 [ -r "$TUNING" ] || { echo "Missing camera tuning: $TUNING" >&2; exit 1; }
-mkdir /run/ar9311-camera.lock || { echo "Camera recorder already running" >&2; exit 1; }
+exec 9>/run/ar9311-camera.lock
+flock -n 9 || { echo "Camera recorder already running" >&2; exit 1; }
 encoder_pid=
 ae_pid=
 awb_pid=
@@ -39,7 +40,7 @@ cleanup()
     [ -z "$encoder_pid" ] || { kill "$encoder_pid" 2>/dev/null || :; wait "$encoder_pid" 2>/dev/null || :; }
     # Drivers own the idle scratch buffers between recordings. Keep the
     # camera pipeline initialized; unloading shared modules is not a recorder's job.
-    rmdir /run/ar9311-camera.lock
+    # The inherited flock is released when the last camera worker exits.
 }
 trap cleanup EXIT
 trap 'exit 130' INT

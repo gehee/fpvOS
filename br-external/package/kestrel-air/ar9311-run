@@ -13,19 +13,9 @@ fi
 . /etc/default/ar9311-camera
 : "${SENSOR_MODULE:?}" "${TUNING:?}" "${WB_RED:?}" "${WB_BLUE:?}" "${WB_STATS_ORDER:?}"
 [ -c /dev/arlink0 ] || { echo 'Start/provision the radio first' >&2; exit 1; }
-mkdir /run/ar9311-camera.lock || { echo 'Camera already in use' >&2; exit 1; }
-child=
-cleanup() {
-    trap - EXIT INT TERM
-    if [ -n "$child" ]; then
-        kill "$child" 2>/dev/null || :
-        wait "$child" 2>/dev/null || :
-    fi
-    rmdir /run/ar9311-camera.lock
-}
-trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
+exec 9>/run/ar9311-camera.lock
+flock -n 9 || { echo 'Camera already in use' >&2; exit 1; }
+# Workers inherit the lock; the supervisor reaps survivors after a crash.
 grep -q ' /sys/kernel/debug debugfs ' /proc/mounts || mount -t debugfs debugfs /sys/kernel/debug
 modprobe artosyn_gpio
 modprobe clk-ar9311-cgu
@@ -39,9 +29,4 @@ export KA_CAMERA_TUNING="$TUNING" KA_WB_RED="$WB_RED" KA_WB_BLUE="$WB_BLUE" KA_W
 mkdir -p "$STATE_DIR"
 export KA_CONFIG="$STATE_DIR/settings.json"
 export KA_PEER_CONFIG="$STATE_DIR/peer.json"
-/usrdata/fpv/air/kestrel-air "$@" &
-child=$!
-status=0
-wait "$child" || status=$?
-child=
-exit "$status"
+exec /usrdata/fpv/air/kestrel-air "$@"
