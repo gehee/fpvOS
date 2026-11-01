@@ -1,0 +1,92 @@
+#!/bin/sh
+# Reuse the stock usr_data filesystem; never format, resize or replace it.
+set -eu
+fail() { echo "Settings: $*; persistent settings unavailable" >&2; exit 1; }
+root=/persist
+state=/var/lib/kestrel-air
+mounted() { awk -v point="$1" '$2 == point { found=1 } END { exit !found }' /proc/mounts; }
+expected() {
+    awk -v device="/dev/$vol" -v point="$1" '
+        $1 == device && $2 == point && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { ok=1 }
+        END { exit !ok }
+    ' /proc/mounts
+}
+case "${1:-}" in
+start)
+    for module in spi-ar9301 spinand ubi ubifs; do
+        modprobe "$module" || fail "module $module unavailable"
+    done
+    mtd=
+    for p in /sys/class/mtd/mtd[0-9]*; do
+        [ -f "$p/name" ] || continue
+        [ "$(cat "$p/name")" = usr_data ] || continue
+        [ -z "$mtd" ] || fail 'ambiguous usr_data partitions'
+        [ "$(cat "$p/offset")" = 118489088 ] || fail 'unexpected usr_data offset'
+        [ "$(cat "$p/size")" = 6291456 ] || fail 'unexpected usr_data size'
+        [ "$(cat "$p/erasesize")" = 131072 ] || fail 'unexpected erase geometry'
+        [ "$(cat "$p/writesize")" = 2048 ] || fail 'unexpected page geometry'
+        flags=$(cat "$p/flags")
+        [ "$((flags & 1024))" != 0 ] || fail 'usr_data MTD is read-only'
+        mtd=${p##*/mtd}
+    done
+    [ -n "$mtd" ] || fail 'usr_data partition not found'
+    find_ubi() {
+        ubi=
+        for p in /sys/class/ubi/ubi[0-9]*; do
+            [ -f "$p/mtd_num" ] || continue
+            [ "$(cat "$p/mtd_num")" = "$mtd" ] || continue
+            [ -z "$ubi" ] || fail 'ambiguous UBI attachment'
+            [ "$(cat "$p/ro_mode")" = 0 ] || fail 'usr_data UBI is read-only'
+            ubi=${p##*/}
+        done
+    }
+    find_ubi
+    if [ -z "$ubi" ]; then
+        ubiattach -m "$mtd" /dev/ubi_ctrl || fail 'UBI attach failed (no format fallback)'
+        find_ubi
+    fi
+    [ -n "$ubi" ] || fail 'attached UBI not found'
+    vol=
+    for p in /sys/class/ubi/"${ubi}"_*; do
+        [ -f "$p/name" ] || continue
+        [ "$(cat "$p/name")" = usr_data ] || continue
+        [ -z "$vol" ] || fail 'ambiguous usr_data volumes'
+        vol=${p##*/}
+    done
+    [ -n "$vol" ] || fail 'usr_data volume not found'
+    [ ! -L "$root" ] && [ ! -L "$state" ] || fail 'mountpoint is a symlink'
+    if mounted "$root"; then
+        expected "$root" || fail 'unexpected existing data mount'
+    else
+        mkdir -p "$root"
+        mount -t ubifs -o rw,nodev,nosuid,noexec "/dev/$vol" "$root" || fail 'UBIFS mount failed'
+        expected "$root" || fail 'data mount is not writable UBIFS'
+    fi
+    for dir in "$root/fpvos" "$root/fpvos/kestrel-air"; do
+        [ ! -L "$dir" ] || fail 'settings directory is a symlink'
+        if [ -e "$dir" ]; then
+            [ -d "$dir" ] || fail 'settings path is not a directory'
+        else
+            mkdir -m 0700 "$dir" || fail 'cannot create settings directory'
+        fi
+    done
+    # Persist first-boot directory creation before publishing it to the app.
+    sync
+    if mounted "$state"; then
+        expected "$state" && [ "$root/fpvos/kestrel-air" -ef "$state" ] || fail 'unexpected existing settings mount'
+    else
+        mkdir -p "$state"
+        # Never hide a session's RAM settings as if they were saved to NAND.
+        [ -z "$(ls -A "$state")" ] || fail 'settings mountpoint is not empty'
+        mount --bind "$root/fpvos/kestrel-air" "$state" || fail 'settings bind failed'
+        expected "$state" && [ "$root/fpvos/kestrel-air" -ef "$state" ] || fail 'settings mount verification failed'
+    fi
+    echo 'Settings: persistent fpvOS directory mounted; vendor files preserved'
+    ;;
+stop)
+    sync
+    if mounted "$state"; then umount "$state" || fail 'settings in use; stop Kestrel first'; fi
+    if mounted "$root"; then umount "$root" || fail 'data volume in use'; fi
+    ;;
+*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

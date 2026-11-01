@@ -1,3 +1,3 @@
-# Attach existing read-only factory UBI; no formatting tools are required.
+# Attach existing factory and settings UBI volumes; no formatting tools are required.
 CONFIG_UBIATTACH=y
 CONFIG_UBIDETACH=y

@@ -217,9 +217,9 @@
 	mmc-pwrseq = <&p1_radio_pwrseq>;
 };
 
-/* P1 1.0.44 factory layout, verified against stock MTD and backup.
- * Expose only calibration storage during read-only NAND bring-up.
- * Boot firmware, rootfs banks and user data remain outside the MTD interface.
+/* P1 1.0.44 layout, verified against stock MTD and backup.
+ * Factory stays read-only; usr_data holds a separate fpvOS settings directory.
+ * Boot firmware and rootfs banks remain outside the MTD interface.
  */
 &qspi {
 	status = "okay";
@@ -235,6 +235,10 @@
 				label = "factory";
 				reg = <0x200000 0x600000>;
 				read-only;
+			};
+			partition@7100000 {
+				label = "usr_data";
+				reg = <0x7100000 0x600000>;
 			};
 		};
 	};

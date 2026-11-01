@@ -1,0 +1,3 @@
+# Refuse an ephemeral fallback when persistent settings are unavailable.
+STATE_DIR=/var/lib/kestrel-air
+REQUIRE_PERSISTENT_STATE=1
