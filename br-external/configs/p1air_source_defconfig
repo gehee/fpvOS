@@ -1,5 +1,6 @@
 # Experimental source-kernel profile. No flashable update is produced.
-# Retain stock factory calibration in place; never include factory in an update.
+# Preserve factory calibration and usr_data across updates.
+# Factory stays read-only; Kestrel settings use a directory in existing usr_data.
 BR2_aarch64=y
 BR2_cortex_a53=y
 BR2_FPVOS_SOC_AR9311=y

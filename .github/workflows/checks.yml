@@ -65,6 +65,9 @@ jobs:
         run: |
           sh -n br-external/board/p1-air/source-rootfs-overlay/etc/init.d/S43factory
           python3 br-external/board/p1-air/tests/test_factory.py -v
+          sh -n br-external/board/p1-air/source-rootfs-overlay/etc/init.d/S45settings
+          sh -n br-external/package/kestrel-air/ar9311-run
+          python3 br-external/board/p1-air/tests/test_settings.py -v
           sh -n br-external/board/p1-air/post-image.sh
           sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh
           python3 -m unittest discover -s br-external/package/p1-air-vendor/tests -v

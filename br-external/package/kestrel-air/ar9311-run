@@ -1,6 +1,15 @@
 #!/bin/sh
 # Explicit source-camera launcher; the OS owns module loading and board policy.
 set -eu
+STATE_DIR=/var/lib/kestrel-air
+REQUIRE_PERSISTENT_STATE=0
+[ ! -r /etc/default/kestrel-air ] || . /etc/default/kestrel-air
+if [ "$REQUIRE_PERSISTENT_STATE" = 1 ]; then
+    awk -v point="$STATE_DIR" '$2 == point && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { ok=1 } END { exit !ok }' /proc/mounts || {
+        echo 'Persistent settings unavailable; run S45settings before Kestrel' >&2
+        exit 1
+    }
+fi
 . /etc/default/ar9311-camera
 : "${SENSOR_MODULE:?}" "${TUNING:?}" "${WB_RED:?}" "${WB_BLUE:?}" "${WB_STATS_ORDER:?}"
 [ -c /dev/arlink0 ] || { echo 'Start/provision the radio first' >&2; exit 1; }
@@ -27,9 +36,9 @@ modprobe ar-isp gates=1 seed=0
 modprobe ar-cvisp assert_clk=1
 modprobe wave5
 export KA_CAMERA_TUNING="$TUNING" KA_WB_RED="$WB_RED" KA_WB_BLUE="$WB_BLUE" KA_WB_ORDER="$WB_STATS_ORDER"
-mkdir -p /var/lib/kestrel-air
-export KA_CONFIG=/var/lib/kestrel-air/settings.json
-export KA_PEER_CONFIG=/var/lib/kestrel-air/peer.json
+mkdir -p "$STATE_DIR"
+export KA_CONFIG="$STATE_DIR/settings.json"
+export KA_PEER_CONFIG="$STATE_DIR/peer.json"
 /usrdata/fpv/air/kestrel-air "$@" &
 child=$!
 status=0

@@ -187,8 +187,8 @@ receiver's four-byte `bb_mac_addr_0` array in
 The launcher shares the recorder's camera lock and supplies board tuning and
 initial white-balance settings. Kestrel currently uses automatic white balance.
 Kestrel runs explicitly; radio provisioning and loading run automatically.
-Settings in this RAM image disappear on power loss. A persistent P1
-installer and physical board-control validation remain separate work; this is not an installable replacement for
+Pairing and application settings persist in the existing `usr_data` volume.
+A persistent P1 firmware installer remains separate work; this is not an installable replacement for
 stock air firmware.
 
 ### Bind button and status LEDs
@@ -199,10 +199,13 @@ The source DT declares GPIO42 as an active-low, 20ms-debounced bind input.
 GPIO0/1 are LED-class outputs named `p1-air:status-0` and `p1-air:status-1`.
 Kestrel accesses these standard interfaces; it does not export board GPIOs.
 A press/release starts pairing; long holds do not start a firmware upgrade.
-Pairing persistence is limited by the RAM-only settings directory.
+Pairing is saved in the persistent fpvOS settings directory.
 
-Software-triggered pairing and LED register/state checks pass. Physical button
-presses and visible LED colors/polarity still require bench confirmation.
+Physical checks on P1 confirm output 0 is red and output 1 is green, with
+active-low control. Press/release successfully pairs and saves the receiver; red lights during pairing, green blinks when disconnected, and green is
+steady with red off during video. An 11.6-second continuous hold leaves Kestrel
+running and triggers pairing only on release, without an upgrade or reboot.
+These checks complement the software-triggered pairing and input-state tests.
 
 ### Factory partition preservation
 
@@ -236,16 +239,16 @@ Host tests (a C compiler and Jansson development headers are required):
 python3 br-external/package/ar9311-radio/tests/test_calibration.py -v
 ```
 
-Pairing and user preferences belong in separate writable persistent storage.
-Import existing pairing from stock user data when supported, and preserve it
-across updates without writing to factory storage. A verified pre-installation
-backup remains part of recovery preparation.
+Pairing and user preferences use the existing `usr_data` partition, separate
+from factory calibration. A verified pre-installation backup remains part of
+recovery preparation. Firmware updates must preserve both factory and user data.
 
 The source profile builds the shared Artosyn QSPI driver and mainline SPI-NAND,
-UBI and UBIFS as modules. Its device tree exposes only the existing 6 MiB factory
-partition at offset 2 MiB, marked read-only. The partitioned master device and
-command-line partition overrides are disabled. Bootloader, firmware banks and
-user data are not exposed through this profile's MTD interface.
+UBI and UBIFS as modules. Its device tree exposes the existing 6 MiB factory partition at offset 2 MiB,
+marked read-only, and the existing 6 MiB `usr_data` partition at `0x7100000`,
+writable. The partitioned master device and command-line partition overrides
+are disabled. Bootloader and firmware banks are not exposed through this
+profile's MTD interface.
 
 `S43factory` runs after USB/SSH startup. It checks the factory partition name,
 offset, size, erase/page geometry and write protection, attaches UBI in read-only
@@ -261,5 +264,44 @@ Host guard tests run with
 `python3 br-external/board/p1-air/tests/test_factory.py`.
 The hardware test compares every factory byte before/after attach and remount,
 checks calibration hashes against stock and verifies that writable opens of
-MTD and factory files are rejected. This is read-only storage support;
-installation and P1 NAND update writes remain unimplemented.
+MTD and factory files are rejected. The factory path remains read-only;
+firmware installation and P1 NAND update writes remain unimplemented.
+
+### Persistent application settings
+
+`S45settings` validates the stock `usr_data` partition geometry and discovers its
+existing UBI volume by name. It mounts UBIFS at `/persist`, creates only
+`/persist/fpvos/kestrel-air`, and bind-mounts that directory at
+`/var/lib/kestrel-air`. Vendor files under `lowdelay` are left intact. The existing
+filesystem is reused without formatting, resizing, repartitioning or changing
+its format. Failure leaves SSH available and Kestrel refuses to start without
+the writable settings mount; there is no silent fallback to RAM.
+
+Kestrel writes `settings.json` and `peer.json` there. Saves write a complete
+temporary file, sync it, rename it over the previous file and sync the directory.
+An interrupted save leaves the old or new complete file. An interrupted writer
+can leave a temporary file; Kestrel does not read it as settings. New files use
+mode 0600. The writers return an error when saving fails, including when durability
+cannot be confirmed after a rename; pairing logs report failed saves.
+
+```sh
+/etc/init.d/S45settings start
+kestrel-air-run
+```
+
+Stop Kestrel before `/etc/init.d/S45settings stop`. The shutdown entry unmounts
+the bind and underlying volume. Stock settings are not automatically imported;
+fpvOS owns its separate directory. Pair once under fpvOS to populate its peer
+file. Firmware still boots from RAM; settings persist across power cycles and
+stock boots. This does not implement the P1 firmware updater or failed-boot
+recovery.
+
+Host storage guards: `python3 br-external/board/p1-air/tests/test_settings.py -v`.
+Kestrel's `make test` includes injected save failures and a killed-writer test.
+
+Hardware validation saved a paired receiver and a changed preference using
+Kestrel's writers, then power-cycled without a global sync after the saves.
+Stock Linux mounted the same volume and both files matched byte-for-byte.
+A second fpvOS RAM boot loaded them automatically and resumed wireless video
+without re-pairing. The test preference was restored afterward; the pairing
+remains saved. Factory bytes and the vendor's user configuration were preserved.
