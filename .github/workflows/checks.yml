@@ -63,6 +63,8 @@ jobs:
 
       - name: P1 stock-runtime package checks
         run: |
+          sh -n br-external/board/p1-air/source-rootfs-overlay/etc/init.d/S43factory
+          python3 br-external/board/p1-air/tests/test_factory.py -v
           sh -n br-external/board/p1-air/post-image.sh
           sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh
           python3 -m unittest discover -s br-external/package/p1-air-vendor/tests -v
@@ -73,3 +75,10 @@ jobs:
           python3 br-external/package/ar9311-camera-control/tests/test_awb.py -v
           cc -Wall -Wextra -Werror br-external/package/ar9311-camera-control/awbd.c \
              br-external/package/ar9311-camera-control/awb.c -lm -o /tmp/ar9311-awbd
+
+      - name: Radio calibration provisioning tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libjansson-dev
+          python3 br-external/package/ar9311-radio/tests/test_calibration.py -v
+          python3 -m py_compile br-external/package/p1-air-radio-config/configure.py

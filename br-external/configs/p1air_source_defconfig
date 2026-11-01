@@ -1,4 +1,5 @@
 # Experimental source-kernel profile. No flashable update is produced.
+# Retain stock factory calibration in place; never include factory in an update.
 BR2_aarch64=y
 BR2_cortex_a53=y
 BR2_FPVOS_SOC_AR9311=y
@@ -12,7 +13,7 @@ BR2_TARGET_GENERIC_ISSUE="fpvOS P1 Air source-kernel bring-up (experimental)"
 BR2_INIT_BUSYBOX=y
 # BR2_TARGET_GENERIC_GETTY is not set
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/rootfs-overlay $(BR2_EXTERNAL_FPVOS_PATH)/board/p1-air/source-rootfs-overlay"
-BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/busybox.fragment"
+BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/busybox.fragment $(BR2_EXTERNAL_FPVOS_PATH)/board/p1-air/busybox.fragment"
 BR2_PACKAGE_DROPBEAR=y
 # BR2_PACKAGE_DROPBEAR_CLIENT is not set
 BR2_PACKAGE_DROPBEAR_DISABLE_REVERSEDNS=y
@@ -47,3 +48,4 @@ BR2_PACKAGE_OPEN8030_ROLE_AP=y
 BR2_PACKAGE_OPEN8030_FACTORY_OPTIONAL=y
 BR2_PACKAGE_OPEN8030_PINS_BEFORE_FACTORY=y
 BR2_PACKAGE_OPEN8030_EXPLICIT_IO_DOMAINS=y
+BR2_PACKAGE_P1_AIR_RADIO_CONFIG=y

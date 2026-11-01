@@ -1,0 +1,9 @@
+config BR2_PACKAGE_P1_AIR_RADIO_CONFIG
+	bool "P1 Air radio configuration"
+	depends on BR2_PACKAGE_AR9311_RADIO
+	select BR2_PACKAGE_P1_AIR_VENDOR
+	select BR2_PACKAGE_AR9311_RADIO_CALIBRATION
+	help
+	  Extract the pinned stock radio defaults and adapt them for Open8030
+	  AP operation. Factory power offsets are merged at runtime; no unit
+	  identity, pairing or factory calibration is included in the image.

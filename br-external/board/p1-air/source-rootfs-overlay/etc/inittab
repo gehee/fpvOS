@@ -9,10 +9,14 @@
 ::sysinit:/sbin/ip link set lo up
 ::sysinit:/etc/init.d/S40ar9311-usb start
 ::sysinit:/etc/init.d/S50dropbear start
+# Factory access is read-only; USB/SSH remain available if it fails.
+::sysinit:/etc/init.d/S43factory start
+::sysinit:/etc/init.d/S44ar9311-radio start
 ::sysinit:/bin/cat /etc/issue
 
 ttyS0::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
+::shutdown:/etc/init.d/S43factory stop
 ::shutdown:/etc/init.d/S50dropbear stop
 ::shutdown:/etc/init.d/S40ar9311-usb stop
 ::shutdown:/bin/umount -a -r

@@ -29,3 +29,4 @@ source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-update/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ascent-vrx-recovery/Config.in"
 
 source "$BR2_EXTERNAL_FPVOS_PATH/package/p1-air-camera-firmware/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/p1-air-radio-config/Config.in"

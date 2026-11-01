@@ -160,7 +160,7 @@ transport. It uses the same source camera drivers and DMA-BUF encoder path as
 the recorder, with Kestrel owning encoded frame packetization, bitrate control,
 receiver commands and AE/AWB lifecycle. No vendor media libraries are linked.
 The initial mode is complete-frame HEVC at 1920x1080 and 60 fps; slice output,
-other camera modes, FC UART and board buttons/LEDs are not implemented yet.
+other camera modes and FC UART are not implemented yet.
 
 Until the backend is published and the package revision is updated, use a local
 Kestrel checkout containing the AR9311 backend. After configuring the source
@@ -173,19 +173,93 @@ KESTREL_AIR_OVERRIDE_SRCDIR = /absolute/path/to/kestrel-air
 Build with `./build.sh p1-air-source`. After changing Kestrel source, run
 `make -C output/p1-air-source kestrel-air-rebuild all`.
 
-Before starting the radio, provision `/lib/firmware/p1-air-radio.json` with
-this unit's verified AP configuration and power calibration. The stock JSON
-can contain DEV defaults that its application replaces at runtime; copying it
-unchanged is insufficient. Keep per-unit files outside Git. Use matching,
-validated Open8030 builds on air and receiver, with native SDIO framing.
-Start the radio with `/etc/init.d/S44ar9311-radio start`, provide the paired
+The build extracts the pinned stock radio defaults and adapts them for
+Open8030 AP operation. At boot, `S43factory` mounts this unit's factory data
+read-only, then `S44ar9311-radio` validates and merges its power offsets into
+`/run/ar9311-radio/config.json`. The firmware loader uses that RAM file through
+`/lib/firmware/p1-air-radio.json`. No private radio JSON needs to be uploaded.
+Use matching, validated Open8030 builds on air and receiver, with native SDIO
+framing. After fixing a provisioning failure, retry
+`/etc/init.d/S44ar9311-radio start`. Provide the paired
 receiver's four-byte `bb_mac_addr_0` array in
 `/var/lib/kestrel-air/peer.json`, then run `kestrel-air-run`.
 
 The launcher shares the recorder's camera lock and supplies board tuning and
 initial white-balance settings. Kestrel currently uses automatic white balance.
-It runs explicitly, rather than starting an incompletely provisioned radio at
-boot. Settings in this RAM image disappear on power loss. A persistent P1
-installer, automatic factory calibration provisioning, and complete board
-controls remain separate work; this is not an installable replacement for
+Kestrel runs explicitly; radio provisioning and loading run automatically.
+Settings in this RAM image disappear on power loss. A persistent P1
+installer and physical board-control validation remain separate work; this is not an installable replacement for
 stock air firmware.
+
+### Bind button and status LEDs
+
+The source DT declares GPIO42 as an active-low, 20ms-debounced bind input.
+`gpio-keys-polled` supplies `KEY_WPS_BUTTON` through an input named
+`p1-air-bind`, using 20ms polling until GPIO interrupt support is available.
+GPIO0/1 are LED-class outputs named `p1-air:status-0` and `p1-air:status-1`.
+Kestrel accesses these standard interfaces; it does not export board GPIOs.
+A press/release starts pairing; long holds do not start a firmware upgrade.
+Pairing persistence is limited by the RAM-only settings directory.
+
+Software-triggered pairing and LED register/state checks pass. Physical button
+presses and visible LED colors/polarity still require bench confirmation.
+
+### Factory partition preservation
+
+Both P1 profiles preserve the unit's existing `factory` partition in place.
+It remains the authoritative source of factory calibration, including
+`/factory/ar8030_pwr.json`; calibration is not copied from another unit or
+bundled into a generic firmware image. The installer/updater must exclude
+this partition from erase, format, replacement and migration operations.
+Do not run the vendor startup fallback that formats an unavailable factory
+filesystem.
+
+The source profile accesses factory storage read-only. The shared optional
+`radio-calibrate` helper accepts only `baseband.basic.power.pwr_offset`: exactly
+four integers in Open8030's supported range of -6 through +6. The factory JSON
+must contain only that nested schema; unknown fields, duplicate keys, malformed
+JSON and oversized inputs are rejected. Board calibration tables, identity,
+channel policy and pairing cannot be overwritten by the factory file.
+
+The helper replaces the offsets in the extracted board configuration and
+atomically publishes a mode-0600 file in RAM. Startup requires the factory
+mount to be read-only and the firmware loader path to resolve to that generated
+file. Failure stops startup before loading SDIO, even if a previous runtime
+configuration exists. It never formats storage or substitutes generic offsets.
+A running radio is left alone; applying changed calibration requires a cold
+boot. VRX boards without host provisioning retain Open8030's radio-side factory
+reader; the helper and JSON library are selected only where needed.
+
+Host tests (a C compiler and Jansson development headers are required):
+
+```sh
+python3 br-external/package/ar9311-radio/tests/test_calibration.py -v
+```
+
+Pairing and user preferences belong in separate writable persistent storage.
+Import existing pairing from stock user data when supported, and preserve it
+across updates without writing to factory storage. A verified pre-installation
+backup remains part of recovery preparation.
+
+The source profile builds the shared Artosyn QSPI driver and mainline SPI-NAND,
+UBI and UBIFS as modules. Its device tree exposes only the existing 6 MiB factory
+partition at offset 2 MiB, marked read-only. The partitioned master device and
+command-line partition overrides are disabled. Bootloader, firmware banks and
+user data are not exposed through this profile's MTD interface.
+
+`S43factory` runs after USB/SSH startup. It checks the factory partition name,
+offset, size, erase/page geometry and write protection, attaches UBI in read-only
+mode, finds the volume named `factory`, and mounts `/factory` with
+`ro,nodev,nosuid,noexec`. It never formats, repairs or resizes storage. Failure
+leaves USB/SSH available and reports calibration unavailable. To retry:
+
+```sh
+/etc/init.d/S43factory start
+```
+
+Host guard tests run with
+`python3 br-external/board/p1-air/tests/test_factory.py`.
+The hardware test compares every factory byte before/after attach and remount,
+checks calibration hashes against stock and verifies that writable opens of
+MTD and factory files are rejected. This is read-only storage support;
+installation and P1 NAND update writes remain unimplemented.
