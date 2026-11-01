@@ -1,0 +1,3 @@
+# Supplied from this unit's backed-up stock configuration before radio start.
+firmware=open8030.img
+config=p1-air-radio.json

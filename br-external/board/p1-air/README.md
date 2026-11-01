@@ -153,6 +153,39 @@ under every illuminant. A scene dominated by a single colour may require
 fixed gains. Host estimator tests run with
 `python3 br-external/package/ar9311-camera-control/tests/test_awb.py`.
 
-Kestrel integration and source-kernel radio/video integration are separate
-outstanding work; this profile is not an installable replacement for the
+### Kestrel Air development
+
+The source profile selects Kestrel's AR9311 backend and native SDIO radio
+transport. It uses the same source camera drivers and DMA-BUF encoder path as
+the recorder, with Kestrel owning encoded frame packetization, bitrate control,
+receiver commands and AE/AWB lifecycle. No vendor media libraries are linked.
+The initial mode is complete-frame HEVC at 1920x1080 and 60 fps; slice output,
+other camera modes, FC UART and board buttons/LEDs are not implemented yet.
+
+Until the backend is published and the package revision is updated, use a local
+Kestrel checkout containing the AR9311 backend. After configuring the source
+profile, add this to the ignored `output/p1-air-source/local.mk`:
+
+```make
+KESTREL_AIR_OVERRIDE_SRCDIR = /absolute/path/to/kestrel-air
+```
+
+Build with `./build.sh p1-air-source`. After changing Kestrel source, run
+`make -C output/p1-air-source kestrel-air-rebuild all`.
+
+Before starting the radio, provision `/lib/firmware/p1-air-radio.json` with
+this unit's verified AP configuration and power calibration. The stock JSON
+can contain DEV defaults that its application replaces at runtime; copying it
+unchanged is insufficient. Keep per-unit files outside Git. Use matching,
+validated Open8030 builds on air and receiver, with native SDIO framing.
+Start the radio with `/etc/init.d/S44ar9311-radio start`, provide the paired
+receiver's four-byte `bb_mac_addr_0` array in
+`/var/lib/kestrel-air/peer.json`, then run `kestrel-air-run`.
+
+The launcher shares the recorder's camera lock and supplies board tuning and
+initial white-balance settings. Kestrel currently uses automatic white balance.
+It runs explicitly, rather than starting an incompletely provisioned radio at
+boot. Settings in this RAM image disappear on power loss. A persistent P1
+installer, automatic factory calibration provisioning, and complete board
+controls remain separate work; this is not an installable replacement for
 stock air firmware.

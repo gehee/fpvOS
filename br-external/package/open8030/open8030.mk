@@ -43,7 +43,11 @@ endif
 # SDIO retains upstream active-bus detection, matching the existing images.
 ifeq ($(BR2_PACKAGE_OPEN8030_ROLE_AP),y)
 OPEN8030_CFLAGS += -DAR_ROLE_AP
+ifeq ($(BR2_PACKAGE_KESTREL_AIR_AR9311),y)
+OPEN8030_DEST = /lib/firmware
+else
 OPEN8030_DEST = /usrdata/fpv/air/open8030
+endif
 else
 OPEN8030_DEST = /lib/firmware
 endif

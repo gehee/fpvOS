@@ -162,3 +162,30 @@
 	firmware-name = "artosyn/p1-chagall-lowmem.bin";
 	artosyn,enable-encoder;
 };
+
+/* Stock P1 start_ar813x.sh resets the radio on GPIO23. Its SDIO
+ * interface uses MMC0 without a GPIO-selectable voltage regulator.
+ */
+/ {
+	p1_radio_pwrseq: radio-pwrseq {
+		compatible = "artosyn,ar8030-pwrseq";
+		reset-gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+	};
+};
+&mmc_clocks {
+	status = "okay";
+	artosyn,clock-config = <0x87 2>, <0x80 0>;
+};
+&mmc0 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	broken-cd;
+	no-mmc;
+	no-sd;
+	no-1-8-v;
+	mmc-pwrseq = <&p1_radio_pwrseq>;
+};
