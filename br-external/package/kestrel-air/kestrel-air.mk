@@ -12,7 +12,14 @@ KESTREL_AIR_SITE_METHOD = git
 KESTREL_AIR_VERSION ?= abbd379abd8fd505248d3921e066465e5efc9cb2
 KESTREL_AIR_LICENSE = GPL-3.0 with an additional permission
 KESTREL_AIR_LICENSE_FILES = LICENSE LICENSE.exception
-KESTREL_AIR_DEPENDENCIES = hi3516cv610-sdk ar-libre
+KESTREL_AIR_DEPENDENCIES = ar-libre
+ifeq ($(BR2_PACKAGE_KESTREL_AIR_AR9311),y)
+KESTREL_AIR_DEPENDENCIES += ar9311-camera-control ar9311-capture
+KESTREL_AIR_BACKEND = ar9311
+else
+KESTREL_AIR_DEPENDENCIES += hi3516cv610-sdk
+KESTREL_AIR_BACKEND = hisilicon
+endif
 
 # The toolchain and ar_libre's client library (ar-libre stages it with its
 # headers); hi3516cv610-sdk puts the libraries kestrel-air runs with on the
@@ -21,6 +28,8 @@ KESTREL_AIR_DEPENDENCIES = hi3516cv610-sdk ar-libre
 # describe.
 KESTREL_AIR_MAKE_OPTS = \
 	CROSS_COMPILE=$(TARGET_CROSS) \
+	BACKEND=$(KESTREL_AIR_BACKEND) \
+	LDFLAGS="$(TARGET_LDFLAGS)" \
 	ARLIBRE=$(STAGING_DIR)/usr/share/ar-libre \
 	KA_VERSION=$(KESTREL_AIR_VERSION_TEXT)
 
@@ -34,5 +43,12 @@ define KESTREL_AIR_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/kestrel-air $(TARGET_DIR)/usrdata/fpv/air/kestrel-air
 	echo "$(KESTREL_AIR_VERSION_TEXT)" > $(TARGET_DIR)/usrdata/fpv/air/kestrel-air.version
 endef
+
+ifeq ($(BR2_PACKAGE_KESTREL_AIR_AR9311),y)
+define KESTREL_AIR_INSTALL_LAUNCHER
+	$(INSTALL) -D -m 0755 $(KESTREL_AIR_PKGDIR)/ar9311-run $(TARGET_DIR)/usr/bin/kestrel-air-run
+endef
+KESTREL_AIR_POST_INSTALL_TARGET_HOOKS += KESTREL_AIR_INSTALL_LAUNCHER
+endif
 
 $(eval $(generic-package))

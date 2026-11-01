@@ -1,17 +1,25 @@
 #!/bin/sh
 # Load firmware into the AR8030's RAM. The client starts/stops the radio.
 # Do not unbind/reload a running SDIO chip: recover with a cold boot.
+# Air profiles supply their own merged per-device configuration in RAM.
+firmware=open8030.img
+config=open8030.json
+[ ! -r /etc/default/ar9311-radio ] || . /etc/default/ar9311-radio
 case "$1" in
 	start)
+		[ -r "/lib/firmware/$firmware" ] && [ -r "/lib/firmware/$config" ] || {
+			echo "Radio: firmware/configuration not provisioned; leaving radio stopped" >&2
+			exit 1
+		}
 		modprobe artosyn_gpio || exit 1
 		modprobe gpio-regulator || exit 1
 		modprobe ar9311_radio_pwrseq || exit 1
 		modprobe dw_mci-artosyn || exit 1
-		modprobe arlink fw_name=open8030.img cfg_name=open8030.json || exit 1
+		modprobe arlink fw_name="$firmware" cfg_name="$config" || exit 1
 		i=0
 		while [ "$i" -lt 20 ]; do
 			if [ -c /dev/arlink0 ]; then
-				echo "Radio: /dev/arlink0 ready; use ar9311-radio to start reception"
+				echo "Radio: /dev/arlink0 ready; client may start the radio"
 				exit 0
 			fi
 			sleep 1

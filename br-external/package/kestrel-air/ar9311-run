@@ -1,0 +1,38 @@
+#!/bin/sh
+# Explicit source-camera launcher; the OS owns module loading and board policy.
+set -eu
+. /etc/default/ar9311-camera
+: "${SENSOR_MODULE:?}" "${TUNING:?}" "${WB_RED:?}" "${WB_BLUE:?}" "${WB_STATS_ORDER:?}"
+[ -c /dev/arlink0 ] || { echo 'Start/provision the radio first' >&2; exit 1; }
+mkdir /run/ar9311-camera.lock || { echo 'Camera already in use' >&2; exit 1; }
+child=
+cleanup() {
+    trap - EXIT INT TERM
+    if [ -n "$child" ]; then
+        kill "$child" 2>/dev/null || :
+        wait "$child" 2>/dev/null || :
+    fi
+    rmdir /run/ar9311-camera.lock
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+grep -q ' /sys/kernel/debug debugfs ' /proc/mounts || mount -t debugfs debugfs /sys/kernel/debug
+modprobe artosyn_gpio
+modprobe clk-ar9311-cgu
+modprobe "$SENSOR_MODULE"
+modprobe ar-csi2
+modprobe ar-vif
+modprobe ar-isp gates=1 seed=0
+modprobe ar-cvisp assert_clk=1
+modprobe wave5
+export KA_CAMERA_TUNING="$TUNING" KA_WB_RED="$WB_RED" KA_WB_BLUE="$WB_BLUE" KA_WB_ORDER="$WB_STATS_ORDER"
+mkdir -p /var/lib/kestrel-air
+export KA_CONFIG=/var/lib/kestrel-air/settings.json
+export KA_PEER_CONFIG=/var/lib/kestrel-air/peer.json
+/usrdata/fpv/air/kestrel-air "$@" &
+child=$!
+status=0
+wait "$child" || status=$?
+child=
+exit "$status"
