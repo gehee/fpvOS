@@ -60,3 +60,9 @@ jobs:
 
       - name: AR9311 firmware extraction tests
         run: python3 -m unittest discover -s br-external/package/ar9311-firmware/tests -v
+
+      - name: P1 stock-runtime package checks
+        run: |
+          sh -n br-external/board/p1-air/post-image.sh
+          sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh
+          python3 -m unittest discover -s br-external/package/p1-air-vendor/tests -v
