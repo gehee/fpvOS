@@ -1,3 +1,6 @@
-# Supplied from this unit's backed-up stock configuration before radio start.
+# Board defaults and authoritative per-unit offsets, merged before SDIO starts.
 firmware=open8030.img
 config=p1-air-radio.json
+calibration_base=/usr/share/radio/p1-air.json
+calibration_factory=/factory/ar8030_pwr.json
+calibration_mount=/factory

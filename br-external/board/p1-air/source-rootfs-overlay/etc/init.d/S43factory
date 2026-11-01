@@ -1,0 +1,64 @@
+#!/bin/sh
+# Attach and mount the original factory volume without permitting NAND writes.
+# No formatting, repair, resizing, or fallback calibration is performed here.
+set -eu
+fail() { echo "Factory: $*; calibration unavailable" >&2; exit 1; }
+case "${1:-}" in
+start)
+    modprobe spi-ar9301 || fail 'QSPI driver unavailable'
+    modprobe spinand || fail 'SPI NAND driver unavailable'
+    modprobe ubi || fail 'UBI driver unavailable'
+    modprobe ubifs || fail 'UBIFS driver unavailable'
+    mtd=
+    for p in /sys/class/mtd/mtd[0-9]*; do
+        [ -f "$p/name" ] || continue
+        [ "$(cat "$p/name")" = factory ] || continue
+        [ -z "$mtd" ] || fail 'ambiguous factory partitions'
+        [ "$(cat "$p/offset")" = 2097152 ] || fail 'unexpected factory offset'
+        [ "$(cat "$p/size")" = 6291456 ] || fail 'unexpected factory size'
+        [ "$(cat "$p/erasesize")" = 131072 ] || fail 'unexpected erase geometry'
+        [ "$(cat "$p/writesize")" = 2048 ] || fail 'unexpected page geometry'
+        flags=$(cat "$p/flags")
+        [ "$((flags & 1024))" = 0 ] || fail 'MTD is writable'
+        mtd=${p##*/mtd}
+    done
+    [ -n "$mtd" ] || fail 'factory partition not found'
+    find_ubi() {
+        ubi=
+        for p in /sys/class/ubi/ubi[0-9]*; do
+            [ -f "$p/mtd_num" ] || continue
+            [ "$(cat "$p/mtd_num")" = "$mtd" ] || continue
+            [ -z "$ubi" ] || fail 'ambiguous UBI attachment'
+            [ "$(cat "$p/ro_mode")" = 1 ] || fail 'UBI is writable'
+            ubi=${p##*/}
+        done
+    }
+    find_ubi
+    if [ -z "$ubi" ]; then
+        ubiattach -m "$mtd" /dev/ubi_ctrl || fail 'read-only UBI attach failed'
+        find_ubi
+    fi
+    [ -n "$ubi" ] || fail 'attached UBI not found'
+    vol=
+    for p in /sys/class/ubi/"${ubi}"_*; do
+        [ -f "$p/name" ] || continue
+        [ "$(cat "$p/name")" = factory ] || continue
+        [ -z "$vol" ] || fail 'ambiguous factory volume'
+        vol=${p##*/}
+    done
+    [ -n "$vol" ] || fail 'factory volume not found'
+    if awk '$2 == "/factory" { found=1 } END { exit !found }' /proc/mounts; then
+        awk -v device="/dev/$vol" '$1 == device && $2 == "/factory" && $3 == "ubifs" && $4 ~ /(^|,)ro(,|$)/ { ok=1 } END { exit !ok }' /proc/mounts || fail 'existing mount is not the expected read-only factory volume'
+        exit 0
+    fi
+    mkdir -p /factory
+    mount -t ubifs -o ro,nodev,nosuid,noexec "/dev/$vol" /factory || fail 'read-only mount failed'
+    echo 'Factory: original calibration mounted read-only'
+    ;;
+stop)
+    if awk '$2 == "/factory" { found=1 } END { exit !found }' /proc/mounts; then
+        umount /factory
+    fi
+    ;;
+*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

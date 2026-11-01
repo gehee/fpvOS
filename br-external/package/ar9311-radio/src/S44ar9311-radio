@@ -1,12 +1,40 @@
 #!/bin/sh
 # Load firmware into the AR8030's RAM. The client starts/stops the radio.
 # Do not unbind/reload a running SDIO chip: recover with a cold boot.
-# Air profiles supply their own merged per-device configuration in RAM.
+# Optional host factory provisioning is selected by board configuration.
 firmware=open8030.img
 config=open8030.json
+calibration_base=
+calibration_factory=
+calibration_mount=
 [ ! -r /etc/default/ar9311-radio ] || . /etc/default/ar9311-radio
 case "$1" in
 	start)
+		# A loaded chip must not be reconfigured/reloaded underneath a client.
+		if [ -d /sys/module/arlink ]; then
+			[ -c /dev/arlink0 ] && exit 0
+			echo "Radio: driver already loaded without a ready device; cold boot required" >&2
+			exit 1
+		fi
+		if [ -n "$calibration_base$calibration_factory$calibration_mount" ]; then
+			[ -n "$calibration_base" ] && [ -n "$calibration_factory" ] &&
+			[ -n "$calibration_mount" ] &&
+			awk -v point="$calibration_mount" '
+				$2 == point && $4 ~ /(^|,)ro(,|$)/ { found = 1 }
+				END { exit !found }
+			' /proc/mounts || {
+				echo "Radio: read-only factory calibration unavailable; leaving radio stopped" >&2
+				exit 1
+			}
+			mkdir -p /run/ar9311-radio || exit 1
+			/usr/libexec/radio-calibrate "$calibration_base" "$calibration_factory" \
+				/run/ar9311-radio/config.json || exit 1
+			# The image supplies this firmware-loader link into /run.
+			[ "$(readlink -f "/lib/firmware/$config")" = /run/ar9311-radio/config.json ] || {
+				echo "Radio: calibration output is not the selected loader configuration" >&2
+				exit 1
+			}
+		fi
 		[ -r "/lib/firmware/$firmware" ] && [ -r "/lib/firmware/$config" ] || {
 			echo "Radio: firmware/configuration not provisioned; leaving radio stopped" >&2
 			exit 1

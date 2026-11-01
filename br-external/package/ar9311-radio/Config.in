@@ -13,3 +13,12 @@ config BR2_PACKAGE_AR9311_RADIO
 	  config, SDIO transport and ground/station role. Device tree
 	  supplies the host wiring, power rails and reset GPIO.
 	  Firmware loads into radio RAM; no flash writes.
+
+config BR2_PACKAGE_AR9311_RADIO_CALIBRATION
+	bool "Host factory calibration provisioning"
+	depends on BR2_PACKAGE_AR9311_RADIO
+	select BR2_PACKAGE_JANSSON
+	help
+	  Validate factory power offsets and merge them into a board radio
+	  configuration before loading Open8030. The board supplies paths
+	  in /etc/default/ar9311-radio; generated configuration stays in RAM.
