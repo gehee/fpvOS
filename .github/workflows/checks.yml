@@ -66,3 +66,10 @@ jobs:
           sh -n br-external/board/p1-air/post-image.sh
           sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh
           python3 -m unittest discover -s br-external/package/p1-air-vendor/tests -v
+
+      - name: Source camera white-balance checks
+        run: |
+          sh -n br-external/package/ar9311-camera-control/ar9311-camera-record
+          python3 br-external/package/ar9311-camera-control/tests/test_awb.py -v
+          cc -Wall -Wextra -Werror br-external/package/ar9311-camera-control/awbd.c \
+             br-external/package/ar9311-camera-control/awb.c -lm -o /tmp/ar9311-awbd

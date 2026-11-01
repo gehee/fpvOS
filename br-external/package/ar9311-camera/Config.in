@@ -1,0 +1,10 @@
+config BR2_PACKAGE_AR9311_CAMERA
+	bool "AR9311 source camera bring-up"
+	depends on BR2_FPVOS_SOC_AR9311
+	depends on BR2_LINUX_KERNEL
+	help
+	  Build the SC231AI V4L2 sensor driver from source. Currently
+	  provides fixed 1080p60 RAW10 sensor control only. CSI/ISP
+	  capture and encoder integration are still in development.
+	  Requires PM, VIDEO_DEV, MEDIA_CONTROLLER and
+	  VIDEO_V4L2_SUBDEV_API.

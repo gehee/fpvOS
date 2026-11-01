@@ -1,0 +1,112 @@
+#!/bin/sh
+# Source camera bring-up and bounded HEVC recording. Board policy is external.
+set -eu
+
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
+    echo "Usage: ar9311-camera-record OUTPUT.h265|- [FRAMES=600]" >&2
+    exit 2
+fi
+output=$1
+frames=${2:-600}
+case "$frames" in ''|*[!0-9]*) exit 2;; esac
+[ "$frames" -ge 1 ] && [ "$frames" -le 36000 ] || exit 2
+. /etc/default/ar9311-camera
+: "${SENSOR_MODULE:?}" "${SENSOR_NAME:?}" "${TUNING:?}" "${WB_RED:?}" "${WB_BLUE:?}"
+for gain in "$WB_RED" "$WB_BLUE"; do
+    case "$gain" in ''|*[!0-9]*) exit 2;; esac
+    [ "$gain" -ge 64 ] && [ "$gain" -le 2048 ] || exit 2
+done
+case "${WB_MODE:-fixed}" in
+    fixed) ;;
+    auto)
+        case "${WB_STATS_ORDER:-}" in grbg|rggb|bggr|gbrg) ;; *) exit 2;; esac
+        for gain in "$WB_RED" "$WB_BLUE"; do
+            [ "$gain" -ge 128 ] && [ "$gain" -le 1024 ] || exit 2
+        done
+        ;;
+    *) exit 2;;
+esac
+[ -r "$TUNING" ] || { echo "Missing camera tuning: $TUNING" >&2; exit 1; }
+mkdir /run/ar9311-camera.lock || { echo "Camera recorder already running" >&2; exit 1; }
+encoder_pid=
+ae_pid=
+awb_pid=
+cleanup()
+{
+    trap - EXIT INT TERM
+    [ -z "$awb_pid" ] || { kill "$awb_pid" 2>/dev/null || :; wait "$awb_pid" 2>/dev/null || :; }
+    [ -z "$ae_pid" ] || { kill "$ae_pid" 2>/dev/null || :; wait "$ae_pid" 2>/dev/null || :; }
+    [ -z "$encoder_pid" ] || { kill "$encoder_pid" 2>/dev/null || :; wait "$encoder_pid" 2>/dev/null || :; }
+    # Drivers own the idle scratch buffers between recordings. Keep the
+    # camera pipeline initialized; unloading shared modules is not a recorder's job.
+    rmdir /run/ar9311-camera.lock
+}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+grep -q ' /sys/kernel/debug debugfs ' /proc/mounts || mount -t debugfs debugfs /sys/kernel/debug
+modprobe artosyn_gpio
+modprobe clk-ar9311-cgu
+modprobe "$SENSOR_MODULE"
+modprobe ar-csi2
+modprobe ar-vif
+modprobe ar-isp gates=1 seed=0
+modprobe ar-cvisp assert_clk=1
+modprobe wave5
+
+find_node()
+{
+    match=$1
+    found=
+    for path in /sys/class/video4linux/*; do
+        [ -r "$path/name" ] || continue
+        name=$(cat "$path/name")
+        case "$name" in
+            $match)
+                [ -z "$found" ] || { echo "Ambiguous camera node: $match" >&2; return 1; }
+                found=/dev/${path##*/}
+                ;;
+        esac
+    done
+    [ -n "$found" ] || { echo "Missing camera node: $match" >&2; return 1; }
+    printf '%s\n' "$found"
+}
+camera=$(find_node 'ar-cvisp')
+encoder=$(find_node 'C&M Wave5 VPU encoder')
+sensor=$(find_node "$SENSOR_NAME")
+ar9311-camera-test "$camera" "$encoder" "$frames" "$output" &
+encoder_pid=$!
+# Let initial frames drain before changing ISP tables. The ISP marks its
+# prefix configured before output-arm and CVISP setup have finished.
+i=0
+until [ "$(cat /sys/kernel/debug/ar-cvisp/completions 2>/dev/null || echo 0)" -ge 8 ]; do
+    if ! kill -0 "$encoder_pid" 2>/dev/null; then
+        status=0
+        wait "$encoder_pid" || status=$?
+        encoder_pid=
+        exit "$status"
+    fi
+    i=$((i + 1))
+    [ "$i" -lt 100 ] || { echo "Camera did not initialize" >&2; exit 1; }
+    sleep 0.02
+done
+echo "$((WB_RED * 65536 + WB_BLUE))" > /sys/kernel/debug/ar-isp/white_balance
+ar9311-aed --sensor-device "$sensor" --tuning "$TUNING" --stats 300 >&2 &
+ae_pid=$!
+if [ "${WB_MODE:-fixed}" = auto ]; then
+    ar9311-awbd "$WB_STATS_ORDER" "$WB_RED" "$WB_BLUE" >&2 &
+    awb_pid=$!
+fi
+status=0
+wait "$encoder_pid" || status=$?
+encoder_pid=
+if ! kill -0 "$ae_pid" 2>/dev/null; then
+    echo "Camera exposure controller stopped unexpectedly" >&2
+    status=1
+fi
+if [ -n "$awb_pid" ] && ! kill -0 "$awb_pid" 2>/dev/null; then
+    echo "Camera white-balance controller stopped unexpectedly" >&2
+    status=1
+fi
+exit "$status"

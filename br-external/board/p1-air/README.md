@@ -66,11 +66,93 @@ than silently ignored. The stock USB address remains `192.168.3.100`.
 ## Remaining integration
 
 Kestrel Air currently builds for ARM32/HiSilicon and directly calls its SDK.
-P1 needs an AArch64 Artosyn media backend and a compatible host radio backend.
-The stock 4.9 media libraries cannot be linked into the existing musl/HiSilicon
-build. No dummy Kestrel executable or HiSilicon backend is included here.
+The source-camera route needs an AArch64 V4L2 backend once P1 capture and
+encoding are validated. Reuse its ar_libre connection with the tested P1 SDIO
+settings. The stock-runtime bundle remains a radio/login reference, without
+a dummy Kestrel executable or a HiSilicon backend.
 
 Before persistent activation, verify the application/media interface, cold
 boot, USB recovery and a stock-return path. The P1 has no independent hardware
 UART in the current setup. Its paired partitions alone do not prove automatic
 rollback. Never install Ascent's bootloader or partition layout on this board.
+
+## Source camera development
+
+`./build.sh p1-air-source` is the separate, experimental source-kernel target.
+It builds Linux 6.18, a RAM root filesystem and the SC231AI module into
+`output/p1-air-source/`. The original `p1-air` target remains the stock-runtime
+reference. No P1 updater or flashable image is produced by the source target.
+
+The source DT uses P1's measured memory layout and SPL `ar-spin-table` CPU
+handoff. USB gadget code is shared with Ascent VRX; identity, addresses and
+MACs are board configuration. The source image provides root:root SSH at
+192.168.3.100. Development uses a tested RAM handoff from stock Linux; a cold
+power cycle returns to stock. This is not a bootloader recovery mechanism or
+a persistent installer. Do not flash it with the Ascent updater.
+
+### Camera pipeline
+
+The source target builds the SC231AI sensor driver, CSI receiver, VIF, ISP,
+CVISP capture and Wave5 encoder. The sensor uses standard I2C, GPIO, clock,
+runtime PM and V4L2 controls. Its mode is fixed 1920x1080 at 60 fps, RAW10,
+with grouped exposure and analogue/digital gain updates. Board timing, wiring
+and the tuning filename live in the P1 device tree.
+
+`p1-air-camera-firmware` extracts and verifies the SC231 tuning and P1's
+low-memory codec microcode from the pinned official firmware. These remain
+proprietary data inputs; vendor camera applications and media libraries are
+not used by the source pipeline.
+
+`ar9311-camera-control` builds automatic exposure from pinned source, adapts
+the 478-entry P1 exposure table to the SC231AI V4L2 controls, and drives the
+ISP's gain-dependent tuning. A source-built white-balance controller uses
+the ISP's raw channel statistics, rejects dark/clipped or strongly coloured
+zones, and gradually adjusts red/blue gains toward a robust neutral estimate.
+P1 selects its measured statistics channel order through board configuration;
+this order is distinct from the sensor's bus Bayer order.
+
+After booting the development image:
+
+```
+ar9311-camera-record /tmp/short.h265 120
+```
+
+For longer recordings, stream to the host rather than filling the small RAM
+filesystem. `ar9311-camera-record - 600` writes only HEVC data to stdout and
+status to stderr. The wrapper discovers video nodes by name, owns its encoder
+and exposure/white-balance processes, and prevents concurrent recordings. Driver-owned
+scratch buffers keep idle capture DMA away from released application buffers.
+Drivers stay initialized between recordings.
+
+The underlying `ar9311-camera-test` imports camera DMA-BUFs directly into the
+hardware encoder and returns each camera buffer only after encoder completion.
+No CPU pixel copies or vendor media libraries are required. The default is
+1080p60 HEVC, an 8 Mbit/s bitrate request and a 60-frame GOP. This is a camera
+validation tool, not a Kestrel Air backend or a wireless video transmitter.
+
+Cold-start capture, automatic exposure and hardware encoding produce
+1080p video at approximately 60 fps. Validation includes 6,000-frame recordings,
+recording interruption/restart, and complete camera-module unload/reload.
+Receiver hardware decoding matches the host decoder byte for byte.
+
+The VIF driver preserves its shared AXI enable/run state across restarts;
+clearing those bits can leave frame interrupts running while pixel output stops.
+The sensor and camera drivers still remain initialized between recordings.
+
+`WB_MODE=auto` in `/etc/default/ar9311-camera` enables automatic white balance.
+`WB_RED` and `WB_BLUE` are initial Q8 gains and anchor the neutral-selection
+window. If insufficient neutral regions are available, the controller holds
+its last valid gains. Set `WB_MODE=fixed` to use the configured gains directly.
+Automatic gain changes are bounded and rate limited; stale statistics cause
+the controller to fail and the recorder to report an error.
+
+Automatic exposure and white balance have been exercised on the P1 in the
+lit bench scene. This conservative neutral-selection algorithm is not the
+vendor's AWB implementation, and is not colour-chart calibration or validation
+under every illuminant. A scene dominated by a single colour may require
+fixed gains. Host estimator tests run with
+`python3 br-external/package/ar9311-camera-control/tests/test_awb.py`.
+
+Kestrel integration and source-kernel radio/video integration are separate
+outstanding work; this profile is not an installable replacement for the
+stock air firmware.

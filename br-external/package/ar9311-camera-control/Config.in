@@ -1,0 +1,11 @@
+config BR2_PACKAGE_AR9311_CAMERA_CONTROL
+	bool "AR9311 camera controls (SC231AI)"
+	depends on BR2_PACKAGE_AR9311_CAPTURE
+	depends on BR2_PACKAGE_AR9311_CAMERA
+	select BR2_PACKAGE_AR9311_MEDIA_TEST
+	help
+	  Build Missing-Lynk's AE controller with SC231AI V4L2
+	  controls. Uses the board-selected ISP tuning and the
+	  capture driver's statistics.
+	  Also provides a conservative neutral-selection white-balance
+	  controller, enabled by board policy.

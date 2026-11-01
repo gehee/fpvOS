@@ -1,0 +1,17 @@
+From: fpvOS developers
+Subject: [PATCH] ae: increase exposure when startup statistics are zero
+
+--- a/ml-aed/ml-aed-core.c
++++ b/ml-aed/ml-aed-core.c
+@@ -144,7 +144,10 @@
+         return 0;
+     }
+ 
+-    log_term = log10f(target / current_luma);
++    /* A cold sensor can report exactly zero. Avoid converting infinity
++     * to int, which can drive exposure to the minimum and keep it black.
++     */
++    log_term = log10f(target / fmaxf(current_luma, 0.125f));
+     step = (int)truncf(t->damping * t->log_ladder * log_term);
+     if (step == 0 && log_term != 0.0f) {
+         step = log_term > 0.0f ? 1 : -1;

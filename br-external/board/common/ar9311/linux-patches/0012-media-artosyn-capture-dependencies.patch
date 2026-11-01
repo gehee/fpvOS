@@ -1,0 +1,28 @@
+From: fpvOS developers
+Subject: [PATCH] media: declare framework dependencies for AR9311 capture modules
+
+The controller modules are packaged separately. Give their hidden V4L2
+buffer dependencies a selectable Kconfig entry rather than enabling an
+unrelated camera driver just to pull those dependencies into the kernel.
+
+--- a/drivers/media/platform/Kconfig
++++ b/drivers/media/platform/Kconfig
+@@ -1,4 +1,18 @@
+ # SPDX-License-Identifier: GPL-2.0-only
++
++config VIDEO_ARTOSYN_CAPTURE_SUPPORT
++	bool "Artosyn AR9311 external capture modules"
++	depends on VIDEO_DEV && MEDIA_CAMERA_SUPPORT && OF && I2C
++	depends on GPIOLIB && COMMON_CLK && PM
++	select MEDIA_CONTROLLER
++	select VIDEO_V4L2_SUBDEV_API
++	select V4L2_FWNODE
++	select V4L2_ASYNC
++	select VIDEOBUF2_V4L2
++	select VIDEOBUF2_DMA_CONTIG
++	help
++	  Framework support for the separately built AR9311 camera modules.
++
+ #
+ # Platform drivers
+ #	Most drivers here are currently for webcam support

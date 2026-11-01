@@ -1,7 +1,6 @@
 config BR2_PACKAGE_P1_AIR_VENDOR
 	bool "P1 Air stock runtime"
 	depends on BR2_aarch64
-	depends on BR2_HOSTARCH = "x86_64" # profile extraction uses Zephyr's compiler
 	help
 	  Extract the pinned BETAFPV P1 1.0.44 release for a stock-kernel
 	  air implementation. Keep vendor boot, kernel, DTB and media

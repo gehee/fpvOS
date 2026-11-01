@@ -107,6 +107,62 @@
 			status = "disabled";
 		};
 
+		camera_clocks: clock-controller@a100000 {
+			compatible = "artosyn,ar9311-cgu";
+			reg = <0 0x0a100000 0 0x20>,
+			      <0 0x0a104000 0 0x210>,
+			      <0 0x0a108000 0 0x420>;
+			clocks = <&clk24m>;
+			#clock-cells = <1>;
+			status = "disabled";
+		};
+
+		i2c0: i2c@1200000 {
+			compatible = "snps,designware-i2c";
+			reg = <0 0x01200000 0 0x2000>;
+			interrupts = <GIC_SPI 32 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		csi: mipi-csi@8880000 {
+			compatible = "artosyn,mipi";
+			reg = <0 0x08880000 0 0x10000>;
+			interrupts = <GIC_SPI 60 IRQ_TYPE_LEVEL_HIGH>,
+				     <GIC_SPI 61 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&camera_clocks 13>, <&camera_clocks 15>;
+			clock-names = "csi", "pcs";
+			status = "disabled";
+		};
+
+		vif: vif@8870000 {
+			compatible = "artosyn,vif";
+			reg = <0 0x08870000 0 0x10000>;
+			interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&camera_clocks 7>;
+			clock-names = "axi";
+			status = "disabled";
+		};
+
+		isp: isp@8c00000 {
+			compatible = "artosyn,isp";
+			reg = <0 0x08c00000 0 0x200000>;
+			interrupts = <GIC_SPI 71 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&camera_clocks 5>, <&camera_clocks 6>;
+			clock-names = "isp", "isp_hdr";
+			status = "disabled";
+		};
+
+		cvisp: cvisp@8e00000 {
+			compatible = "artosyn,cvisp";
+			reg = <0 0x08e00000 0 0x10000>;
+			clocks = <&camera_clocks 9>;
+			clock-names = "rsz";
+			status = "disabled";
+		};
+
 		i2c1: i2c@1202000 {
 			compatible = "snps,designware-i2c";
 			reg = <0 0x01202000 0 0x2000>;

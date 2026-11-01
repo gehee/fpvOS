@@ -1,0 +1,8 @@
+config BR2_PACKAGE_AR9311_CAPTURE
+	bool "AR9311 source capture and ISP drivers (experimental)"
+	depends on BR2_FPVOS_SOC_AR9311
+	depends on BR2_LINUX_KERNEL
+	help
+	  Build shared CSI2, VIF, ISP, CVISP and camera clock drivers.
+	  Requires a board media graph, DMA pools and sensor tuning.
+	  This is experimental; P1 image quality is not yet validated.

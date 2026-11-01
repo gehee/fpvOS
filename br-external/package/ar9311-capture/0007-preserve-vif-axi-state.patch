@@ -1,0 +1,42 @@
+From: fpvOS developers
+Subject: [PATCH] media: preserve the VIF AXI interface across input restarts
+
+--- a/overlay/drivers/media/artosyn/ar-vif.c
++++ b/overlay/drivers/media/artosyn/ar-vif.c
+@@ -541,8 +541,15 @@
+ static void ar_vif_global_init(struct ar_vif *vif)
+ {
+ 	for (unsigned int i = 0; i < ARRAY_SIZE(ar_vif_init_table); i++) {
+-		ar_vif_write(vif, ar_vif_init_table[i].offset,
+-			     ar_vif_init_table[i].value);
++		u32 value = ar_vif_init_table[i].value;
++
++		/* The AXI interface is shared with the ISP path. Once enabled,
++		 * retain its run state across input reconfiguration.
++		 */
++		if (ar_vif_init_table[i].offset == AR_VIF_AXI_CONFIG)
++			value |= ar_vif_read(vif, AR_VIF_AXI_CONFIG) &
++				 (AR_VIF_AXI_RUN | AR_VIF_AXI_ENABLE);
++		ar_vif_write(vif, ar_vif_init_table[i].offset, value);
+ 	}
+ 
+ 	/* Software reset pulse. */
+@@ -817,13 +824,11 @@
+ 	ar_vif_update(vif, AR_VIF_FE_EXTRA, BIT(15), 0);
+ 	ar_vif_update(vif, AR_VIF_ISPIF_ENABLE, AR_VIF_ISPIF_RUN, 0);
+ 
+-	/* Stop the AXI master and assert the block reset so no write is
+-	 * outstanding on the interconnect when the clock gates. An armed view
+-	 * whose DMA never completed otherwise leaves the master mid-transaction
+-	 * across the clock gate.
+-	 */
+-	ar_vif_update(vif, AR_VIF_AXI_CONFIG,
+-		      AR_VIF_AXI_RUN | AR_VIF_AXI_ENABLE, 0);
++	/* Reset the stopped input, but retain the shared AXI enable/run bits.
++	 * Clearing those bits wedges ISP pixel output on AR9311 even after
++	 * they are restored. The vendor disables input/views during teardown
++	 * and leaves this interface enabled.
++	 */
+ 	ar_vif_write(vif, AR_VIF_SOFT_RESET, 0);
+ 	ar_vif_update(vif, AR_VIF_SOFT_RESET, 0, BIT(0));
+ 	ar_vif_update(vif, AR_VIF_SOFT_RESET, BIT(0), 0);
