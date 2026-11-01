@@ -1,0 +1,151 @@
+From: fpvOS developers
+Subject: [PATCH] Add opt-in stock P1 SDIO framing and explicit I/O domains
+
+Keep the default transport unchanged. P1 stock artosyn_sdio adds a
+DD/length trailer at the end of each aligned block. Reject malformed
+trailers and test the boundary between single and multiple blocks.
+
+Upstream: not submitted
+
+--- a/src/sdio_device.c
++++ b/src/sdio_device.c
+@@ -280,6 +280,14 @@
+ 			*data = receive_buffer;
+ 			rx_borrowed = 1;
+ 			stats.rx_packets++;
++#ifdef AR_SDIO_P1_TRAILER
++			if (length < 4 || receive_buffer[length - 3] != 0xdd) {
++				stats.invalid_rx++; return 0;
++			}
++			size_t payload = receive_buffer[length - 2] | (size_t)receive_buffer[length - 1] << 8;
++			if (!payload || payload > length - 4) { stats.invalid_rx++; return 0; }
++			length = payload;
++#endif
+ 			return length;
+ 		}
+ 		stats.invalid_rx++;
+@@ -297,10 +305,22 @@
+ {
+ 	if (!ready || !length || length > AR_SDIO_BUFFER_SIZE) { return -1; }
+ 	if (tx_count == AR_SDIO_TX_DEPTH) { stats.tx_backpressure++; return -1; }
++	#ifdef AR_SDIO_P1_TRAILER
++	/* P1 Linux artosyn_sdio_send_cmd/recv uses a block-tail envelope:
++	 * 00 DD length_le16. DD carries native command frames, CC net data. */
++	if (length > AR_SDIO_BUFFER_SIZE - 4) { return -1; }
++	size_t transfer = (length + 4 + AR_SDIO_BLOCK - 1) & ~(AR_SDIO_BLOCK - 1);
++#else
+ 	size_t transfer = (length + AR_SDIO_BLOCK - 1) & ~(AR_SDIO_BLOCK - 1);
++#endif
+ 	unsigned tail = (tx_head + tx_count) % AR_SDIO_TX_DEPTH;
+ 	memcpy(transmit_buffers[tail], data, length);
+ 	memset(transmit_buffers[tail] + length, 0, transfer - length);
++	#ifdef AR_SDIO_P1_TRAILER
++	transmit_buffers[tail][transfer - 3] = 0xdd;
++	transmit_buffers[tail][transfer - 2] = length;
++	transmit_buffers[tail][transfer - 1] = length >> 8;
++#endif
+ 	transmit_lengths[tail] = transfer;
+ 	tx_count++;
+ 	if (tx_count > stats.tx_queue_high_water) { stats.tx_queue_high_water = tx_count; }
+--- a/src/rf_device.c
++++ b/src/rf_device.c
+@@ -1674,7 +1674,11 @@
+ 	update(CLOCK + 0x200, 0, 1u << 25); /* Measured GPIO clock ID 21. */
+ 	/* Stock 0x24be84(bank, 0) after muxing banks 2 and 3: GPIO+0 bits 1
+ 	 * and 2 (their I/O domain select). */
++	#ifdef AR_EXPLICIT_IO_DOMAINS
++	if (io_domains) { update(0x0a10a000, 6, io_domains); }
++#else
+ 	if (io_domains) { update(0x0a10a000, 0, io_domains); }
++#endif
+ 	else {
+ 		if (seen[2]) { update(0x0a10a000, 0, 2); }
+ 		if (seen[3]) { update(0x0a10a000, 0, 4); }
+--- /dev/null
++++ b/tests/p1_sdio_test.c
+@@ -0,0 +1,36 @@
++/* P1 driver contract: block-tail DD envelope, bounds and rejected data types. */
++#define main upstream_test_unused
++#include "sdio_device_test.c"
++#undef main
++#include "ar_transport_storage.h"
++int main(void) {
++ const uint8_t *out = NULL;
++ ar_sdio_init();
++ *reg(0x04200134)=0x800; *reg(0x04200168)=0xf0;
++ assert(!ar_sdio_receive(&out));
++ uint8_t *rx=ar_transport_dma.sdio.receive;
++ memset(rx,0,512);rx[0]=0xaa;rx[508]=0;rx[509]=0xdd;rx[510]=19;
++ *reg(0x04200130)=512;*reg(0x04200134)=1;
++ assert(ar_sdio_receive(&out)==19 && out[0]==0xaa);
++ uint8_t message[509]={0xaa};
++ assert(!ar_sdio_send(message,sizeof message));
++ assert(submissions==1 && submitted_lengths[0]==1024);
++ assert(submitted[0][1020]==0 && submitted[0][1021]==0xdd && submitted[0][1022]==0xfd && submitted[0][1023]==1);
++ assert(!memcmp(submitted[0],message,sizeof message));
++ for(unsigned i=509;i<1020;i++)assert(!submitted[0][i]);
++ *reg(0x04200134)=2;ar_sdio_receive(&out);
++ rx[509]=0xdd;rx[510]=0xff;rx[511]=0xff;
++ *reg(0x04200130)=512;*reg(0x04200134)=1;
++ assert(!ar_sdio_receive(&out));
++ ar_sdio_receive(&out);
++ rx[509]=0xcc;rx[510]=19;rx[511]=0;
++ *reg(0x04200134)=1;
++ assert(!ar_sdio_receive(&out));
++ ar_sdio_receive(&out);
++ rx[509]=0xdd;rx[510]=0;
++ *reg(0x04200134)=1;
++ assert(!ar_sdio_receive(&out));
++ assert(ar_sdio_statistics()->invalid_rx==3);
++ assert(ar_sdio_send(message,AR_SDIO_BUFFER_SIZE)==-1);
++ puts("P1 SDIO framing and bounds passed");
++}
+--- a/tests/native.py
++++ b/tests/native.py
+@@ -38,6 +38,7 @@
+     'socket_ap': ('socket_rx', ['AR_ROLE_AP'], []),
+     'socket_shutdown': ('socket_shutdown', [], []),
+     'sdio_device': ('sdio_device transport_storage', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
++    'p1_sdio': ('sdio_device transport_storage', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1', 'AR_SDIO_P1_TRAILER'], []),
+     'usb_device': ('usb_device transport_storage', ['AR_USB_SIMULATED'], []),
+     'mac': ('mac', [], []),
+     'dev': ('dev mac', [], []),
+@@ -79,6 +80,7 @@
+     'sfdp': ('sfdp', [], []),
+     'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
+     'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
++    'rf_io_domains': ('rf_device ap ap_hop pwr_auto dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED', 'AR_EXPLICIT_IO_DOMAINS'], []),
+     'rf_device': ('rf_device ap ap_hop pwr_auto dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED'], []),
+     'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
+ }
+--- a/tests/rf_device_test.c
++++ b/tests/rf_device_test.c
+@@ -132,7 +132,7 @@
+ 	assert((address >= 0x0a110000 && address < 0x0a111000) ||
+ 	       (address >= 0x0a104000 && address < 0x0a104204) ||
+ 	       address == 0x0a1060c8 ||
+-	       (address >= 0x0a10a02c && address < 0x0a10a034) || address == 0x0a090140 ||
++	       (address >= 0x0a10a02c && address < 0x0a10a034) || address == 0x0a090140 || address == 0x0a10a000 ||
+ 	       (address >= 0x00140000 && address < 0x00140300) ||
+ 	       address == 0xe0800008 || (address >= 0xe0801120 && address < 0xe0801180));
+ 	*reg(address) = value; writes++;
+@@ -641,7 +641,15 @@
+ 
+ 	uint8_t pins[40] = {0};
+ 	for (unsigned i = 0; i < 10; i++) { pins[i * 4] = i / 5; pins[i * 4 + 1] = i % 5; pins[i * 4 + 2] = 3; }
++	*reg(0x0a10a000) = 0xa5a50006;
++	ar_rf_set_io_domains(2);
+ 	assert(ar_rf_setup_pins(pins, sizeof pins) == 0);
++#ifdef AR_EXPLICIT_IO_DOMAINS
++	assert(*reg(0x0a10a000) == 0xa5a50002);
++#else
++	assert(*reg(0x0a10a000) == 0xa5a50006);
++#endif
++	ar_rf_set_io_domains(0);
+ 	uint64_t pll;
+ 	assert(ar_rf_pll_word(5770000, &pll) == 0 && pll == UINT64_C(0x0120800000));
+ 	assert(ar_rf_pll_word(5839000, &pll) == 0 && pll == UINT64_C(0x0123f33333));
+--- /dev/null
++++ b/tests/rf_io_domains_test.c
+@@ -0,0 +1 @@
++#include "rf_device_test.c"
