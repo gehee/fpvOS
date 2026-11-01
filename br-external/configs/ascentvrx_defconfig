@@ -13,7 +13,7 @@ BR2_INIT_BUSYBOX=y
 # The board's inittab opens a local shell on ttyS0, preserving the baud rate
 # set by the kernel (console=ttyS0,1152000).
 # BR2_TARGET_GENERIC_GETTY is not set
-BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx/rootfs-overlay"
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/rootfs-overlay $(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx/rootfs-overlay"
 BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx/post-image.sh"
 BR2_PACKAGE_HOST_LZ4=y
 BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/busybox.fragment"

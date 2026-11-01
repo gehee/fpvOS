@@ -1,0 +1,14 @@
+# Experimental P1 RAM boot. Camera modules are started explicitly.
+CONFIG_USB_DWC2_PERIPHERAL=y
+# Sensor clock/reset sequencing uses runtime PM; system sleep stays disabled.
+CONFIG_PM=y
+CONFIG_MEDIA_CAMERA_SUPPORT=y
+CONFIG_MEDIA_CONTROLLER=y
+CONFIG_VIDEO_V4L2_SUBDEV_API=y
+CONFIG_V4L2_FWNODE=m
+# No flash interface or inferred P1 partition/update policy in this image.
+# CONFIG_MTD is not set
+# CONFIG_SPI_ARTOSYN_QSPI is not set
+CONFIG_VIDEO_WAVE_VPU=m
+# CONFIG_DRM is not set
+CONFIG_VIDEO_ARTOSYN_CAPTURE_SUPPORT=y

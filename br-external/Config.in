@@ -12,6 +12,9 @@ source "$BR2_EXTERNAL_FPVOS_PATH/package/air-busybox/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar-libre/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-mmc/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-media-test/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-camera/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-capture/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-camera-control/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-firmware/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-radio/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/open8030/Config.in"
@@ -24,3 +27,5 @@ config BR2_PACKAGE_HOST_LZ4
 	  The package recipe is provided by Buildroot.
 source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-update/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ascent-vrx-recovery/Config.in"
+
+source "$BR2_EXTERNAL_FPVOS_PATH/package/p1-air-camera-firmware/Config.in"

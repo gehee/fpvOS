@@ -1,0 +1,96 @@
+From: fpvOS developers
+Subject: [PATCH] media: never replay vendor DMA addresses into the ISP
+
+--- a/overlay/drivers/media/artosyn/ar-isp-priv.h
++++ b/overlay/drivers/media/artosyn/ar-isp-priv.h
+@@ -161,11 +161,41 @@
+ 	dma_addr_t de3d_dma[3];
+ };
+ 
++/* Translate every replayed DMA descriptor before it reaches hardware.
++ * The reference application's addresses are not owned by this driver, even
++ * briefly during initialization. Tables are filled before the replay starts.
++ */
++static inline void ar_isp_replay_write(struct ar_isp *isp, u16 off, u32 val)
++{
++	switch (off) {
++	case 0x0020: val = lower_32_bits(isp->tone_dma + 0xa00); break;
++	case 0x0030: case 0x0040: case 0x0050:
++		val = lower_32_bits(isp->gamma_dma); break;
++	case 0x0060: val = lower_32_bits(isp->drc_dma); break;
++	case 0x1c6c: val = lower_32_bits(isp->tone_dma); break;
++	case 0x1e38: val = lower_32_bits(isp->hdr_lsc_dma); break;
++	case 0x2808: val = lower_32_bits(isp->ltm_page_dma); break;
++	case 0x280c: val = lower_32_bits(isp->ltm_stats_dma); break;
++	case 0x2e3c: case 0x2e58:
++		val = lower_32_bits(isp->de3d_dma[0]); break;
++	case 0x2e44: case 0x2e60:
++		val = lower_32_bits(isp->de3d_dma[1]); break;
++	case 0x2e80: case 0x2e88:
++		val = lower_32_bits(isp->de3d_dma[2]); break;
++	case 0x4c34: val = lower_32_bits(isp->lsc_dma); break;
++	case 0x600c: val = lower_32_bits(isp->hist_dma); break;
++	case 0x6440: case 0x6474:
++		val = lower_32_bits(isp->rro_dma); break;
++	case 0x6508: val = lower_32_bits(isp->rro_face_dma); break;
++	}
++	writel(val, isp->base + off);
++}
++
+ static inline void ar_isp_apply(struct ar_isp *isp, const struct ar_isp_reg *tbl,
+ 				size_t n)
+ {
+ 	for (size_t i = 0; i < n; i++)
+-		writel(tbl[i].val, isp->base + tbl[i].off);
++		ar_isp_replay_write(isp, tbl[i].off, tbl[i].val);
+ }
+ 
+ /*
+--- a/overlay/drivers/media/artosyn/ar-isp-main.c
++++ b/overlay/drivers/media/artosyn/ar-isp-main.c
+@@ -104,8 +104,8 @@
+ {
+ 	for (unsigned int i = 0; i < ARRAY_SIZE(ar_isp_vendor_trim); i++)
+ 		if (!ar_isp_is_hw_owned(ar_isp_vendor_trim[i].off))
+-			writel(ar_isp_vendor_trim[i].val,
+-			       isp->base + ar_isp_vendor_trim[i].off);
++			ar_isp_replay_write(isp, ar_isp_vendor_trim[i].off,
++					    ar_isp_vendor_trim[i].val);
+ }
+ 
+ /* The measured correction pass. Off disables it, for an A/B of its effect. */
+@@ -411,6 +411,8 @@
+  */
+ static void ar_isp_configure(struct ar_isp *isp)
+ {
++	/* Populate owned pages before any replayed descriptor can fetch them. */
++	ar_isp_tables_apply(isp);
+ 	ar_isp_apply(isp, ar_isp_kept, ARRAY_SIZE(ar_isp_kept));
+ 	ar_isp_apply(isp, ar_isp_setup_1080p60,
+ 		     ARRAY_SIZE(ar_isp_setup_1080p60));
+@@ -640,6 +642,8 @@
+ 	if (n > ARRAY_SIZE(ar_isp_setup_1080p60))
+ 		n = ARRAY_SIZE(ar_isp_setup_1080p60);
+ 
++	/* Populate owned pages before any replayed descriptor can fetch them. */
++	ar_isp_tables_apply(isp);
+ 	ar_isp_apply(isp, ar_isp_kept, ARRAY_SIZE(ar_isp_kept));
+ 	ar_isp_apply(isp, ar_isp_setup_1080p60, n);
+ 
+@@ -1293,6 +1297,16 @@
+ 	WRITE_ONCE(ar_isp_instance, isp);
+ 
+ 	ar_isp_tables_prepare(isp);
++	if (!isp->tuning || !isp->gamma || !isp->drc || !isp->tone ||
++	    !isp->lsc || !isp->hdr_lsc || !isp->rro || !isp->rro_face ||
++	    !isp->hist || !isp->ltm_page || !isp->ltm_stats ||
++	    !isp->de3d[0] || !isp->de3d[1] || !isp->de3d[2]) {
++		WRITE_ONCE(ar_isp_instance, NULL);
++		ar_isp_tables_release(isp);
++		clk_bulk_disable_unprepare(ARRAY_SIZE(isp->clks), isp->clks);
++		return dev_err_probe(dev, -EINVAL,
++				     "complete ISP buffers and tuning are required\n");
++	}
+ 
+ 	isp->debugfs = debugfs_create_dir("ar-isp", NULL);
+ 	debugfs_create_file_unsafe("white_balance", 0600, isp->debugfs, isp,

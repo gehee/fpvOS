@@ -9,7 +9,7 @@ P1_AIR_VENDOR_SOURCE = P1_SKY_v1.0.44_20260122_09de6e7.img
 P1_AIR_VENDOR_SITE = https://drive.usercontent.google.com
 P1_AIR_VENDOR_LICENSE = PROPRIETARY
 P1_AIR_VENDOR_REDISTRIBUTE = NO
-P1_AIR_VENDOR_DEPENDENCIES = host-python3 host-lzo host-squashfs host-riscv64-zephyr-elf-toolchain
+P1_AIR_VENDOR_DEPENDENCIES = host-python3 host-lzo host-squashfs
 P1_AIR_VENDOR_INSTALL_TARGET = NO
 P1_AIR_VENDOR_INSTALL_IMAGES = YES
 P1_AIR_VENDOR_ADD_TOOLCHAIN_DEPENDENCY = NO
@@ -36,12 +36,21 @@ define P1_AIR_VENDOR_BUILD_CMDS
 		--image $(@D)/stock.img --output $(@D)/stock \
 		--liblzo $(HOST_DIR)/lib/liblzo2.so \
 		--unsquashfs $(HOST_DIR)/bin/unsquashfs
+
+endef
+
+ifeq ($(BR2_PACKAGE_OPEN8030_PROFILE_P1_STOCK),y)
+P1_AIR_VENDOR_DEPENDENCIES += host-riscv64-zephyr-elf-toolchain
+
+define P1_AIR_VENDOR_GENERATE_RADIO_PROFILE
 	$(HOST_DIR)/bin/unsquashfs -cat $(@D)/stock/root.squashfs \
 		usr/usrdata/ar813x/bb_demo_air_d.img > $(@D)/stock/radio.img
 	$(HOST_DIR)/bin/python3 $(P1_AIR_VENDOR_PKGDIR)/generate-radio-profile.py \
 		--radio $(@D)/stock/radio.img --output $(@D)/stock/p1-air.c \
 		--tool-prefix $(HOST_RISCV64_ZEPHYR_ELF_TOOLCHAIN_INSTALL_DIR)/bin/riscv64-zephyr-elf-
 endef
+P1_AIR_VENDOR_POST_BUILD_HOOKS += P1_AIR_VENDOR_GENERATE_RADIO_PROFILE
+endif
 
 define P1_AIR_VENDOR_INSTALL_IMAGES_CMDS
 	mkdir -p $(BINARIES_DIR)/p1-air-stock

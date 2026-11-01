@@ -1,0 +1,256 @@
+From: fpvOS developers
+Subject: [PATCH] media: add P1 RAW10 input and board tuning
+
+Sensor format, ISP input mode and source capture integration.
+
+--- a/overlay/drivers/clk/clk-ar9311-cgu.c
++++ b/overlay/drivers/clk/clk-ar9311-cgu.c
+@@ -52,6 +52,7 @@
+ 
+ #include <linux/clk.h>
+ #include <linux/clk-provider.h>
++#include <linux/module.h>
+ #include <linux/debugfs.h>
+ #include <linux/delay.h>
+ #include <linux/io.h>
+@@ -1333,4 +1334,6 @@
+ 		.of_match_table = ar9311_cgu_of_match,
+ 	},
+ };
+-builtin_platform_driver(ar9311_cgu_driver);
++module_platform_driver(ar9311_cgu_driver);
++MODULE_DEVICE_TABLE(of, ar9311_cgu_of_match);
++MODULE_LICENSE("GPL");
+--- a/overlay/drivers/media/artosyn/ar-csi2.c
++++ b/overlay/drivers/media/artosyn/ar-csi2.c
+@@ -341,13 +341,34 @@
+  * selects too low a range, which shows up as unrecoverable header ECC errors
+  * rather than a dead link.
+  */
++static int ar_csi2_input_type(struct ar_csi2 *csi2)
++{
++ struct v4l2_subdev_format fmt = {
++  .which = V4L2_SUBDEV_FORMAT_ACTIVE,
++  .pad = csi2->sensor_source_pad,
++ };
++ int ret = v4l2_subdev_call_state_active(csi2->sensor, pad, get_fmt, &fmt);
++ if (ret) return ret;
++ switch (fmt.format.code) {
++ case MEDIA_BUS_FMT_SBGGR10_1X10: case MEDIA_BUS_FMT_SGBRG10_1X10:
++ case MEDIA_BUS_FMT_SGRBG10_1X10: case MEDIA_BUS_FMT_SRGGB10_1X10:
++  return MIPI_CSI2_DT_RAW10;
++ case MEDIA_BUS_FMT_SBGGR12_1X12: case MEDIA_BUS_FMT_SGBRG12_1X12:
++ case MEDIA_BUS_FMT_SGRBG12_1X12: case MEDIA_BUS_FMT_SRGGB12_1X12:
++  return MIPI_CSI2_DT_RAW12;
++ default: return -EINVAL;
++ }
++}
++
+ static int ar_csi2_phy_lane_rate_mbps(struct ar_csi2 *csi2)
+ {
+ 	if (!csi2->sensor)
+ 		return -ENODEV;
+ 
++	int type = ar_csi2_input_type(csi2);
++	if (type < 0) return type;
+ 	s64 link_freq = v4l2_get_link_freq(&csi2->sensor->entity.pads[csi2->sensor_source_pad],
+-					   AR_CSI_BITS_PER_PIXEL,
++					   type == MIPI_CSI2_DT_RAW10 ? 10 : 12,
+ 					   csi2->num_data_lanes);
+ 	if (link_freq < 0)
+ 		return link_freq;
+@@ -557,9 +578,12 @@
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_VCID, 0);
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_DATA_TYPE, data_type);
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_MEM_FLUSH, DW_CSI2_IPI_MEM_AUTO_FLUSH);
+-	ar_csi2_write(csi2->core, DW_CSI2_IPI_HSA_TIME, AR_CSI_IPI_HSA_TIME);
+-	ar_csi2_write(csi2->core, DW_CSI2_IPI_HBP_TIME, AR_CSI_IPI_HBP_TIME);
+-	ar_csi2_write(csi2->core, DW_CSI2_IPI_HSD_TIME, AR_CSI_IPI_HSD_TIME);
++	ar_csi2_write(csi2->core, DW_CSI2_IPI_HSA_TIME,
++		      data_type == MIPI_CSI2_DT_RAW10 ? 16 : AR_CSI_IPI_HSA_TIME);
++	ar_csi2_write(csi2->core, DW_CSI2_IPI_HBP_TIME,
++		      data_type == MIPI_CSI2_DT_RAW10 ? 16 : AR_CSI_IPI_HBP_TIME);
++	ar_csi2_write(csi2->core, DW_CSI2_IPI_HSD_TIME,
++		      data_type == MIPI_CSI2_DT_RAW10 ? 33 : AR_CSI_IPI_HSD_TIME);
+ 
+ 	/* Route the IPI output. Both mux registers read zero on a running
+ 	 * vendor link with this single-instance configuration.
+@@ -638,15 +662,15 @@
+ 		return 0;
+ 	}
+ 
++	int type = ar_csi2_input_type(csi2);
++	if (type < 0) return type;
+ 	int ret = ar_csi2_clks_enable(csi2);
+ 
+ 	if (ret)
+ 		return ret;
+ 
+-	/* RAW12 is the only format the sensor emits, so the data type is
+-	 * fixed; a multi-format sensor would derive it from the pad format.
+-	 */
+-	ar_csi2_configure(csi2, MIPI_CSI2_DT_RAW12);
++	/* Match the active sensor format, including SC231AI RAW10. */
++	ar_csi2_configure(csi2, type);
+ 
+ 	ret = v4l2_subdev_call(csi2->sensor, video, s_stream, 1);
+ 	if (ret) {
+--- a/overlay/drivers/media/artosyn/ar-vif.c
++++ b/overlay/drivers/media/artosyn/ar-vif.c
+@@ -636,6 +636,9 @@
+ /* Program the front end and view 0 for the current format. */
+ static void ar_vif_configure(struct ar_vif *vif)
+ {
++	u32 datatype = vif->format.pixelformat == V4L2_PIX_FMT_SBGGR10 ?
++		MIPI_CSI2_DT_RAW10 : MIPI_CSI2_DT_RAW12;
++	u32 padding = datatype == MIPI_CSI2_DT_RAW10 ? 0 : 4;
+ 	u32 width = vif->format.width;
+ 	u32 height = vif->format.height;
+ 	u32 units = vif->format.bytesperline / AR_VIF_STRIDE_UNIT;
+@@ -649,18 +652,19 @@
+ 	/* Front end: input format, geometry and blanking. */
+ 	ar_vif_write(vif, AR_VIF_FE_CONTROL, AR_VIF_FE_CONTROL_VALUE);
+ 	ar_vif_write(vif, AR_VIF_FE_TIMING, AR_VIF_FE_TIMING_VALUE);
+-	ar_vif_write(vif, AR_VIF_FE_FORMAT, AR_VIF_FE_FORMAT_VALUE);
+-	ar_vif_write(vif, AR_VIF_FE_DATATYPE0, MIPI_CSI2_DT_RAW12);
+-	ar_vif_write(vif, AR_VIF_FE_DATATYPE1, MIPI_CSI2_DT_RAW12);
++	ar_vif_write(vif, AR_VIF_FE_FORMAT,
++		     (AR_VIF_FE_FORMAT_VALUE & ~0xffU) | datatype);
++	ar_vif_write(vif, AR_VIF_FE_DATATYPE0, datatype);
++	ar_vif_write(vif, AR_VIF_FE_DATATYPE1, datatype);
+ 
+ 	/* The margin register carries the same geometry plus four pixels and
+ 	 * four lines, matching the vendor's configuration.
+ 	 */
+ 	ar_vif_write(vif, AR_VIF_FE_GEOMETRY_MARGIN,
+-		     ((width + 4) << 16) | (height + 4));
++		     ((width + padding) << 16) | (height + padding));
+ 	ar_vif_write(vif, AR_VIF_FE_GEOMETRY, (width << 16) | height);
+ 
+-	ar_vif_write(vif, AR_VIF_FE_HBLANK, AR_VIF_FE_HBLANK_VALUE);
++	ar_vif_write(vif, AR_VIF_FE_HBLANK, DIV_ROUND_UP(width + padding, 3));
+ 	ar_vif_write(vif, AR_VIF_FE_VBLANK, AR_VIF_FE_VBLANK_VALUE);
+ 	ar_vif_write(vif, AR_VIF_FE_LIMIT, AR_VIF_FE_LIMIT_VALUE);
+ 	ar_vif_write(vif, AR_VIF_FE_EXTRA, AR_VIF_FE_EXTRA_VALUE);
+@@ -1221,6 +1225,20 @@
+ }
+ EXPORT_SYMBOL_GPL(ar_vif_input_stop);
+ 
++int ar_vif_get_input_format(struct v4l2_mbus_framefmt *fmt)
++{
++ struct ar_vif *vif = ar_vif_instance;
++ struct v4l2_subdev_format source = { .which = V4L2_SUBDEV_FORMAT_ACTIVE };
++ int ret;
++ if (!vif || !vif->source) return -ENODEV;
++ source.pad = vif->source_pad;
++ ret = v4l2_subdev_call_state_active(vif->source, pad, get_fmt, &source);
++ if (!ret) *fmt = source.format;
++ return ret;
++}
++EXPORT_SYMBOL_GPL(ar_vif_get_input_format);
++
++
+ static void ar_vif_sync_format(struct ar_vif *vif)
+ {
+ 	struct v4l2_subdev_format source_format = {
+@@ -1239,6 +1257,8 @@
+ 	if (!source_format.format.width || !source_format.format.height)
+ 		return;
+ 
++	vif->format.pixelformat = source_format.format.code == MEDIA_BUS_FMT_SBGGR10_1X10 ?
++		V4L2_PIX_FMT_SBGGR10 : V4L2_PIX_FMT_SRGGB12;
+ 	vif->format.width = source_format.format.width;
+ 	vif->format.height = source_format.format.height;
+ 	vif->format.bytesperline = vif->format.width * AR_VIF_BYTES_PER_PIXEL;
+--- a/overlay/drivers/media/artosyn/ar-cvisp.c
++++ b/overlay/drivers/media/artosyn/ar-cvisp.c
+@@ -495,11 +495,14 @@
+ 	if (!blc)
+ 		return;
+ 
+-	int ret = request_firmware(&fw, AR_CVISP_TUNING_FIRMWARE, cv->dev);
++	const char *name;
++	if (of_property_read_string(cv->dev->of_node, "artosyn,tuning-firmware", &name))
++		name = AR_CVISP_TUNING_FIRMWARE;
++	int ret = request_firmware(&fw, name, cv->dev);
+ 
+ 	if (ret) {
+ 		dev_info(cv->dev, "blc: no %s (%d), leaving the replayed constants\n",
+-			 AR_CVISP_TUNING_FIRMWARE, ret);
++			 name, ret);
+ 		return;
+ 	}
+ 
+--- a/overlay/drivers/media/artosyn/ar-camera-hook.h
++++ b/overlay/drivers/media/artosyn/ar-camera-hook.h
+@@ -40,6 +40,8 @@
+  * -ENODEV if the VIF has not probed or its sensor never bound, -EBUSY if the
+  * input path is already running, -ETIMEDOUT if no frame event arrives.
+  */
++struct v4l2_mbus_framefmt;
++int ar_vif_get_input_format(struct v4l2_mbus_framefmt *fmt);
+ int ar_vif_input_start(void);
+ void ar_vif_input_stop(void);
+ 
+--- a/overlay/drivers/media/artosyn/ar-isp-main.c
++++ b/overlay/drivers/media/artosyn/ar-isp-main.c
+@@ -44,6 +44,8 @@
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/slab.h>
++#include <media/v4l2-subdev.h>
++#include <linux/iopoll.h>
+ 
+ #include "vendor-tables/ar-isp-defaults.h"
+ #include "vendor-tables/ar-isp-gates.h"
+@@ -753,12 +755,50 @@
+ int ar_isp_pipeline_start(void)
+ {
+ 	struct ar_isp *isp = READ_ONCE(ar_isp_instance);
++	struct v4l2_mbus_framefmt fmt;
++	int ret;
+ 
+ 	if (!isp)
+ 		return -ENODEV;
+ 
++	ret = ar_vif_get_input_format(&fmt);
++	if (ret) return ret;
++	if (fmt.code != MEDIA_BUS_FMT_SBGGR10_1X10 &&
++	    fmt.code != MEDIA_BUS_FMT_SRGGB12_1X12) return -EINVAL;
++	if (!isp->tuning || !isp->gamma || !isp->drc || !isp->lsc ||
++	    !isp->tone || !isp->rro || !isp->rro_face || !isp->hist ||
++	    !isp->ltm_page || !isp->ltm_stats || !isp->de3d[0] ||
++	    !isp->de3d[1] || !isp->de3d[2]) return -ENOMEM;
+ 	ar_isp_configure_prefix(isp, setup_entries);
+ 	ar_isp_arm_output(isp);
++	if (fmt.code == MEDIA_BUS_FMT_SBGGR10_1X10) {
++		u32 val = readl(isp->base + AR_ISP_INPUT_SIZE);
++		/* P1 RAW10 mode: 2 in bits 27:26, with no padded border. */
++		val = (val & 0xf0000000U) | BIT(27) |
++		      (fmt.height << 13) | fmt.width;
++		writel(val, isp->base + AR_ISP_INPUT_SIZE);
++		/* The reference output-arm table clears the P1 BLC enable. */
++		val = readl(isp->base + AR_ISP_CONTROL);
++		if (ar_isp_get_le32(isp->tuning->data + 0x24))
++			val |= BIT(2);
++		else
++			val &= ~BIT(2);
++		writel(val, isp->base + AR_ISP_CONTROL);
++		/* CFA order follows the active sensor, not the reference sensor. */
++		writel((fmt.width << 15) | (fmt.height << 2) | 2,
++		       isp->base + 0x082c);
++		val = readl(isp->base + 0x0858);
++		writel((val & ~3U) | 2, isp->base + 0x0858);
++		/* Both DRC table lengths are required on a cold ISP. */
++		writel(0x100, isp->base + 0x0064);
++		writel(0x100, isp->base + 0x0068);
++		writel(0x1001e, isp->base + AR_ISP_TABLE_COMMIT);
++		ret = readl_poll_timeout(isp->base + AR_ISP_TABLE_COMMIT,
++					val, !(val & 0x1e), 10, 100000);
++		if (ret)
++			return ret;
++	}
++
+ 
+ 	return 0;
+ }

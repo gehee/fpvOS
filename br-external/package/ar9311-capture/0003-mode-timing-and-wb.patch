@@ -1,0 +1,114 @@
+From: fpvOS developers
+Subject: [PATCH] media: select CSI timing through DT and expose bounded WB gains
+
+IPI timing belongs to the selected sensor mode, not every RAW10 input.
+Restrict formats to the layouts implemented by the downstream ISP.
+
+--- a/overlay/drivers/media/artosyn/ar-csi2.c
++++ b/overlay/drivers/media/artosyn/ar-csi2.c
+@@ -217,6 +217,7 @@
+ 	struct clk *pcs_clk;
+ 
+ 	u8 num_data_lanes;
++	u32 ipi_timing[3];
+ 
+ 	/* The sensor, bound asynchronously through the port 0 endpoint. */
+ 	struct v4l2_async_notifier notifier;
+@@ -350,11 +351,9 @@
+  int ret = v4l2_subdev_call_state_active(csi2->sensor, pad, get_fmt, &fmt);
+  if (ret) return ret;
+  switch (fmt.format.code) {
+- case MEDIA_BUS_FMT_SBGGR10_1X10: case MEDIA_BUS_FMT_SGBRG10_1X10:
+- case MEDIA_BUS_FMT_SGRBG10_1X10: case MEDIA_BUS_FMT_SRGGB10_1X10:
++ case MEDIA_BUS_FMT_SBGGR10_1X10:
+   return MIPI_CSI2_DT_RAW10;
+- case MEDIA_BUS_FMT_SBGGR12_1X12: case MEDIA_BUS_FMT_SGBRG12_1X12:
+- case MEDIA_BUS_FMT_SGRBG12_1X12: case MEDIA_BUS_FMT_SRGGB12_1X12:
++ case MEDIA_BUS_FMT_SRGGB12_1X12:
+   return MIPI_CSI2_DT_RAW12;
+  default: return -EINVAL;
+  }
+@@ -579,11 +578,11 @@
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_DATA_TYPE, data_type);
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_MEM_FLUSH, DW_CSI2_IPI_MEM_AUTO_FLUSH);
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_HSA_TIME,
+-		      data_type == MIPI_CSI2_DT_RAW10 ? 16 : AR_CSI_IPI_HSA_TIME);
++		      csi2->ipi_timing[0]);
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_HBP_TIME,
+-		      data_type == MIPI_CSI2_DT_RAW10 ? 16 : AR_CSI_IPI_HBP_TIME);
++		      csi2->ipi_timing[1]);
+ 	ar_csi2_write(csi2->core, DW_CSI2_IPI_HSD_TIME,
+-		      data_type == MIPI_CSI2_DT_RAW10 ? 33 : AR_CSI_IPI_HSD_TIME);
++		      csi2->ipi_timing[2]);
+ 
+ 	/* Route the IPI output. Both mux registers read zero on a running
+ 	 * vendor link with this single-instance configuration.
+@@ -887,6 +886,17 @@
+ 		return -ENOMEM;
+ 
+ 	csi2->dev = dev;
++	csi2->ipi_timing[0] = AR_CSI_IPI_HSA_TIME;
++	csi2->ipi_timing[1] = AR_CSI_IPI_HBP_TIME;
++	csi2->ipi_timing[2] = AR_CSI_IPI_HSD_TIME;
++	if (of_find_property(dev->of_node, "artosyn,ipi-timing", NULL)) {
++		if (of_property_read_u32_array(dev->of_node, "artosyn,ipi-timing",
++					      csi2->ipi_timing, 3))
++			return -EINVAL;
++		for (unsigned int i = 0; i < 3; i++)
++			if (!csi2->ipi_timing[i] || csi2->ipi_timing[i] > 0xfff)
++				return -EINVAL;
++	}
+ 
+ 	csi2->base = devm_platform_ioremap_resource(pdev, 0);
+ 	if (IS_ERR(csi2->base))
+--- a/overlay/drivers/media/artosyn/ar-isp-main.c
++++ b/overlay/drivers/media/artosyn/ar-isp-main.c
+@@ -1222,6 +1222,39 @@
+ }
+ DEFINE_SHOW_ATTRIBUTE(ar_isp_ltm_tail);
+ 
++/* Q8 red and blue gains packed in the high and low 16-bit halves.
++ * Keep this diagnostic interface bounded; arbitrary MMIO is not exposed.
++ * Green stays at unity. The caller must initialize the pipeline first.
++ */
++static int ar_isp_white_balance_set(void *data, u64 val)
++{
++	struct ar_isp *isp = data;
++	u32 red = val >> 16, blue = val & 0xffff;
++
++	if (val >> 32 || red < 64 || red > 2048 || blue < 64 || blue > 2048)
++		return -ERANGE;
++	if (!isp->configured)
++		return -EPIPE;
++	writel(red, isp->base + 0x5004);
++	writel(256, isp->base + 0x5008);
++	writel(blue, isp->base + 0x500c);
++	writel(2, isp->base + 0x5034);
++	return 0;
++}
++
++static int ar_isp_white_balance_get(void *data, u64 *val)
++{
++	struct ar_isp *isp = data;
++
++	if (!isp->configured)
++		return -EPIPE;
++	*val = ((u64)readl(isp->base + 0x5004) << 16) |
++		readl(isp->base + 0x500c);
++	return 0;
++}
++DEFINE_DEBUGFS_ATTRIBUTE(ar_isp_white_balance_fops, ar_isp_white_balance_get,
++			 ar_isp_white_balance_set, "%llu\n");
++
+ static int ar_isp_probe(struct platform_device *pdev)
+ {
+ 	struct device *dev = &pdev->dev;
+@@ -1263,6 +1296,8 @@
+ 	ar_isp_tables_prepare(isp);
+ 
+ 	isp->debugfs = debugfs_create_dir("ar-isp", NULL);
++	debugfs_create_file_unsafe("white_balance", 0600, isp->debugfs, isp,
++				   &ar_isp_white_balance_fops);
+ 	debugfs_create_file_unsafe("configure", 0600, isp->debugfs, isp,
+ 				   &ar_isp_configure_fops);
+ 	debugfs_create_file("regs", 0400, isp->debugfs, isp, &ar_isp_regs_fops);
