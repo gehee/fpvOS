@@ -15,6 +15,10 @@ FPVOS_UPDATE_INSTALL_IMAGES = YES
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX),y)
 FPVOS_UPDATE_BOARD = ascent-vrx
 endif
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_AIR),y)
+FPVOS_UPDATE_BOARD = p1-air
+FPVOS_UPDATE_DEPENDENCIES += host-dtc
+endif
 
 define FPVOS_UPDATE_BUILD_CMDS
 	python3 $(@D)/generate-profile.py $(@D)/backends/$(FPVOS_UPDATE_BOARD)/profile.json $(@D)/profile.c
@@ -24,12 +28,12 @@ define FPVOS_UPDATE_BUILD_CMDS
 		-Dmain=fpvos_verify_main -c $(@D)/src/verify.c -o $(@D)/verify.o
 	$(FPVOS_UPDATE_BUILD_BACKEND_CMDS)
 	python3 $(FPVOS_UPDATE_SITE)/embed-bootstrap.py $(TARGET_DIR)/bin/busybox \
-		$(FPVOS_UPDATE_SITE)/backends/$(FPVOS_UPDATE_BOARD) $(@D)/bootstrap-resources.c
+		$(@D)/backends/$(FPVOS_UPDATE_BOARD) $(@D)/bootstrap-resources.c
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror -I$(@D)/src \
-		$(@D)/src/main.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.c $(@D)/bootstrap-resources.c \
+		$(@D)/src/main.c $(@D)/src/bootstrap-common.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.c $(@D)/bootstrap-resources.c \
 		$(@D)/receiver.o $(@D)/verify.o $(@D)/nand.o \
 		$(@D)/profile.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/images.c \
-		$(TARGET_LDFLAGS) -static -o $(@D)/fpvos-update
+		$(FPVOS_UPDATE_BACKEND_LINK) $(TARGET_LDFLAGS) -static -o $(@D)/fpvos-update
 	$(TARGET_STRIP) --remove-section=.comment --remove-section=.note $(@D)/fpvos-update
 endef
 
@@ -56,4 +60,8 @@ $(eval $(generic-package))
 # package name from the last parsed makefile's directory.
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX),y)
 include $(FPVOS_UPDATE_SITE)/backends/ascent-vrx/backend.mk
+endif
+
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_AIR),y)
+include $(FPVOS_UPDATE_SITE)/backends/p1-air/backend.mk
 endif

@@ -1,9 +1,10 @@
-# Experimental source-kernel profile. No flashable update is produced.
+# Source kernel boots directly from NAND with an independent recovery root.
 # Preserve factory calibration and usr_data across updates.
 # Factory stays read-only; Kestrel settings use a directory in existing usr_data.
 BR2_aarch64=y
 BR2_cortex_a53=y
 BR2_FPVOS_SOC_AR9311=y
+BR2_FPVOS_BOARD_P1_AIR=y
 BR2_DOWNLOAD_FORCE_CHECK_HASHES=y
 BR2_TOOLCHAIN_BUILDROOT_MUSL=y
 BR2_STATIC_LIBS=y
@@ -50,3 +51,11 @@ BR2_PACKAGE_OPEN8030_FACTORY_OPTIONAL=y
 BR2_PACKAGE_OPEN8030_PINS_BEFORE_FACTORY=y
 BR2_PACKAGE_OPEN8030_EXPLICIT_IO_DOMAINS=y
 BR2_PACKAGE_P1_AIR_RADIO_CONFIG=y
+
+BR2_PACKAGE_FPVOS_UPDATE=y
+BR2_PACKAGE_FPVOS_UPDATE_P1_AIR=y
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/p1-air/source-post-image.sh"
+
+BR2_PACKAGE_FPVOS_RECOVERY=y
+BR2_PACKAGE_HOST_UBOOT_TOOLS=y
+BR2_PACKAGE_HOST_LZ4=y

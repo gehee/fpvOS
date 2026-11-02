@@ -26,7 +26,7 @@ config BR2_PACKAGE_HOST_LZ4
 	  Build the host LZ4 tool for the AR9311 post-image wrapper.
 	  The package recipe is provided by Buildroot.
 source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-update/Config.in"
-source "$BR2_EXTERNAL_FPVOS_PATH/package/ascent-vrx-recovery/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/fpvos-recovery/Config.in"
 
 source "$BR2_EXTERNAL_FPVOS_PATH/package/p1-air-camera-firmware/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/p1-air-radio-config/Config.in"

@@ -182,6 +182,30 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         self.assertTrue(self.client.verify(path, install=True)['installed'])
         self.assertEqual((self.dir / 'calls').read_text(), 'clean\ninstall\n')
 
+    def test_stock_return_is_acknowledged_before_reboot(self):
+        self.client.ack(3, b'stock'.ljust(32, b'\0'))
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if (self.dir / 'calls').read_text() == 'stock\nreboot\n':
+                break
+            time.sleep(.02)
+        self.assertEqual((self.dir / 'calls').read_text(), 'stock\nreboot\n')
+
+    def test_stock_return_rejects_malformed_active_and_unsupported_requests(self):
+        with self.assertRaises(ValueError):
+            self.client.ack(3, b'stock\0' + b'x' * 26)
+        self.assertFalse((self.dir / 'calls').exists())
+        self.start(b'pending upload')
+        with self.assertRaises(ValueError):
+            self.client.ack(3, b'stock'.ljust(32, b'\0'))
+        self.assertNotIn('stock', (self.dir / 'calls').read_text())
+
+    def test_backend_refusing_stock_return_does_not_reboot(self):
+        (self.dir / 'helper').write_text('#!/bin/sh\nexit 2\n')
+        with self.assertRaises(ValueError):
+            self.client.ack(3, b'stock'.ljust(32, b'\0'))
+        self.assertNotEqual(self.client.info()['detail'], '')
+
     def test_clean_boot_runs_readiness_once(self):
         args = self.process.args
         self.process.terminate(); self.process.wait(timeout=3)

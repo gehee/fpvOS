@@ -29,4 +29,6 @@ export KA_CAMERA_TUNING="$TUNING" KA_WB_RED="$WB_RED" KA_WB_BLUE="$WB_BLUE" KA_W
 mkdir -p "$STATE_DIR"
 export KA_CONFIG="$STATE_DIR/settings.json"
 export KA_PEER_CONFIG="$STATE_DIR/peer.json"
+export KA_READY_FILE=/run/kestrel-air/ready
+rm -f "$KA_READY_FILE"
 exec /usrdata/fpv/air/kestrel-air "$@"

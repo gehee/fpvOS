@@ -29,7 +29,7 @@ def compile_unified(destination):
     busybox = destination/'busybox.fixture'; busybox.write_bytes(BootstrapArtifact.elf())
     bootstrap.build(busybox, BACKEND, destination/'resources.c')
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC), str(SRC/'main.c'),
-                    str(BACKEND/'bootstrap.c'), str(destination/'resources.c'),
+                    str(BACKEND/'bootstrap.c'), str(SRC/'bootstrap-common.c'), str(destination/'resources.c'),
                     *[str(destination/(n+'.o')) for n in ('receiver', 'verify', 'nand')],
                     str(destination/'profile.c'), str(BACKEND/'images.c'), '-o', str(destination/'fpvos-update')], check=True)
     # Existing protocol/image tests now run through the multicall entry points.
@@ -78,7 +78,7 @@ class BootstrapArtifact(unittest.TestCase):
             self.assertEqual(first.read_bytes(), second.read_bytes())
             driver = root/'extract.c'
             driver.write_text('int fpvos_stock_runtime_valid(void){return 0;}\nint fpvos_bootstrap_extract(const char *);\nint main(int argc,char **argv){return argc != 2 || fpvos_bootstrap_extract(argv[1]);}\n')
-            subprocess.run(['cc','-Wall','-Wextra','-Werror','-O2','-I'+str(SRC),str(driver),str(BACKEND/'bootstrap.c'),str(first),'-o',str(root/'extract')],check=True)
+            subprocess.run(['cc','-Wall','-Wextra','-Werror','-O2','-I'+str(SRC),str(driver),str(BACKEND/'bootstrap.c'), str(SRC/'bootstrap-common.c'),str(first),'-o',str(root/'extract')],check=True)
             output = root/'ram'; output.mkdir(mode=0o700)
             subprocess.run([str(root/'extract'),str(output)],check=True)
             self.assertEqual((output/'root/bin/busybox').read_bytes(), self.elf())
@@ -129,6 +129,7 @@ class RuntimePreflight(unittest.TestCase):
         (dest/'ofpart_ar9311.h').write_text(header)
         (dest/'fpvos_ar9311_layout.h').write_bytes((BACKEND/'layout.h').read_bytes())
         (dest/'fpvos-bytes.h').write_bytes((SRC/'fpvos-bytes.h').read_bytes())
+        (dest/'ar9311-gpt.h').write_bytes((SRC/'ar9311-gpt.h').read_bytes())
         cls.kernel = dest/'kernel-partitions'
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(dest),
                         str(Path(__file__).with_name('kernel_partition_sim.c')), '-o', str(cls.kernel)], check=True)

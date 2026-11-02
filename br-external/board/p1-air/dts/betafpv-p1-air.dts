@@ -7,6 +7,21 @@
 	model = "BETAFPV P1 Air (AR9311) source bring-up";
 	compatible = "betafpv,p1-air", "artosyn,proxima-9311";
 
+	/* The SPL reads and clears this scratch word on watchdog reset.
+	 * Normal reboot selects direct boot; reboot bootloader requests USB.
+	 */
+	reboot-scratch@a106138 {
+		compatible = "syscon", "simple-mfd";
+		reg = <0 0x0a106138 0 4>;
+		reboot-mode {
+			compatible = "syscon-reboot-mode";
+			offset = <0>;
+			/* reboot-mode ignores zero; clear request bit 0, retain mode bit 1. */
+			mode-normal = <2>;
+			mode-bootloader = <3>;
+		};
+	};
+
 	leds {
 		compatible = "gpio-leds";
 		led-0 {
@@ -219,22 +234,47 @@
 
 /* P1 1.0.44 layout, verified against stock MTD and backup.
  * Factory stays read-only; usr_data holds a separate fpvOS settings directory.
- * Boot firmware and rootfs banks remain outside the MTD interface.
+ * Bank 0 holds fpvOS kernel, DTB and rootfs. GPT selects the complete bank
+ * only after readback verification. Stock bank 1 contents are never written.
  */
+&qspi_clock { status = "okay"; };
+
 &qspi {
 	status = "okay";
+	clocks = <&qspi_clock>;
 	flash@0 {
 		compatible = "spi-nand";
 		reg = <0>;
-		spi-max-frequency = <150000000>;
+		spi-max-frequency = <25000000>;
 		partitions {
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
 			#size-cells = <1>;
+			partition@100000 {
+				label = "boot-state";
+				reg = <0x100000 0x80000>;
+			};
 			partition@200000 {
 				label = "factory";
 				reg = <0x200000 0x600000>;
 				read-only;
+			};
+			partition@a40000 {
+				label = "kernel0";
+				reg = <0xa40000 0x600000>;
+			};
+			partition@1640000 {
+				label = "dtb0";
+				reg = <0x1640000 0x60000>;
+			};
+			partition@1040000 {
+				label = "stock-kernel";
+				reg = <0x1040000 0x600000>;
+				read-only;
+			};
+			partition@1700000 {
+				label = "userapp0";
+				reg = <0x1700000 0x2d00000>;
 			};
 			partition@7100000 {
 				label = "usr_data";
