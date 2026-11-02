@@ -251,6 +251,15 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 	}
 	if (state == -2)
 		return ack(h, -1, "restoration failed; retain backups and recover via console");
+	if (cmd == 3 && n == 32 && !memcmp(payload, "stock", 6)) {
+		for (unsigned i = 6; i < 32; i++)
+			if (payload[i]) return ack(h, -1, "invalid stock request");
+		if (file >= 0) return ack(h, -1, "transfer active");
+		if (run_helper("stock")) return ack(h, -1, "stock return unsupported or preparation failed");
+		int result = ack(h, 0, "rebooting into stock firmware");
+		if (!result) reboot_after_ack();
+		return result;
+	}
 	if (cmd == 3 && n == 32 && !memcmp(payload, "clean", 6)) {
 		for (unsigned i = 6; i < 32; i++)
 			if (payload[i])

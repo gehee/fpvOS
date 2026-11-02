@@ -29,11 +29,17 @@ def build(busybox, backend, output):
         'root/usr/libexec/fpvos-update-backend': ((backend / 'update-helper').read_bytes(), 0o755),
         'root/etc/fpvos-stock-bootstrap': ((profile['hardware'] + '\n').encode('ascii'), 0o600),
     }
+    for destination, source in profile.get('bootstrap_resources', {}).items():
+        if destination not in ('root/usr/libexec/p1-loader.ko',
+                               'root/usr/share/fpvos-update/boot.sh',
+                               'root/usr/share/fpvos-update/clean.sh') or Path(source).name != source:
+            raise ValueError('unsupported bootstrap resource')
+        files[destination] = ((backend / source).read_bytes(), 0o600)
     static_aarch64(files['root/bin/busybox'][0])
     # Use the packaged BusyBox for every helper command, not stock's libc/tools.
     applets = ('sh', 'awk', 'cat', 'chmod', 'cut', 'id', 'mkdir', 'mktemp', 'readlink',
                'rm', 'sha256sum', 'md5sum', 'sync', 'tr', 'reboot', 'sleep',
-               'cp', 'chroot', 'mount', 'umount', 'mountpoint', 'mknod', 'ln', 'pidof', 'killall', 'seq')
+               'gzip', 'grep', 'test', 'ip', 'kill', 'stat', 'cmp', 'head', 'tail', 'wc', 'basename', 'dirname', 'cp', 'chroot', 'mount', 'umount', 'mountpoint', 'mknod', 'ln', 'pidof', 'killall', 'seq')
     links = {f'root/bin/{name}': 'busybox' for name in applets}
     links.update({'root/usr/sbin/fpvos-update-receiver': 'fpvos-update',
                   'root/usr/sbin/ar9311-nandctl': 'fpvos-update',

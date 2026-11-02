@@ -9,12 +9,19 @@ mount -t sysfs sysfs /sys
 mount -t tmpfs tmpfs /run
 mount -t tmpfs tmpfs /tmp
 mkdir -m 700 /run/fpvos-update
+# Adopt the bootloader guard before verifying or unpacking the NAND bundle.
+[ ! -e /etc/fpvos-watchdog ] || watchdog -t 5 -T 60 /dev/watchdog
 
 # A missing, damaged or mismatched bundle leaves this independent recovery
 # root running. Only the explicit clean flag is consumed by the NAND helper.
 if /usr/sbin/ar9311-nandctl boot; then
-    root_image=/run/fpvos-root/rootfs.cpio.uboot
-    if tail -c +65 "$root_image" > /run/rootfs.gz && gzip -t /run/rootfs.gz &&
+    root_image=/run/fpvos-root/$(cat /etc/fpvos-recovery-root)
+    case "$root_image" in
+        *.uboot) tail -c +65 "$root_image" > /run/rootfs.gz ;;
+        *.gz) mv "$root_image" /run/rootfs.gz ;;
+        *) exit 1 ;;
+    esac
+    if gzip -t /run/rootfs.gz &&
        mount -t tmpfs -o mode=0755 tmpfs /newroot &&
        (cd /newroot && gzip -dc /run/rootfs.gz | cpio -idm) &&
        [ -x /newroot/sbin/init ] && [ -x /newroot/usr/sbin/fpvos-update-service ]; then

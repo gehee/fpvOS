@@ -1,4 +1,4 @@
-# Source kernel boots in RAM; settings persist in usr_data. No NAND updater.
+# Source kernel and independent recovery boot directly from NAND; root runs in RAM.
 ::sysinit:/bin/mount -t proc proc /proc
 ::sysinit:/bin/mount -t sysfs sysfs /sys
 ::sysinit:/bin/mkdir -p /dev/pts /run /tmp
@@ -16,6 +16,7 @@
 ::sysinit:/etc/init.d/S60kestrel-air start
 ::sysinit:/bin/cat /etc/issue
 
+::respawn:/usr/sbin/fpvos-update-service
 ttyS0::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/etc/init.d/S60kestrel-air stop

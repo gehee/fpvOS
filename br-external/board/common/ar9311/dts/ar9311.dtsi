@@ -173,6 +173,13 @@
 			status = "disabled";
 		};
 
+		qspi_clock: clock-controller@a104034 {
+			compatible = "artosyn,ar9311-qspi-clock";
+			reg = <0 0x0a104034 0 2>;
+			#clock-cells = <0>;
+			status = "disabled";
+		};
+
 		qspi: spi@1e00000 {
 			compatible = "artosyn,ar9301-qspi";
 			#address-cells = <1>;
@@ -243,7 +250,7 @@
 		};
 
 		watchdog: watchdog@1600000 {
-			compatible = "snps,dw-wdt";
+			compatible = "artosyn,ar9311-wdt", "snps,dw-wdt";
 			reg = <0 0x01600000 0 0x1000>;
 			interrupts = <GIC_SPI 37 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clk24m>;

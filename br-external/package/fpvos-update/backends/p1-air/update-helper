@@ -1,0 +1,50 @@
+#!/bin/sh
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+check_mounts() {
+    mounts=/proc/mounts
+    [ ! -e /etc/fpvos-stock-bootstrap ] || mounts=/proc/1/mounts
+    awk '
+      $3 ~ /^(rootfs|tmpfs|devtmpfs|proc|sysfs|devpts|configfs|debugfs|pstore)$/ { next }
+      ($1 == "/dev/root" || $1 == "/dev/ubiblock0_0") && $2 == "/" && $3 == "squashfs" && $4 ~ /(^|,)ro(,|$)/ { next }
+      { bad=1 } END { exit bad }' "$mounts"
+}
+case "${1:-}" in
+    clean)
+        if [ -f /etc/fpvos-installed-sha256 ] && [ ! -f /run/fpvos-clean-boot ]; then
+            /etc/init.d/S60kestrel-air stop
+            /etc/init.d/S45settings stop
+            /etc/init.d/S43factory stop
+            /usr/sbin/fpvos-update nand clean
+            exit 10
+        fi
+        [ ! -x /etc/init.d/S60kestrel-air ] || /etc/init.d/S60kestrel-air stop
+        [ ! -x /etc/init.d/S45settings ] || /etc/init.d/S45settings stop
+        [ ! -x /etc/init.d/S43factory ] || /etc/init.d/S43factory stop
+        rm -f /run/fpvos-update/clean
+        check_mounts
+        /usr/sbin/fpvos-update nand preflight
+        : > /run/fpvos-update/clean
+        ;;
+    verify|install)
+        [ -f /run/fpvos-update/clean ]
+        check_mounts
+        if [ "$1" = install ]; then exec /usr/sbin/fpvos-update nand install "$2"; fi
+        work=$(mktemp -d /run/fpvos-update/verify.XXXXXX)
+        trap 'rm -rf "$work"' EXIT
+        /usr/libexec/fpvos-update-verify "$2" "$work"
+        gzip -t "$work/rootfs.cpio.gz"
+        ;;
+    stock)
+        [ ! -x /etc/init.d/S60kestrel-air ] || /etc/init.d/S60kestrel-air stop
+        [ ! -x /etc/init.d/S45settings ] || /etc/init.d/S45settings stop
+        [ ! -x /etc/init.d/S43factory ] || /etc/init.d/S43factory stop
+        /usr/sbin/fpvos-update nand stock
+        ;;
+    reboot)
+        sync
+        if [ -e /etc/fpvos-stock-bootstrap ]; then /bin/reboot -f; else /sbin/reboot; fi
+        ;;
+    *) exit 2;;
+esac

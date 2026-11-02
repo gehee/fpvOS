@@ -1,11 +1,11 @@
-# P1 Air stock-runtime bring-up
+# P1 Air profiles
 
-The first P1 implementation keeps BETAFPV's Linux 4.9.38, device tree,
+The `p1-air` stock-runtime reference keeps BETAFPV's Linux 4.9.38, device tree,
 modules, camera libraries, ISP tuning and codec firmware together. It starts
 from official P1_SKY 1.0.44, matching the hardware used for development.
 It does not select the Ascent VRX kernel or NAND updater.
 
-This is currently a **development bundle**, not a complete Kestrel Air port
+That target is a **development bundle**, not a complete Kestrel Air port
 or a flashable firmware release. The stock camera application remains in use.
 
 ## Build
@@ -63,13 +63,10 @@ A reboot also discards the override. Persistent activation and public-key
 provisioning are not implemented yet; `FPVOS_AIR_SSH_KEYS` is rejected rather
 than silently ignored. The stock USB address remains `192.168.3.100`.
 
-## Remaining integration
+## Stock-runtime reference
 
-Kestrel Air currently builds for ARM32/HiSilicon and directly calls its SDK.
-The source-camera route needs an AArch64 V4L2 backend once P1 capture and
-encoding are validated. Reuse its ar_libre connection with the tested P1 SDIO
-settings. The stock-runtime bundle remains a radio/login reference, without
-a dummy Kestrel executable or a HiSilicon backend.
+The stock-runtime bundle remains a radio/login reference. The separate source
+profile below builds Kestrel with its AArch64 Artosyn camera/encoder backend.
 
 Before persistent activation, verify the application/media interface, cold
 boot, USB recovery and a stock-return path. The P1 has no independent hardware
@@ -81,14 +78,15 @@ rollback. Never install Ascent's bootloader or partition layout on this board.
 `./build.sh p1-air-source` is the separate, experimental source-kernel target.
 It builds Linux 6.18, a RAM root filesystem and the SC231AI module into
 `output/p1-air-source/`. The original `p1-air` target remains the stock-runtime
-reference. No P1 updater or flashable image is produced by the source target.
+reference. The source target also produces a P1-specific updater and firmware
+bundle; see persistent installation below.
 
 The source DT uses P1's measured memory layout and SPL `ar-spin-table` CPU
 handoff. USB gadget code is shared with Ascent VRX; identity, addresses and
 MACs are board configuration. The source image provides root:root SSH at
-192.168.3.100. Development uses a tested RAM handoff from stock Linux; a cold
-power cycle returns to stock. This is not a bootloader recovery mechanism or
-a persistent installer. Do not flash it with the Ascent updater.
+192.168.3.100. Persistent boot uses the P1 SPL directly; development can load
+the same kernel and DTB into RAM through U-Boot USB. Booting a test image
+does not select or flash it. Do not use the Ascent updater for P1.
 
 ### Camera pipeline
 
@@ -186,10 +184,8 @@ receiver's four-byte `bb_mac_addr_0` array in
 
 The launcher shares the recorder's camera lock and supplies board tuning and
 initial white-balance settings. Kestrel currently uses automatic white balance.
-Kestrel runs explicitly; radio provisioning and loading run automatically.
+Kestrel, radio provisioning and firmware loading start automatically.
 Pairing and application settings persist in the existing `usr_data` volume.
-A persistent P1 firmware installer remains separate work; this is not an installable replacement for
-stock air firmware.
 
 ### Bind button and status LEDs
 
@@ -244,11 +240,11 @@ from factory calibration. A verified pre-installation backup remains part of
 recovery preparation. Firmware updates must preserve both factory and user data.
 
 The source profile builds the shared Artosyn QSPI driver and mainline SPI-NAND,
-UBI and UBIFS as modules. Its device tree exposes the existing 6 MiB factory partition at offset 2 MiB,
+UBI and UBIFS into the recovery kernel. Its device tree exposes the existing 6 MiB factory partition at offset 2 MiB,
 marked read-only, and the existing 6 MiB `usr_data` partition at `0x7100000`,
 writable. The partitioned master device and command-line partition overrides
-are disabled. Bootloader and firmware banks are not exposed through this
-profile's MTD interface.
+are disabled. Bootloader, environment and stock rootfs banks are not exposed for writes.
+The updater exposes bank-0 kernel/DTB/rootfs and the two GPT records.
 
 `S43factory` runs after USB/SSH startup. It checks the factory partition name,
 offset, size, erase/page geometry and write protection, attaches UBI in read-only
@@ -265,7 +261,7 @@ Host guard tests run with
 The hardware test compares every factory byte before/after attach and remount,
 checks calibration hashes against stock and verifies that writable opens of
 MTD and factory files are rejected. The factory path remains read-only;
-firmware installation and P1 NAND update writes remain unimplemented.
+the firmware updater preserves factory and stock bank 1.
 
 ### Persistent application settings
 
@@ -293,9 +289,8 @@ Stop Kestrel with `/etc/init.d/S60kestrel-air stop` before
 `/etc/init.d/S45settings stop`. The shutdown entry unmounts
 the bind and underlying volume. Stock settings are not automatically imported;
 fpvOS owns its separate directory. Pair once under fpvOS to populate its peer
-file. Firmware still boots from RAM; settings persist across power cycles and
-stock boots. This does not implement the P1 firmware updater or failed-boot
-recovery.
+file. Settings persist across power cycles, stock boots and firmware updates.
+The NAND installer below handles firmware persistence separately.
 
 Host storage guards: `python3 br-external/board/p1-air/tests/test_settings.py -v`.
 Kestrel's `make test` includes injected save failures and a killed-writer test.
@@ -354,3 +349,75 @@ the receiver repeated its stream-setup exchange after application restarts.
 Continuous playback across a crash has not been validated. The standalone
 recorder was excluded while Kestrel owned the camera and worked after service
 stop. Factory and vendor configuration remained unchanged.
+
+### Persistent installation and USB recovery
+
+The source profile boots fpvOS Linux 6.18 directly from NAND bank 0, using the
+original SPL/U-Boot. It does not boot stock Linux or need a stock userspace hook
+for normal operation or updates. The kernel embeds a small fpvOS recovery
+root with USB Ethernet, SSH and the shared CDC-ACM update service.
+
+The fixed P1_SKY 1.0.44 partition geometry is validated before writes. The
+updater first selects preserved stock bank 1, writes and reads back bank-0
+kernel and DTB, then updates the existing `userapp0` UBI volume with the full
+`FPVOSUP1` bundle. Only a successful full readback permits GPT activation of
+bank 0. GPT updates erase the nonselected copy, increment its generation,
+recompute CRCs and verify the new record. A torn write leaves the previous
+valid selection. No formatting, resizing, repartitioning, bootloader update,
+or factory write is performed. Settings remain in their existing directory.
+
+At boot, embedded recovery validates the stored bundle and checks that its
+kernel/DTB match NAND before unpacking the rootfs into RAM. A clean-mode request
+is consumed once. Missing, damaged or mismatched bundles remain in USB recovery
+instead of starting Kestrel. Clean mode therefore uses the same source-built
+kernel and requires no stock services.
+
+The kernel entry guard arms the hardware watchdog and the SPL's volatile USB
+boot request. Recovery adopts the watchdog; normal Linux reboot clears the
+request bit. A hang after the guard runs can reset into U-Boot's USB downloader.
+This is not recovery from damaged SPL, U-Boot or a kernel that fails before
+entry. It is also not A/B fpvOS: bank 1 remains the stock system. Loss of power
+during installation leaves stock selected until activation completes.
+
+`./build.sh p1-air-source` produces these files under
+`output/p1-air-source/images/`:
+
+- `kernel.img`: OTRA/uImage with LZ4-compressed guarded kernel and recovery.
+- `betafpv-p1-air.dtb`: source device tree.
+- `fpvos-p1-air.fwu`: kernel, board DTB and compressed root filesystem.
+- `fpvos-update-p1-air`: standalone initial installer for stock clean mode.
+- `fpvos-p1-air-bootstrap.sh`: one-time stock clean-mode launcher.
+
+For initial installation, back up the device first. On the supported stock
+release, copy the standalone installer to `/usrdata/fpvos-update` and launcher
+to `/usrdata/fpvos-bootstrap.sh`, verify hashes and mark them executable. Refuse
+to overwrite an existing clean flag or another installer. Write
+`web:/usrdata/fpvos-bootstrap.sh` plus a newline to
+`/usrdata/sirius-clean-system-flag`, sync, then reboot. The launcher removes its
+staging files after copying the installer to RAM. This is a one-time installer,
+not a persistent stock patch. Its diagnostic SSH retains stock credentials;
+source recovery uses root:root, as does the default normal fpvOS profile.
+
+Use the P1's native USB port, identified by serial `fpvos-p1-air`:
+
+```sh
+python3 tools/fpvos-update/client.py --board p1-air --port /dev/ttyACM<N> info
+python3 tools/fpvos-update/client.py --board p1-air --port /dev/ttyACM<N> verify output/p1-air-source/images/fpvos-p1-air.fwu
+python3 tools/fpvos-update/client.py --board p1-air --port /dev/ttyACM<N> install output/p1-air-source/images/fpvos-p1-air.fwu
+```
+
+`install` enters clean recovery, transfers and verifies the bundle, installs it,
+reboots and checks the running image hash. `--no-reboot` leaves the completed
+installation in recovery for inspection. Updates are unsigned development
+bundles with integrity checks, without signature or version-order enforcement.
+
+To select the preserved stock kernel, DTB and rootfs and reboot:
+
+```sh
+python3 tools/fpvos-update/client.py --board p1-air --port /dev/ttyACM<N> stock
+```
+
+Stock has a different USB identity; verify its boot separately. The custom bank
+remains stored but inactive. Stock reflashing may replace bank 0 or GPT flags;
+reinstall fpvOS through the initial installer afterward. It must not depend on
+old hooks surviving a vendor reflash.
