@@ -215,9 +215,9 @@ boot/ascent-kernel-check.py    # compare our kernel with the stock one
 
 **The image** is the stock one with a new app volume (`/usrdata`): U-Boot, env,
 kernel and rootfs stay byte-identical to stock. The app volume is the stock
-one plus `fpv/air/`, holding kestrel-air, the CV2004 and OS02K10 sensor drivers and
-`libsns_ps5280.so` for the GT (they read their tuning from the stock air app,
-which stays, and kestrel-air picks the one that matches the camera),
+one plus `fpv/air/`, holding kestrel-air, the CV2004 and OS02K10 sensor drivers (they read their
+tuning from the stock air app, which stays, and kestrel-air picks the one that
+matches the camera),
 ar_libre's driver and library, and the HiSilicon MPI libraries kestrel-air
 links. A hook added to the stock
 `fpv_run_cx482.sh`, after everything the PC tool needs, runs `air/start.sh`,
@@ -230,13 +230,17 @@ board script tells them apart by a voltage on the board (board type 482 is the
 Lite, 472 the Lite+), and `air/start.sh` follows it: the Lite+ gets its own radio
 chip firmware and config, as on stock, and kestrel-air is told the board type
 (`KA_BOARD_TYPE`) for what its air app does differently (power offsets, the
-high-power front end). Board type 4861, the GT, runs the same air app: its
-camera is a PS5280, and `libsns_ps5280.so` uses the stock `ar_ldyhs_sky` that
-is already on that unit. Anything else keeps the stock air app. Do not flash
-this H_Sky image onto a GT. `boot/ascent-deploy.sh` sees `fpv_run_cx4861.sh`
-on the unit, copies `fpv/air/` only, and inserts the same hook into that
-script. [`boot/mkascentimg.py`](../boot/mkascentimg.py) packs it, and refuses an
+high-power front end). Any other board type keeps the stock air app. [`boot/mkascentimg.py`](../boot/mkascentimg.py) packs it, and refuses an
 app volume that would lose the PC tool's updater.
+
+**GT** is a separate board, `./build.sh gt`, into `output-gt`. It is not the
+Lite image. Put a stock `Ascent_G_Sky_*.img` in `vendor/stock/gt/` (the Lite
+extract does not contain it). The pack keeps that image's boot, kernel and
+rootfs, hooks `fpv_run_cx4861.sh` after its updater, and installs
+`libsns_ps5280.so`. That driver maps the stock `ar_ldyhs_sky` which stays on
+the unit. kestrel-air has to already know board 4861; that change lives in
+kestrel-air, not in a patch here. `boot/ascent-gt-deploy.sh` copies `fpv/air/`
+onto a running GT and inserts the hook. Do not flash the H_Sky image onto a GT.
 
 **SSH**: `air/start.sh` starts a statically linked dropbear on port 22, with
 the login `root` / `root` by default. `FPVOS_AIR_ROOT_PASSWORD` sets another

@@ -272,12 +272,15 @@ def cmd_extract(a):
 def cmd_pack(a):
     header, secs = read_asw(a.base)
     version = tuple(int(x) for x in a.version.split(".")) if a.version else version_of(header)
-    want = "Ascent_H_Sky_%d_%d_%d.img" % version
+    # Board id is the base image's: 3 H_Sky (Lite/Lite+), 4 G_Sky (GT).
+    # The PC tool matches the file name before it looks inside.
+    names = {3: "Ascent_H_Sky", 4: "Ascent_G_Sky"}
+    prefix = names.get(header[4])
+    if prefix is None:
+        die(f"base board {header[4]} is not H_Sky (3) or G_Sky (4)")
+    want = "%s_%d_%d_%d.img" % ((prefix,) + version)
     if Path(a.out).name != want:
-        # the PC tool matches this pattern before it looks inside the file
         die(f"output must be named {want} for the PC tool (got {Path(a.out).name})")
-    if header[4] != 3:
-        die("base is not an H_Sky (board 3) image")
 
     errs = lint_fpv(a.fpv)
     if errs:
@@ -316,7 +319,7 @@ def main():
     p = sub.add_parser("info"); p.add_argument("img"); p.set_defaults(fn=cmd_info)
     p = sub.add_parser("extract"); p.add_argument("img"); p.add_argument("dir"); p.set_defaults(fn=cmd_extract)
     p = sub.add_parser("pack")
-    p.add_argument("--base", required=True, help="stock (or stock+ssh) Ascent_H_Sky_*.img")
+    p.add_argument("--base", required=True, help="stock Ascent_H_Sky_*.img or Ascent_G_Sky_*.img")
     p.add_argument("--fpv", required=True, help="app volume tree (contains fpv/)")
     p.add_argument("--rootfs", help="rootfs tree; default keeps the base's rootfs byte-identical")
     p.add_argument("--version", help="M.m.p to stamp in the header (default: base's)")

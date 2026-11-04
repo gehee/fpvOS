@@ -1,0 +1,63 @@
+# fpvOS for the Caddx Ascent GT air unit (Hi3516CV610, board 4861, Cortex-A7, 128 MB NAND).
+# Built by `./build.sh gt`, into its own output directory. The kernel tree is the
+# Lite's: nothing boots it, it only builds arlink.ko. The image keeps the stock
+# G_Sky kernel.
+BR2_arm=y
+BR2_cortex_a7=y
+BR2_ARM_EABI=y
+# The Cortex-A7 has VFPv4 and NEON, and the vendor MPP libraries use them, but
+# pass floating-point arguments in integer registers (the "softfp" convention,
+# which is what BR2_ARM_EABI with an FPU gives). The stock userland is plain
+# soft float, which is slower: so this is used, and everything we add is linked to
+# match the vendor libraries. (musl, because the stock rootfs's is.)
+BR2_ARM_FPU_NEON_VFPV4=y
+BR2_ARM_INSTRUCTIONS_THUMB2=y
+BR2_TOOLCHAIN_BUILDROOT_MUSL=y
+BR2_TOOLCHAIN_BUILDROOT_CXX=y
+# The vendor code is 5.10-era; gcc 14 turns implicit declarations into errors.
+BR2_GCC_VERSION_13_X=y
+BR2_KERNEL_HEADERS_AS_KERNEL=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_5_10=y
+BR2_TARGET_GENERIC_HOSTNAME="ascentgt"
+BR2_TARGET_GENERIC_ISSUE="fpvOS Ascent GT (Hi3516CV610)"
+BR2_INIT_BUSYBOX=y
+# The kernel is kernel.org's 5.10.221, the stock kernel's version. Nothing boots
+# it - the image keeps the stock kernel, byte for byte - it is the tree arlink.ko
+# is built against and the toolchain's headers. arlink.ko comes out byte-identical
+# to one built against HiSilicon's SDK kernel (checked 2026-10-06): the SDK's
+# changes to the headers it uses add fields to struct mmc_host only after
+# detect_change, and arlink.ko reads only host->caps and host->ops. A driver
+# that reads past them, or a kernel of our own to boot, needs HiSilicon's tree.
+BR2_LINUX_KERNEL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL=y
+BR2_LINUX_KERNEL_CUSTOM_TARBALL_LOCATION="https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.221.tar.xz"
+BR2_LINUX_KERNEL_USE_CUSTOM_CONFIG=y
+BR2_LINUX_KERNEL_CUSTOM_CONFIG_FILE="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-lite/linux.defconfig"
+BR2_LINUX_KERNEL_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-lite/linux.fragment"
+# What the stock kernel has on top of the SDK, recovered from its binary
+BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-lite/linux-patches"
+BR2_LINUX_KERNEL_ZIMAGE=y
+BR2_LINUX_KERNEL_DTS_SUPPORT=y
+# A 5.10 tree keeps ARM device trees flat in arch/arm/boot/dts, so the PATH form
+# (deprecated only for 6.12+ vendor subdirectories) is the one that works here.
+BR2_LINUX_KERNEL_CUSTOM_DTS_PATH="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-lite/hi3516cv610-ascent.dts"
+BR2_TARGET_ROOTFS_TAR=y
+# Stage 2: the PC-tool image is the stock one with our app volume (/usrdata).
+# Everything under the target's /usrdata goes into it; post-image.sh assembles it.
+BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-gt/rootfs-overlay"
+BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-gt/post-image.sh"
+BR2_PACKAGE_KESTREL_AIR=y
+BR2_PACKAGE_PS5280=y
+# mkfs.ubifs and ubinize for mkascentimg.py, rather than whatever the host has
+BR2_PACKAGE_HOST_MTD=y
+# An SSH server in the app volume, public-key login only; see air/start.sh
+BR2_PACKAGE_AIR_DROPBEAR=y
+BR2_PACKAGE_AIR_BUSYBOX=y
+# The radio through ar_libre (arlink.ko + libar8030_client.so, no daemon) instead
+# of Artosyn's artosyn_sdio.ko and daemon_sdiov12; kestrel-air selects it.
+BR2_PACKAGE_AR_LIBRE=y
+# Open8030, the open radio firmware, next to stock's, built only when its board
+# profiles are in vendor/open8030; the GT starts it, the
+# default (the open8030/always flag ships).
+BR2_PACKAGE_OPEN8030=y
+BR2_PACKAGE_OPEN8030_AIR_DEFAULT=y

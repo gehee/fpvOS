@@ -6,6 +6,7 @@
 #   ./build.sh kestrel      # rebuild only kestrel into the buildroot sysroot
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output-air
+#   ./build.sh gt  [config|kernel]   # the Ascent GT air unit, into ./output-gt
 #
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
@@ -33,8 +34,18 @@ need_vendor() {
 
 # The air unit builds into its own output directory, so it never touches the goggle's.
 AIR_OUT="$ROOT/output-air"
+GT_OUT="$ROOT/output-gt"
 
 case "${1:-all}" in
+  gt)
+    case "${2:-all}" in
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$GT_OUT" ascentgt_defconfig ;;
+      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$GT_OUT" ascentgt_defconfig
+              make -C "$GT_OUT" linux-reconfigure ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$GT_OUT" ascentgt_defconfig
+              make -C "$GT_OUT" ;;
+      *) echo "usage: $0 gt [config|kernel|all]" >&2; exit 1 ;;
+    esac ;;
   air)
     case "${2:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$AIR_OUT" ascentlite_defconfig ;;
@@ -56,5 +67,5 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" vrxpro_defconfig
     make -C "$BR" BR2_EXTERNAL="$EXT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {all|config|kestrel|image}" >&2; exit 1 ;;
+  *) echo "usage: $0 {all|config|kestrel|image|air|gt}" >&2; exit 1 ;;
 esac

@@ -1,0 +1,9 @@
+config BR2_PACKAGE_PS5280
+	bool "ps5280"
+	depends on BR2_PACKAGE_KESTREL_AIR
+	help
+	  Sensor glue for the Ascent GT (board 4861). The PS5280 CMOS
+	  driver is linked into the stock air app, so this .so maps
+	  /usrdata/fpv/ar_ldyhs_sky and exports g_sns_ps5280_obj.
+	  kestrel-air dlopen()s it when it finds that chip. Selected by
+	  the GT board only.

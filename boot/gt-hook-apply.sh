@@ -12,7 +12,9 @@ if grep -q 'fpvOS hook' "$run"; then
 	echo "fpv_run_cx4861.sh already hooked"
 	exit 0
 fi
-n=$(grep -n '^cd /usrdata/fpv/boot_ar8030' "$run" | head -n 1 | cut -d: -f1)
+# The last boot_ar8030 is after ar_fpvhs_upgrade. The earlier ones are the
+# RF probe and still have to run, or the updater never starts.
+n=$(grep -n '^cd /usrdata/fpv/boot_ar8030' "$run" | tail -n 1 | cut -d: -f1)
 [ -n "$n" ] || { echo "fpv_run_cx4861.sh: no boot_ar8030 line to hook before" >&2; exit 1; }
 [ -e "$run.prev" ] || cp -p "$run" "$run.prev"
 { head -n $((n - 1)) "$run"; cat "$hook"; tail -n +"$n" "$run"; } > "$run.new"
