@@ -45,6 +45,18 @@ int p1_exact(int fd, void *buffer, size_t size, off_t offset)
     return 0;
 }
 
+/* mtdchar returns the data even where ECC could not correct it, so a plain
+ * read cannot tell. Compare the partition's ECC failure count around each
+ * read that decides or verifies a write: the SPL stops at a GPT page it
+ * cannot read, and loads kernel/DTB as they are. */
+int p1_read_checked(int fd, void *buffer, size_t size, off_t offset)
+{
+    struct mtd_ecc_stats before, after;
+    if (ioctl(fd, ECCGETSTATS, &before) || p1_exact(fd, buffer, size, offset) ||
+        ioctl(fd, ECCGETSTATS, &after)) return -1;
+    return after.failed == before.failed ? 0 : -1;
+}
+
 int p1_copy_n(int in, int out, size_t size)
 {
     unsigned char buffer[16384];
@@ -154,9 +166,13 @@ int p1_gpt_read(unsigned char gpt[2][AR9311_GPT_BYTES])
                      stock ? 0x100000 + i*0x40000 : 0x100000, stock ? 0x40000 : 0x80000, &n);
         if (fd < 0) return -1;
         loff_t offset = stock ? 0 : i*0x40000;
-        int rc = ioctl(fd,MEMGETBADBLOCK,&offset) || p1_exact(fd,gpt[i],AR9311_GPT_BYTES,offset);
+        int bad = ioctl(fd,MEMGETBADBLOCK,&offset);
+        int rc = bad || p1_read_checked(fd,gpt[i],AR9311_GPT_BYTES,offset);
         close(fd);
-        if (rc) return -1;
+        if (rc) {
+            if (!bad) fprintf(stderr,"P1: GPT record %u has an uncorrectable ECC error; SPL cannot boot past it\n",i);
+            return -1;
+        }
     }
     return p1_layout_valid(gpt) ? 0 : -1;
 }
@@ -208,8 +224,10 @@ static int volume(int data, int writing, char node[64])
     char path[256],text[128];
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d/ro_mode",ubi);
     if (p1_read(path,text,sizeof(text)) || strcmp(text,"0")) return -1;
+    /* Stock names the volumes without the partition suffix or underscore:
+     * MTD usr_data holds volume "usrdata", userapp0 holds "userapp". */
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/name",ubi);
-    if (p1_read(path,text,sizeof(text)) || strcmp(text,data ? "usr_data" : "userapp")) return -1;
+    if (p1_read(path,text,sizeof(text)) || strcmp(text,data ? "usrdata" : "userapp")) return -1;
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/type",ubi);
     if (p1_read(path,text,sizeof(text)) || strcmp(text,"dynamic")) return -1;
     snprintf(node,64,"/dev/ubi%d_0",ubi);

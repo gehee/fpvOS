@@ -5,6 +5,9 @@ import argparse
 from pathlib import Path
 import struct
 
+# Size of p1-bootguard.S once assembled (.text only); update it with the source.
+GUARD_BYTES = 92
+
 
 def branch(offset):
     if offset % 4 or not -(1 << 27) <= offset < (1 << 27):
@@ -17,7 +20,7 @@ def guard(image, code):
         raise ValueError('expected aligned ARM64 Image')
     if struct.unpack_from('<Q', image, 8)[0] or struct.unpack_from('<I', image, 4)[0] >> 26 != 5:
         raise ValueError('unexpected ARM64 entry layout')
-    if len(code) != 60 or code[-4:] != branch(0):
+    if len(code) != GUARD_BYTES or code[-4:] != branch(0):
         raise ValueError('unexpected boot guard layout')
     if len(image) + len(code) > struct.unpack_from('<Q', image, 16)[0]:
         raise ValueError('guard exceeds Image allocation')

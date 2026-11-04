@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise real processes, signals, orphan cleanup and bounded restart/logging."""
+"""Exercise real processes, signals, orphan cleanup, unbounded restart and bounded logging."""
 import os
 from pathlib import Path
 import signal
@@ -20,6 +20,7 @@ fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
 attempts = Path('attempts')
 n = int(attempts.read_text()) + 1 if attempts.exists() else 1
 attempts.write_text(str(n))
+with open('starts', 'a') as f: f.write(f'{time.monotonic()}\n')
 Path('worker').write_text(str(os.getpid()))
 signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
 if mode == 'fail':
@@ -48,7 +49,7 @@ class Supervision(unittest.TestCase):
         cls.build = tempfile.TemporaryDirectory()
         cls.binary = Path(cls.build.name)/'supervise'
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2',
-                        '-DRETRY_MS=80', '-DSTABLE_MS=1000', '-DSTOP_MS=200',
+                        '-DRETRY_MS=80', '-DMAX_RETRY_MS=200', '-DSTABLE_MS=1000', '-DSTOP_MS=200',
                         '-DLOG_BYTES=4096', str(PACKAGE/'supervise.c'), '-o', str(cls.binary)], check=True)
 
     @classmethod
@@ -107,13 +108,23 @@ class Supervision(unittest.TestCase):
         self.assertEqual(int(self.read('pid')), self.process.pid)
         self.assertEqual(self.attempts(), 1)
 
-    def test_crash_loop_stops_after_five_attempts(self):
+    def test_crash_loop_keeps_retrying_with_capped_backoff(self):
         self.start('fail')
-        self.process.wait(timeout=5)
-        self.assertEqual(self.process.returncode, 1)
-        self.assertEqual(self.attempts(), 5)
-        self.assertTrue(self.read('status').startswith('failed '))
+        self.wait_for(lambda: self.attempts() >= 8)
+        self.assertIsNone(self.process.poll())
         self.assertIn('exit code=17', self.read('current.log'))
+        starts = [float(x) for x in self.read('starts').split()]
+        gaps = [b - a for a, b in zip(starts, starts[1:])]
+        # Waits of 80, 160, then 200 ms (the cap); each gap also holds the
+        # child's own start-up, so compare the gaps with the first one.
+        self.assertGreater(gaps[1] - gaps[0], .04)
+        capped = [gap - gaps[0] for gap in gaps[2:7]]
+        self.assertGreater(min(capped), .06)
+        self.assertLess(max(capped), .25)
+        self.assertLess(max(capped) - min(capped), .08)
+        self.stop()
+        self.assertEqual(self.process.returncode, 0)
+        self.assertTrue(self.read('status').startswith('stopped'))
 
     def test_stable_run_resets_failure_budget(self):
         self.start('reset')
@@ -147,12 +158,28 @@ class Supervision(unittest.TestCase):
             self.assertLessEqual((self.root/name).stat().st_size, 4096)
         self.assertTrue(self.read('status').startswith('stopped'))
 
-    def test_missing_launcher_is_bounded_and_reported(self):
-        self.process = subprocess.Popen([str(self.binary), str(self.root), '/no/such/launcher'])
-        self.process.wait(timeout=5)
-        self.assertEqual(self.process.returncode, 1)
-        self.assertIn('failures=5', self.read('status'))
+    def test_missing_launcher_is_retried_and_reported(self):
+        self.process = subprocess.Popen([str(self.binary), str(self.root), '/no/such/launcher'],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self.wait_for(lambda: 'failures=6' in self.read('status'))
+        self.assertIsNone(self.process.poll())
         self.assertIn('exit code=127', self.read('current.log'))
+
+    def test_stop_right_after_start_does_not_wait_for_kill(self):
+        # A stop that races the fork must end the child at once, not after
+        # the TERM-then-KILL timeouts (2 x STOP_MS).
+        # The pid file is written once the handlers are in place, just before
+        # the first fork.
+        for delay in (0, .0005, .001, .002, .005):
+            (self.root/'pid').unlink(missing_ok=True)
+            self.start('steady')
+            self.wait_for(lambda: (self.root/'pid').exists())
+            time.sleep(delay)
+            began = time.monotonic()
+            self.process.terminate()
+            self.process.wait(timeout=5)
+            self.assertLess(time.monotonic() - began, .19, f'delay {delay}')
+            self.assertEqual(self.process.returncode, 0)
 
 
 if __name__ == '__main__':

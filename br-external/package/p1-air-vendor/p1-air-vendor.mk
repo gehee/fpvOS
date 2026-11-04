@@ -52,9 +52,13 @@ endef
 P1_AIR_VENDOR_POST_BUILD_HOOKS += P1_AIR_VENDOR_GENERATE_RADIO_PROFILE
 endif
 
+# Only the manifest goes to the images directory. REDISTRIBUTE = NO keeps the
+# vendor files out of legal-info, not out of images/, which gets published:
+# the stock root filesystem stays in this package's build directory, where
+# the packages that extract from it read it.
 define P1_AIR_VENDOR_INSTALL_IMAGES_CMDS
 	mkdir -p $(BINARIES_DIR)/p1-air-stock
-	cp $(@D)/stock/*.json $(@D)/stock/*.squashfs $(BINARIES_DIR)/p1-air-stock/
+	cp $(@D)/stock/*.json $(BINARIES_DIR)/p1-air-stock/
 endef
 
 $(eval $(generic-package))

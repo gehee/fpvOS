@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Merge the host factory power-offset schema, never arbitrary JSON settings.
+// Merge the host factory power offsets, never arbitrary JSON settings; or,
+// without usable factory data, publish the board defaults at a capped power.
 #define _POSIX_C_SOURCE 200809L
 #include <jansson.h>
 #include <stdio.h>
@@ -28,9 +29,31 @@ out:
 	return root;
 }
 
-static json_t *only(json_t *obj, const char *key)
+/* Only the offsets are taken from the factory file. Other keys a unit's file
+ * may carry are named and ignored, never merged. */
+static json_t *member(json_t *obj, const char *key, const char *where)
 {
-	return json_is_object(obj) && json_object_size(obj) == 1 ? json_object_get(obj, key) : NULL;
+	json_t *found = json_is_object(obj) ? json_object_get(obj, key) : NULL;
+	const char *other;
+	json_t *value;
+	if (found)
+		json_object_foreach(obj, other, value)
+			if (strcmp(other, key))
+				fprintf(stderr, "radio-calibrate: ignoring factory key %s%s\n", where, other);
+	return found;
+}
+
+/* The board configuration must have a calibration row for this level. */
+static int has_level(json_t *calibration, long long dbm)
+{
+	char name[16];
+	const char *key, *mode;
+	json_t *table, *rows;
+	snprintf(name, sizeof name, "%llddbm", dbm);
+	json_object_foreach(calibration, key, table)
+		json_object_foreach(table, mode, rows)
+			if (json_is_object(rows) && json_object_get(rows, name)) return 1;
+	return 0;
 }
 
 static int save(json_t *root, const char *path)
@@ -50,10 +73,53 @@ out:
 	return rc;
 }
 
+/* Board defaults with zero offsets (the stock template's) and pwr_init capped
+ * at MAX_DBM: what the radio runs on when the unit's factory data is unusable. */
+static int uncalibrated(const char *base_path, const char *output, const char *max_text)
+{
+	char *end;
+	long long max = strtoll(max_text, &end, 10);
+	struct stat a, dst;
+	if (!*max_text || *end || max < 9 || max > 36 || stat(base_path, &a) ||
+	    (!stat(output, &dst) && dst.st_dev == a.st_dev && dst.st_ino == a.st_ino)) {
+		fprintf(stderr, "radio-calibrate: invalid power cap, missing base or output aliases it\n");
+		return 1;
+	}
+	json_t *base = load(base_path), *offsets = json_pack("[iiii]", 0, 0, 0, 0);
+	int rc = 1;
+	if (!base || !offsets) goto out;
+	json_t *bb = json_object_get(base, "baseband");
+	json_t *power = json_object_get(json_object_get(bb, "basic"), "power");
+	json_t *calibration = json_object_get(bb, "power_calibration");
+	json_t *init = json_object_get(power, "pwr_init");
+	if (!json_is_object(power) || !json_is_object(calibration) || !json_is_integer(init)) {
+		fprintf(stderr, "radio-calibrate: unsupported base configuration\n");
+		goto out;
+	}
+	long long level = json_integer_value(init) < max ? json_integer_value(init) : max;
+	if (!has_level(calibration, level)) {
+		fprintf(stderr, "radio-calibrate: no board calibration row for %lld dBm\n", level);
+		goto out;
+	}
+	if (json_object_set_new(power, "pwr_init", json_integer(level)) ||
+	    json_object_set(power, "pwr_offset", offsets) || save(base, output)) {
+		fprintf(stderr, "radio-calibrate: cannot publish runtime configuration\n");
+		goto out;
+	}
+	printf("radio-calibrate: WITHOUT factory calibration: board defaults at %lld dBm, offsets 0\n", level);
+	rc = 0;
+out:
+	json_decref(base);
+	json_decref(offsets);
+	return rc;
+}
+
 int main(int argc, char **argv)
 {
+	if (argc == 5 && !strcmp(argv[1], "--uncalibrated")) return uncalibrated(argv[2], argv[3], argv[4]);
 	if (argc != 4) {
-		fprintf(stderr, "Usage: radio-calibrate BASE.json FACTORY.json OUTPUT.json\n");
+		fprintf(stderr, "Usage: radio-calibrate BASE.json FACTORY.json OUTPUT.json\n"
+			"       radio-calibrate --uncalibrated BASE.json OUTPUT.json MAX_DBM\n");
 		return 2;
 	}
 	/* Do not allow an accidental in-place update of either authoritative input. */
@@ -67,7 +133,8 @@ int main(int argc, char **argv)
 	json_t *base = load(argv[1]), *factory = load(argv[2]);
 	int rc = 1;
 	if (!base || !factory) goto out;
-	json_t *offsets = only(only(only(only(factory, "baseband"), "basic"), "power"), "pwr_offset");
+	json_t *offsets = member(member(member(member(factory, "baseband", ""), "basic", "baseband."),
+		"power", "baseband.basic."), "pwr_offset", "baseband.basic.power.");
 	if (!json_is_array(offsets) || json_array_size(offsets) != 4) goto invalid;
 	for (size_t i = 0; i < 4; ++i) {
 		json_t *v = json_array_get(offsets, i);
@@ -87,7 +154,7 @@ int main(int argc, char **argv)
 	rc = 0;
 	goto out;
 invalid:
-	fprintf(stderr, "radio-calibrate: unsupported factory schema or invalid power offsets/base\n");
+	fprintf(stderr, "radio-calibrate: no valid factory power offsets, or unsupported base\n");
 out:
 	json_decref(base);
 	json_decref(factory);

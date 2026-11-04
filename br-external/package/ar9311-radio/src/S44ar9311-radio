@@ -7,6 +7,7 @@ config=open8030.json
 calibration_base=
 calibration_factory=
 calibration_mount=
+calibration_fallback_power=
 [ ! -r /etc/default/ar9311-radio ] || . /etc/default/ar9311-radio
 case "$1" in
 	start)
@@ -17,18 +18,27 @@ case "$1" in
 			exit 1
 		fi
 		if [ -n "$calibration_base$calibration_factory$calibration_mount" ]; then
-			[ -n "$calibration_base" ] && [ -n "$calibration_factory" ] &&
-			[ -n "$calibration_mount" ] &&
-			awk -v point="$calibration_mount" '
-				$2 == point && $4 ~ /(^|,)ro(,|$)/ { found = 1 }
-				END { exit !found }
-			' /proc/mounts || {
-				echo "Radio: read-only factory calibration unavailable; leaving radio stopped" >&2
-				exit 1
-			}
 			mkdir -p /run/ar9311-radio || exit 1
-			/usr/libexec/radio-calibrate "$calibration_base" "$calibration_factory" \
-				/run/ar9311-radio/config.json || exit 1
+			if ! { [ -n "$calibration_base" ] && [ -n "$calibration_factory" ] &&
+				[ -n "$calibration_mount" ] &&
+				awk -v point="$calibration_mount" '
+					$2 == point && $4 ~ /(^|,)ro(,|$)/ { found = 1 }
+					END { exit !found }
+				' /proc/mounts &&
+				/usr/libexec/radio-calibrate "$calibration_base" "$calibration_factory" \
+					/run/ar9311-radio/config.json; }; then
+				[ -n "$calibration_fallback_power" ] || {
+					echo "Radio: read-only factory calibration unavailable; leaving radio stopped" >&2
+					exit 1
+				}
+				# A dead link is worse than an uncalibrated one: board defaults,
+				# offsets 0 (as stock runs without its factory file), low power.
+				warning="factory calibration unavailable: radio starts uncalibrated at up to $calibration_fallback_power dBm"
+				echo "Radio: WARNING: $warning" >&2
+				echo "<4>ar9311-radio: $warning" 2>/dev/null >/dev/kmsg || :
+				/usr/libexec/radio-calibrate --uncalibrated "$calibration_base" \
+					/run/ar9311-radio/config.json "$calibration_fallback_power" || exit 1
+			fi
 			# The image supplies this firmware-loader link into /run.
 			[ "$(readlink -f "/lib/firmware/$config")" = /run/ar9311-radio/config.json ] || {
 				echo "Radio: calibration output is not the selected loader configuration" >&2

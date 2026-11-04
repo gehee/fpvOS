@@ -19,6 +19,7 @@ int p1_hash(const char *path, char hash[65]);
 int p1_read(const char *path, char *text, size_t size);
 int p1_copy_n(int in, int out, size_t size);
 int p1_exact(int fd, void *buffer, size_t size, off_t offset);
+int p1_read_checked(int fd, void *buffer, size_t size, off_t offset);
 int p1_atomic(const char *path, const void *data, size_t size, unsigned mode);
 int p1_mtd(const char *name, unsigned offset, unsigned size, unsigned *number);
 int p1_gpt_read(unsigned char gpt[2][AR9311_GPT_BYTES]);

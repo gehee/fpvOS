@@ -1,3 +1,4 @@
-# Refuse an ephemeral fallback when persistent settings are unavailable.
+# Settings live on the UBIFS volume S45settings mounts here. Without it,
+# Kestrel still starts, on defaults in RAM, and logs a warning.
 STATE_DIR=/var/lib/kestrel-air
-REQUIRE_PERSISTENT_STATE=1
+PERSISTENT_STATE=1

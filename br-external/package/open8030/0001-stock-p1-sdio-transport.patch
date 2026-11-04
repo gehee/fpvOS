@@ -2,54 +2,18 @@ From: fpvOS developers
 Subject: [PATCH] Add opt-in stock P1 SDIO framing and explicit I/O domains
 
 Keep the default transport unchanged. P1 stock artosyn_sdio adds a
-DD/length trailer at the end of each aligned block. Reject malformed
-trailers and test the boundary between single and multiple blocks.
+00 DD length_le16 trailer at the end of each aligned block. Reject
+malformed trailers (and CC blocks, the stock driver's network device,
+which Open8030 does not carry) before a block counts as received, and
+test the boundary between single and multiple blocks.
 
 Upstream: not submitted
 
---- a/src/sdio_device.c
-+++ b/src/sdio_device.c
-@@ -280,6 +280,14 @@
- 			*data = receive_buffer;
- 			rx_borrowed = 1;
- 			stats.rx_packets++;
-+#ifdef AR_SDIO_P1_TRAILER
-+			if (length < 4 || receive_buffer[length - 3] != 0xdd) {
-+				stats.invalid_rx++; return 0;
-+			}
-+			size_t payload = receive_buffer[length - 2] | (size_t)receive_buffer[length - 1] << 8;
-+			if (!payload || payload > length - 4) { stats.invalid_rx++; return 0; }
-+			length = payload;
-+#endif
- 			return length;
- 		}
- 		stats.invalid_rx++;
-@@ -297,10 +305,22 @@
- {
- 	if (!ready || !length || length > AR_SDIO_BUFFER_SIZE) { return -1; }
- 	if (tx_count == AR_SDIO_TX_DEPTH) { stats.tx_backpressure++; return -1; }
-+	#ifdef AR_SDIO_P1_TRAILER
-+	/* P1 Linux artosyn_sdio_send_cmd/recv uses a block-tail envelope:
-+	 * 00 DD length_le16. DD carries native command frames, CC net data. */
-+	if (length > AR_SDIO_BUFFER_SIZE - 4) { return -1; }
-+	size_t transfer = (length + 4 + AR_SDIO_BLOCK - 1) & ~(AR_SDIO_BLOCK - 1);
-+#else
- 	size_t transfer = (length + AR_SDIO_BLOCK - 1) & ~(AR_SDIO_BLOCK - 1);
-+#endif
- 	unsigned tail = (tx_head + tx_count) % AR_SDIO_TX_DEPTH;
- 	memcpy(transmit_buffers[tail], data, length);
- 	memset(transmit_buffers[tail] + length, 0, transfer - length);
-+	#ifdef AR_SDIO_P1_TRAILER
-+	transmit_buffers[tail][transfer - 3] = 0xdd;
-+	transmit_buffers[tail][transfer - 2] = length;
-+	transmit_buffers[tail][transfer - 1] = length >> 8;
-+#endif
- 	transmit_lengths[tail] = transfer;
- 	tx_count++;
- 	if (tx_count > stats.tx_queue_high_water) { stats.tx_queue_high_water = tx_count; }
+diff --git a/src/rf_device.c b/src/rf_device.c
+index b4baa72..9a1473a 100644
 --- a/src/rf_device.c
 +++ b/src/rf_device.c
-@@ -1674,7 +1674,11 @@
+@@ -1243,7 +1243,11 @@ int ar_rf_setup_pins(const uint8_t *records, size_t length)
  	update(CLOCK + 0x200, 0, 1u << 25); /* Measured GPIO clock ID 21. */
  	/* Stock 0x24be84(bank, 0) after muxing banks 2 and 3: GPIO+0 bits 1
  	 * and 2 (their I/O domain select). */
@@ -61,10 +25,95 @@ Upstream: not submitted
  	else {
  		if (seen[2]) { update(0x0a10a000, 0, 2); }
  		if (seen[3]) { update(0x0a10a000, 0, 4); }
+diff --git a/src/sdio_device.c b/src/sdio_device.c
+index 68f36b8..ebe1026 100644
+--- a/src/sdio_device.c
++++ b/src/sdio_device.c
+@@ -219,6 +219,24 @@ void ar_sdio_init(void)
+ #endif
+ }
+ 
++/* Invalidates the received block and returns its payload length, 0 when the
++ * block is malformed. */
++static size_t received_payload(size_t length)
++{
++	ar_cache_invalidate(receive_buffer, AR_SDIO_BUFFER_SIZE);
++#ifdef AR_SDIO_P1_TRAILER
++	/* P1 stock artosyn_sdio ends each aligned transfer with 00 DD length_le16.
++	 * DD carries native command frames. CC carries the stock driver's network
++	 * device (IP frames): Open8030 has no host network path, so a CC block is
++	 * dropped and counted in invalid_rx like any other malformed one. */
++	if (length < 4 || receive_buffer[length - 4] || receive_buffer[length - 3] != 0xdd) { return 0; }
++	size_t payload = receive_buffer[length - 2] | (size_t)receive_buffer[length - 1] << 8;
++	return payload <= length - 4 ? payload : 0;
++#else
++	return length;
++#endif
++}
++
+ size_t ar_sdio_receive(const uint8_t **data)
+ {
+ 	/* The caller has finished the previous descriptor before polling again.
+@@ -275,8 +293,8 @@ size_t ar_sdio_receive(const uint8_t **data)
+ 		barrier();
+ 		size_t length = read32(SDIO_BASE + RX_LENGTH) & 0xffff;
+ 		if (!(events & (8 | 16)) && length && length <= sizeof receive_buffer &&
+-		    read32(SDIO_BASE + RX_ADDR) == pointer(receive_buffer)) {
+-			ar_cache_invalidate(receive_buffer, AR_SDIO_BUFFER_SIZE);
++		    read32(SDIO_BASE + RX_ADDR) == pointer(receive_buffer) &&
++		    (length = received_payload(length))) {
+ 			*data = receive_buffer;
+ 			rx_borrowed = 1;
+ 			stats.rx_packets++;
+@@ -297,10 +315,21 @@ int ar_sdio_send(const uint8_t *data, size_t length)
+ {
+ 	if (!ready || !length || length > AR_SDIO_BUFFER_SIZE) { return -1; }
+ 	if (tx_count == AR_SDIO_TX_DEPTH) { stats.tx_backpressure++; return -1; }
++#ifdef AR_SDIO_P1_TRAILER
++	/* The 00 DD length_le16 block tail of received_payload(). */
++	if (length > AR_SDIO_BUFFER_SIZE - 4) { return -1; }
++	size_t transfer = (length + 4 + AR_SDIO_BLOCK - 1) & ~(AR_SDIO_BLOCK - 1);
++#else
+ 	size_t transfer = (length + AR_SDIO_BLOCK - 1) & ~(AR_SDIO_BLOCK - 1);
++#endif
+ 	unsigned tail = (tx_head + tx_count) % AR_SDIO_TX_DEPTH;
+ 	memcpy(transmit_buffers[tail], data, length);
+ 	memset(transmit_buffers[tail] + length, 0, transfer - length);
++#ifdef AR_SDIO_P1_TRAILER
++	transmit_buffers[tail][transfer - 3] = 0xdd;
++	transmit_buffers[tail][transfer - 2] = length;
++	transmit_buffers[tail][transfer - 1] = length >> 8;
++#endif
+ 	transmit_lengths[tail] = transfer;
+ 	tx_count++;
+ 	if (tx_count > stats.tx_queue_high_water) { stats.tx_queue_high_water = tx_count; }
+diff --git a/tests/native.py b/tests/native.py
+index e1d36a8..1b47723 100644
+--- a/tests/native.py
++++ b/tests/native.py
+@@ -38,6 +38,7 @@ TESTS = {
+     'socket_ap': ('socket_rx', ['AR_ROLE_AP'], []),
+     'socket_shutdown': ('socket_shutdown', [], []),
+     'sdio_device': ('sdio_device transport_storage', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
++    'p1_sdio': ('sdio_device transport_storage', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1', 'AR_SDIO_P1_TRAILER'], []),
+     'usb_device': ('usb_device transport_storage', ['AR_USB_SIMULATED'], []),
+     'mac': ('mac', [], []),
+     'dev': ('dev mac', [], []),
+@@ -78,6 +79,7 @@ TESTS = {
+     'sfdp': ('sfdp', [], []),
+     'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
+     'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
++    'rf_io_domains': ('rf_device ap ap_hop dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED', 'AR_EXPLICIT_IO_DOMAINS'], []),
+     'rf_device': ('rf_device ap ap_hop dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED'], []),
+     'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
+ }
+diff --git a/tests/p1_sdio_test.c b/tests/p1_sdio_test.c
+new file mode 100644
+index 0000000..3d886fb
 --- /dev/null
 +++ b/tests/p1_sdio_test.c
-@@ -0,0 +1,36 @@
-+/* P1 driver contract: block-tail DD envelope, bounds and rejected data types. */
+@@ -0,0 +1,44 @@
++/* P1 driver contract: block-tail 00 DD envelope, bounds and rejected data types. */
 +#define main upstream_test_unused
 +#include "sdio_device_test.c"
 +#undef main
@@ -96,31 +145,23 @@ Upstream: not submitted
 + rx[509]=0xdd;rx[510]=0;
 + *reg(0x04200134)=1;
 + assert(!ar_sdio_receive(&out));
-+ assert(ar_sdio_statistics()->invalid_rx==3);
++ ar_sdio_receive(&out);
++ rx[508]=1;rx[509]=0xdd;rx[510]=19;rx[511]=0;
++ *reg(0x04200134)=1;
++ assert(!ar_sdio_receive(&out));
++ assert(ar_sdio_statistics()->invalid_rx==4 && ar_sdio_statistics()->rx_packets==1);
++ /* A rejected block is re-armed at once: the next good one needs no extra poll. */
++ rx[508]=0;
++ *reg(0x04200134)=1;
++ assert(ar_sdio_receive(&out)==19 && out[0]==0xaa && ar_sdio_statistics()->rx_packets==2);
 + assert(ar_sdio_send(message,AR_SDIO_BUFFER_SIZE)==-1);
 + puts("P1 SDIO framing and bounds passed");
 +}
---- a/tests/native.py
-+++ b/tests/native.py
-@@ -38,6 +38,7 @@
-     'socket_ap': ('socket_rx', ['AR_ROLE_AP'], []),
-     'socket_shutdown': ('socket_shutdown', [], []),
-     'sdio_device': ('sdio_device transport_storage', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1'], []),
-+    'p1_sdio': ('sdio_device transport_storage', ['AR_SDIO_SIMULATED', 'AR_SDIO_STOCK_MEMORY_ATTRIBUTES=1', 'AR_SDIO_P1_TRAILER'], []),
-     'usb_device': ('usb_device transport_storage', ['AR_USB_SIMULATED'], []),
-     'mac': ('mac', [], []),
-     'dev': ('dev mac', [], []),
-@@ -79,6 +80,7 @@
-     'sfdp': ('sfdp', [], []),
-     'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
-     'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
-+    'rf_io_domains': ('rf_device ap ap_hop pwr_auto dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED', 'AR_EXPLICIT_IO_DOMAINS'], []),
-     'rf_device': ('rf_device ap ap_hop pwr_auto dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED'], []),
-     'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
- }
+diff --git a/tests/rf_device_test.c b/tests/rf_device_test.c
+index 9523a57..74140a4 100644
 --- a/tests/rf_device_test.c
 +++ b/tests/rf_device_test.c
-@@ -132,7 +132,7 @@
+@@ -132,7 +132,7 @@ void ar_rf_test_write(uint32_t address, uint32_t value)
  	assert((address >= 0x0a110000 && address < 0x0a111000) ||
  	       (address >= 0x0a104000 && address < 0x0a104204) ||
  	       address == 0x0a1060c8 ||
@@ -129,7 +170,7 @@ Upstream: not submitted
  	       (address >= 0x00140000 && address < 0x00140300) ||
  	       address == 0xe0800008 || (address >= 0xe0801120 && address < 0xe0801180));
  	*reg(address) = value; writes++;
-@@ -641,7 +641,15 @@
+@@ -541,7 +541,15 @@ int main(void)
  
  	uint8_t pins[40] = {0};
  	for (unsigned i = 0; i < 10; i++) { pins[i * 4] = i / 5; pins[i * 4 + 1] = i % 5; pins[i * 4 + 2] = 3; }
@@ -145,6 +186,9 @@ Upstream: not submitted
  	uint64_t pll;
  	assert(ar_rf_pll_word(5770000, &pll) == 0 && pll == UINT64_C(0x0120800000));
  	assert(ar_rf_pll_word(5839000, &pll) == 0 && pll == UINT64_C(0x0123f33333));
+diff --git a/tests/rf_io_domains_test.c b/tests/rf_io_domains_test.c
+new file mode 100644
+index 0000000..5ee5883
 --- /dev/null
 +++ b/tests/rf_io_domains_test.c
 @@ -0,0 +1 @@

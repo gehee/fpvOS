@@ -36,6 +36,16 @@ static int writable(int readonly, unsigned number)
     return fd;
 }
 
+/* Leaves the slot erased and reading back clean, or fails. */
+static int erase_again(int fd, const struct erase_info_user *erase, loff_t offset)
+{
+    unsigned char check[0x4800];
+    struct erase_info_user e = *erase;
+    if (ioctl(fd,MEMERASE,&e) || p1_read_checked(fd,check,sizeof(check),offset)) return -1;
+    for (size_t i = 0; i < sizeof(check); i++) if (check[i] != 0xff) return -1;
+    return 0;
+}
+
 int p1_select_bank(unsigned bank)
 {
     unsigned char records[2][AR9311_GPT_BYTES], next[AR9311_GPT_BYTES], check[AR9311_GPT_BYTES];
@@ -78,14 +88,22 @@ int p1_select_bank(unsigned bank)
     if (fd < 0) return -1;
     loff_t offset = stock ? 0 : slot*0x40000;
     struct erase_info_user erase = {.start=offset,.length=0x20000};
-    /* Never erase the selected record. A torn new record leaves the previous
-     * selection usable by SPL. Bad GPT blocks require physical recovery. */
+    /* Never erase the selected record. SPL boots it while the new one fails
+     * its CRC, but stops at a GPT page that ECC cannot correct, which a power
+     * cut during this write can leave: a failed write is erased again, and
+     * power must stay on until this returns. The slot's second block is SPL's
+     * spare, read only once this one is marked bad; bad GPT blocks require
+     * physical recovery. */
     unsigned char padded[0x4800];
     memset(padded,0xff,sizeof(padded)); memcpy(padded,next,sizeof(next));
     /* MTD character writes are synchronous; mtdchar has no fsync method. */
-    int rc = ioctl(fd,MEMGETBADBLOCK,&offset) || ioctl(fd,MEMERASE,&erase) ||
-             write_exact(fd,padded,sizeof(padded),offset) ||
-             p1_exact(fd,check,sizeof(check),offset) || memcmp(check,next,sizeof(next));
+    int rc = ioctl(fd,MEMGETBADBLOCK,&offset);
+    if (!rc) {
+        rc = ioctl(fd,MEMERASE,&erase) || write_exact(fd,padded,sizeof(padded),offset) ||
+             p1_read_checked(fd,check,sizeof(check),offset) || memcmp(check,next,sizeof(next));
+        if (rc && erase_again(fd,&erase,offset))
+            fprintf(stderr,"P1: GPT record %u is still unreadable after a failed write; keep the unit powered: it may not boot\n",slot);
+    }
     close(fd);
     if (!rc) rc = p1_gpt_read(records) || !p1_layout(records,&selected,&current) || current != bank;
     return rc ? -1 : 0;
@@ -126,7 +144,7 @@ int p1_flash_image(unsigned index, const char *path, int writing)
             struct erase_info_user erase = {.start=off,.length=0x20000};
             if (ioctl(fd,MEMERASE,&erase) || write_exact(fd,data,0x20000,off)) { rc = -1; break; }
         }
-        if (p1_exact(fd,data+0x20000,writing ? 0x20000 : n,off) ||
+        if (p1_read_checked(fd,data+0x20000,writing ? 0x20000 : n,off) ||
             memcmp(data,data+0x20000,writing ? 0x20000 : n)) { rc = -1; break; }
         consumed += n;
     }
