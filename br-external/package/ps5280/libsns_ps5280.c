@@ -9,6 +9,10 @@
  * stock 2-lane vtable.
  *
  * kestrel-air is PIE, so 0x10000 is free. Camera failure stays radio-only.
+ *
+ * g_sns_ps5280_obj and the MPI entry points are dynamic symbols of whatever
+ * sky binary is on the unit. The address is not stable: 0x26ec3c in G_Sky
+ * 17.5.15, 0x267bfc in 19.2.4. The init sequence stays inside that binary.
  */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -24,9 +28,6 @@
 #include <unistd.h>
 
 #define STOCK_PATH   "/usrdata/fpv/ar_ldyhs_sky"
-#define STOCK_SIZE   2478136u          /* GT 18.21.7 */
-#define OBJ_VADDR    0x267be4u         /* g_sns_ps5280_obj, 2-lane */
-#define OBJ_EXPECT0  0x000f3b89u       /* register_callback (thumb) */
 
 #define PAGE 0x1000u
 #define ALIGN_DOWN(x, a) ((x) & ~((a) - 1u))
@@ -100,6 +101,23 @@ static int hook_thumb(uint32_t from, void *to)
     return 0;
 }
 
+static const Elf32_Sym *g_sym;
+static const char *g_str;
+static uint32_t g_nsym;
+
+static const Elf32_Sym *stock_sym(const char *name)
+{
+    if (!g_sym || !name)
+        return NULL;
+    for (uint32_t i = 0; i < g_nsym; i++) {
+        if (!g_sym[i].st_name)
+            continue;
+        if (strcmp(g_str + g_sym[i].st_name, name) == 0)
+            return &g_sym[i];
+    }
+    return NULL;
+}
+
 static const Elf32_Dyn *dyn_get(const Elf32_Dyn *d, int32_t tag)
 {
     for (; d->d_tag; d++)
@@ -132,6 +150,12 @@ static int apply_relocs(const Elf32_Ehdr *eh, const uint8_t *file, size_t flen)
 
     const Elf32_Sym *symtab = (const Elf32_Sym *)(uintptr_t)d_sym->d_un.d_ptr;
     const char *strtab = (const char *)(uintptr_t)d_str->d_un.d_ptr;
+    const Elf32_Dyn *d_hash = dyn_get(dyn, DT_HASH);
+    if (!d_hash)
+        return -1;
+    g_sym = symtab;
+    g_str = strtab;
+    g_nsym = ((const uint32_t *)(uintptr_t)d_hash->d_un.d_ptr)[1];
 
     const Elf32_Rel *blocks[2] = { 0 };
     size_t counts[2] = { 0 };
@@ -156,6 +180,10 @@ static int apply_relocs(const Elf32_Ehdr *eh, const uint8_t *file, size_t flen)
             uint32_t *where = (uint32_t *)(uintptr_t)r->r_offset;
             const char *name = (si && strtab) ? strtab + symtab[si].st_name : "";
             void *val = NULL;
+            /* Our own g_sns_ps5280_obj is the export. Copying it over the
+             * stock object would wipe the driver we are about to use. */
+            if (name[0] && strncmp(name, "g_sns_", 6) == 0)
+                continue;
 
             switch (type) {
             case R_ARM_RELATIVE:
@@ -253,9 +281,6 @@ static int map_stock(const char *path)
         fprintf(stderr, "[ps5280] relocs failed\n");
         return -1;
     }
-    if ((unsigned)st.st_size != STOCK_SIZE)
-        fprintf(stderr, "[ps5280] %s size %ld (expected %u), trying anyway\n",
-                path, (long)st.st_size, STOCK_SIZE);
     return 0;
 }
 
@@ -268,30 +293,42 @@ static void __attribute__((constructor)) ps5280_load(void)
     if (map_stock(STOCK_PATH) != 0)
         return;
 
-    const uint32_t *obj = (const uint32_t *)(uintptr_t)OBJ_VADDR;
-    if (obj[0] != OBJ_EXPECT0) {
-        fprintf(stderr, "[ps5280] vtable %08x != %08x\n", obj[0], OBJ_EXPECT0);
+    const Elf32_Sym *objs = stock_sym("g_sns_ps5280_obj");
+    if (!objs || objs->st_size < sizeof(g_sns_ps5280_obj)) {
+        fprintf(stderr, "[ps5280] sky binary has no g_sns_ps5280_obj\n");
+        return;
+    }
+    const uint32_t *obj = (const uint32_t *)(uintptr_t)objs->st_value;
+    if ((obj[0] & 1u) == 0) {
+        fprintf(stderr, "[ps5280] vtable at %x is not a thumb object\n", objs->st_value);
         return;
     }
 
-    struct {
-        uint32_t from;
-        const char *ot, *ss;
-    } hooks[] = {
-        { 0x000bbbb4, "ot_mpi_isp_sensor_reg_callback",   "ss_mpi_isp_sensor_reg_callback" },
-        { 0x000bbfdc, "ot_mpi_isp_sensor_unreg_callback", "ss_mpi_isp_sensor_unreg_callback" },
-        { 0x0008bc04, "ot_mpi_ae_sensor_reg_callback",    "ss_mpi_ae_sensor_reg_callback" },
-        { 0x0008bce0, "ot_mpi_ae_sensor_unreg_callback",  "ss_mpi_ae_sensor_unreg_callback" },
-        { 0x000e4038, "ot_mpi_awb_sensor_reg_callback",   "ss_mpi_awb_sensor_reg_callback" },
-        { 0x000e4114, "ot_mpi_awb_sensor_unreg_callback", "ss_mpi_awb_sensor_unreg_callback" },
-        { 0x000b102c, "ot_mpi_isp_get_ctrl_param",        "ss_mpi_isp_get_ctrl_param" },
+    /* Hook the stock implementation (the ot_ symbol, tens of bytes), not the
+     * 4-byte ss_ stub: an 8-byte patch would run into the next function. */
+    static const char *hooks[] = {
+        "ot_mpi_isp_sensor_reg_callback",
+        "ot_mpi_isp_sensor_unreg_callback",
+        "ot_mpi_ae_sensor_reg_callback",
+        "ot_mpi_ae_sensor_unreg_callback",
+        "ot_mpi_awb_sensor_reg_callback",
+        "ot_mpi_awb_sensor_unreg_callback",
+        "ot_mpi_isp_get_ctrl_param",
     };
     for (size_t i = 0; i < sizeof(hooks) / sizeof(hooks[0]); i++) {
-        void *to = find_sym(hooks[i].ot, hooks[i].ss);
-        if (hook_thumb(hooks[i].from, to) != 0)
+        const Elf32_Sym *s = stock_sym(hooks[i]);
+        char proc[80];
+        if (!s || s->st_size < 8) {
+            fprintf(stderr, "[ps5280] no stock %s\n", hooks[i]);
+            return;
+        }
+        /* ot_mpi_... in the sky binary, ss_mpi_... in the process. */
+        snprintf(proc, sizeof(proc), "ss_%s", hooks[i] + 3);
+        void *to = find_sym(proc, hooks[i]);
+        if (hook_thumb(s->st_value & ~1u, to) != 0)
             return;
     }
 
     memcpy(&g_sns_ps5280_obj, obj, sizeof(g_sns_ps5280_obj));
-    fprintf(stderr, "[ps5280] using stock CMOS at 0x%x (2-lane)\n", OBJ_VADDR);
+    fprintf(stderr, "[ps5280] using stock CMOS at 0x%x (2-lane)\n", objs->st_value);
 }
