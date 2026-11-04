@@ -42,7 +42,7 @@ echo 02:93:11:00:01:02 >"$gadget/functions/rndis.usb0/host_addr"
 ln -s "$gadget/functions/rndis.usb0" "$gadget/configs/c.1/rndis.usb0"
 ln -s "$gadget/functions/acm.usb0" "$gadget/configs/c.1/acm.usb0"
 echo 8000000.usb >"$gadget/UDC"
-ip address add 192.168.3.100/24 dev usb0
+ip address add 192.168.3.103/24 dev usb0
 ip link set usb0 up
 # Stock SSH is retained for diagnostics with its existing credentials/host key.
 /bin/dropbear

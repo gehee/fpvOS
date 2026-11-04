@@ -19,6 +19,9 @@ def configure(config):
     # Parsed as a placeholder; Open8030 replaces this with the radio OTP ID.
     basic["ap"]["mac"] = "00000000"
     basic["dev"]["ap_mac"] = "00000000"
+    # The goggle's list (bb_config_gnd_open8030.json): air and ground name
+    # channels by index, so the order must match. 5839000 at index 15 is not
+    # a typo; the stock Caddx ground lists have it there too.
     basic["channel"]["freq"] = [
         4915000, 4945000, 4975000, 5005000, 5035000, 5065000,
         5120000, 5160000, 5200000, 5240000, 5275000, 5320000,

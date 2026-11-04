@@ -16,10 +16,10 @@ or a flashable firmware release. The stock camera application remains in use.
 
 Output is under `output/p1-air/images/`:
 
-- `p1-air-stock/root.squashfs`: the unmodified vendor root filesystem,
-  extracted from a hash-pinned download. It is a reference artifact, not a
-  raw NAND image; do not flash it directly.
-- `p1-air-stock/manifest.json`: source version and hashes.
+- `p1-air-stock/manifest.json`: source version and hashes of the stock
+  firmware the bundle was extracted from. The vendor root filesystem itself
+  stays in `output/p1-air/build/p1-air-vendor-1.0.44/stock/`, so publishing the
+  images directory does not redistribute it.
 - `p1-air-app.tar.gz`: the application overlay, containing the temporary
   login helper, password hash and source-built Open8030 AP firmware.
 
@@ -84,9 +84,10 @@ bundle; see persistent installation below.
 The source DT uses P1's measured memory layout and SPL `ar-spin-table` CPU
 handoff. USB gadget code is shared with Ascent VRX; identity, addresses and
 MACs are board configuration. The source image provides root:root SSH at
-192.168.3.100. Persistent boot uses the P1 SPL directly; development can load
-the same kernel and DTB into RAM through U-Boot USB. Booting a test image
-does not select or flash it. Do not use the Ascent updater for P1.
+192.168.3.103 (the Ascent VRX is .102, and its setup gives the host PC .100).
+Persistent boot uses the P1 SPL directly; development can load the same
+kernel and DTB into RAM through U-Boot USB. Booting a test image does not
+select or flash it. Do not use the Ascent updater for P1.
 
 ### Camera pipeline
 
@@ -185,7 +186,8 @@ receiver's four-byte `bb_mac_addr_0` array in
 The launcher shares the recorder's camera lock and supplies board tuning and
 initial white-balance settings. Kestrel currently uses automatic white balance.
 Kestrel, radio provisioning and firmware loading start automatically.
-Pairing and application settings persist in the existing `usr_data` volume.
+Pairing and application settings persist in the existing `usrdata` volume of
+the `usr_data` partition.
 
 ### Bind button and status LEDs
 
@@ -214,19 +216,28 @@ Do not run the vendor startup fallback that formats an unavailable factory
 filesystem.
 
 The source profile accesses factory storage read-only. The shared optional
-`radio-calibrate` helper accepts only `baseband.basic.power.pwr_offset`: exactly
-four integers in Open8030's supported range of -6 through +6. The factory JSON
-must contain only that nested schema; unknown fields, duplicate keys, malformed
-JSON and oversized inputs are rejected. Board calibration tables, identity,
-channel policy and pairing cannot be overwritten by the factory file.
+`radio-calibrate` helper takes only `baseband.basic.power.pwr_offset` from the
+factory file: exactly four integers in Open8030's supported range of -6 through
++6. Any other key in the file is named in the log and ignored, never merged, so
+a unit whose file carries more than the stock template still starts. Duplicate
+keys, malformed JSON and oversized inputs are rejected. Board calibration
+tables, identity, channel policy and pairing cannot be overwritten by the
+factory file. Every stock `ar8030_pwr.json` seen so far is the template (only
+`pwr_offset`, all zero); a real unit's own file is not in the repository.
 
 The helper replaces the offsets in the extracted board configuration and
-atomically publishes a mode-0600 file in RAM. Startup requires the factory
-mount to be read-only and the firmware loader path to resolve to that generated
-file. Failure stops startup before loading SDIO, even if a previous runtime
-configuration exists. It never formats storage or substitutes generic offsets.
-A running radio is left alone; applying changed calibration requires a cold
-boot. VRX boards without host provisioning retain Open8030's radio-side factory
+atomically publishes a mode-0600 file in RAM. Calibrated startup requires the
+factory mount to be read-only and the firmware loader path to resolve to that
+generated file. Without usable factory data (`S43factory` failed, or no valid
+offsets), the P1 starts the radio anyway, as stock firmware does without its
+factory file: board defaults, offsets 0, and at most
+`calibration_fallback_power` (14 dBm, about 25 mW) at start-up, with a warning
+on the console and in the kernel log. Kestrel's TX power setting still applies
+once it runs, uncalibrated. With `calibration_fallback_power` empty, a failure
+stops startup before loading SDIO, as before. A previous runtime configuration
+is never reused, storage is never formatted, and generic offsets never replace
+a unit's own. A running radio is left alone; applying changed calibration
+requires a cold boot. VRX boards without host provisioning retain Open8030's radio-side factory
 reader; the helper and JSON library are selected only where needed.
 
 Host tests (a C compiler and Jansson development headers are required):
@@ -266,12 +277,16 @@ the firmware updater preserves factory and stock bank 1.
 ### Persistent application settings
 
 `S45settings` validates the stock `usr_data` partition geometry and discovers its
-existing UBI volume by name. It mounts UBIFS at `/persist`, creates only
+existing UBI volume by name: stock creates it as `usrdata`, without the underscore. It mounts UBIFS at `/persist`, creates only
 `/persist/fpvos/kestrel-air`, and bind-mounts that directory at
 `/var/lib/kestrel-air`. Vendor files under `lowdelay` are left intact. The existing
 filesystem is reused without formatting, resizing, repartitioning or changing
-its format. Failure leaves SSH available and Kestrel refuses to start without
-the writable settings mount; there is no silent fallback to RAM.
+its format. On a failure SSH stays available and Kestrel still starts, on
+default settings in `/run/kestrel-air-settings` (RAM): changes made then are
+not saved, and both the supervisor's log and the kernel log say so
+(`persistent settings unavailable`). The fallback never writes to the empty
+`/var/lib/kestrel-air` mountpoint, so `S45settings` can still mount the volume
+afterwards (stop Kestrel first). The unit then also has no saved pairing.
 
 Kestrel writes `settings.json` and `peer.json` there. Saves write a complete
 temporary file, sync it, rename it over the previous file and sync the directory.
@@ -306,8 +321,8 @@ remains saved. Factory bytes and the vendor's user configuration were preserved.
 
 The source profile starts the shared `S60kestrel-air` service after factory
 calibration, radio initialization and persistent settings. The launcher refuses
-to start without the radio device or required writable settings mount. Startup
-failures leave USB and SSH available. No radio reflash, system reboot or NAND
+to start without the radio device; without the settings mount it starts on
+defaults in RAM (see above). Startup failures leave USB and SSH available. No radio reflash, system reboot or NAND
 firmware write is part of recovery.
 
 The supervisor gives each launcher, Kestrel and its AE/AWB helpers a process
@@ -316,13 +331,15 @@ file lock excludes the standalone camera recorder and releases automatically
 when the last worker exits. Stop the service before using `ar9311-camera-record`
 or running `kestrel-air-run` manually.
 
-Exited applications restart after two seconds. Five consecutive runs shorter
-than 60 seconds exhaust the retry budget; a longer run resets that budget.
-The service then remains stopped until an explicit start/restart or next boot.
+Exited applications restart after two seconds. Each further run shorter than
+60 seconds doubles the wait, up to 10 seconds; a longer run resets it. The
+supervisor never gives up: in flight, video must come back whenever it can.
 Normal shutdown sends TERM to the launcher and Kestrel for camera cleanup,
-then terminates surviving helpers. After five seconds it escalates to KILL;
-if the group still exists after another five seconds, recovery stops instead of
-starting another camera owner. This is process supervision, not a general
+then terminates surviving helpers. After five seconds it escalates to KILL.
+A group that still exists five seconds after that never gets a competing
+camera owner: during a stop the supervisor exits (`failed-cleanup`);
+after a crash it reports `stuck-cleanup`, keeps killing, and restarts once
+the group is gone. This is process supervision, not a general
 kernel-hang watchdog; the encoder's existing stall and helper-exit checks still
 provide application-level fault detection.
 
@@ -362,9 +379,26 @@ updater first selects preserved stock bank 1, writes and reads back bank-0
 kernel and DTB, then updates the existing `userapp0` UBI volume with the full
 `FPVOSUP1` bundle. Only a successful full readback permits GPT activation of
 bank 0. GPT updates erase the nonselected copy, increment its generation,
-recompute CRCs and verify the new record. A torn write leaves the previous
-valid selection. No formatting, resizing, repartitioning, bootloader update,
-or factory write is performed. Settings remain in their existing directory.
+recompute CRCs and verify the new record. Every readback that decides or
+verifies a write (both GPT records, kernel0, dtb0) also checks the partition's
+ECC failure count, since a read returns the data even when ECC could not
+correct it. A failed GPT write is erased again and read back clean, which
+leaves the previous valid selection. No formatting, resizing, repartitioning,
+bootloader update, or factory write is performed. Settings remain in their
+existing directory. **Keep the unit powered during installation.** A power cut
+in the middle of a GPT write can leave a page ECC cannot correct, and the SPL
+then does not boot at all.
+
+What the stock 1.0.44 SPL does, from its code (the same in 2.0.5): it reads
+both GPT records and boots the valid one with the higher 32-bit generation at
+record byte 532 (a tie goes to `gpt0`); the reserved field is not checked. It
+stops, waiting for a reset, when both records are invalid or when a record
+cannot be read (an uncorrectable ECC error). Each record's second erase block
+is a spare, read only once the first is marked bad, so only the first block is
+written. Every load (GPT, U-Boot, kernel, DTB) skips bad blocks from the start
+of the partition, as the installer writes them. That holds for the compressed
+kernel the installer requires; an uncompressed uImage would be read from
+another offset.
 
 At boot, embedded recovery validates the stored bundle and checks that its
 kernel/DTB match NAND before unpacking the rootfs into RAM. A clean-mode request
@@ -372,10 +406,14 @@ is consumed once. Missing, damaged or mismatched bundles remain in USB recovery
 instead of starting Kestrel. Clean mode therefore uses the same source-built
 kernel and requires no stock services.
 
-The kernel entry guard arms the hardware watchdog and the SPL's volatile USB
-boot request. Recovery adopts the watchdog; normal Linux reboot clears the
-request bit. A hang after the guard runs can reset into U-Boot's USB downloader.
-This is not recovery from damaged SPL, U-Boot or a kernel that fails before
+The kernel entry guard arms the hardware watchdog and counts its boots in the
+SPL's volatile scratch word. Recovery adopts the watchdog; a normal Linux
+reboot and a power cycle clear the count. A panic or hang resets with the count
+kept, and the SPL boots fpvOS again, so a crash in flight gets video back. Only
+the third reset in a row without a clean reboot requests the USB boot, so a
+kernel that keeps failing ends in U-Boot's USB downloader (about 4.5 minutes
+when each try hangs until the 89-second watchdog). Leave the unit powered for
+that: a power cycle starts the count over. This is not recovery from damaged SPL, U-Boot or a kernel that fails before
 entry. It is also not A/B fpvOS: bank 1 remains the stock system. Loss of power
 during installation leaves stock selected until activation completes.
 

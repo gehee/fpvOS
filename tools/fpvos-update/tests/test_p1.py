@@ -2,6 +2,7 @@
 """P1 recovery selection and activation ordering, with file-backed UBI faults."""
 import os
 import runpy
+import shutil
 from pathlib import Path
 import struct
 import subprocess
@@ -41,7 +42,8 @@ class P1Tests(unittest.TestCase):
         renames=['p1_preflight','p1_stock','p1_state_mount','p1_state_unmount','p1_bundle_read','p1_bundle_write','p1_mtd','p1_gpt_read']
         subprocess.run(common+['-D'+s+'=unused_'+s for s in renames]+['-c',str(BACKEND/'storage.c'),'-o',str(cls.build/'storage.o')],check=True)
         subprocess.run(common+[str(Path(__file__).with_name('p1_transaction_sim.c')),str(cls.build/'storage.o'),str(SRC/'bootstrap-common.c'),'-Wl,--gc-sections','-Wl,--wrap=execlp','-Wl,--wrap=lstat','-o',str(cls.build/'transaction')],check=True)
-        subprocess.run(common+[str(Path(__file__).with_name('p1_flash_sim.c')),str(cls.build/'storage.o'),'-Wl,--gc-sections','-Wl,--wrap=open','-Wl,--wrap=ioctl','-Wl,--wrap=pwrite','-Wl,--wrap=fsync','-o',str(cls.build/'flash')],check=True)
+        subprocess.run(common+[str(Path(__file__).with_name('p1_flash_sim.c')),str(cls.build/'storage.o'),'-Wl,--gc-sections','-Wl,--wrap=open','-Wl,--wrap=ioctl','-Wl,--wrap=pwrite','-Wl,--wrap=pread','-Wl,--wrap=fsync','-o',str(cls.build/'flash')],check=True)
+        subprocess.run(common+[str(Path(__file__).with_name('p1_volume_sim.c')),'-Wl,--gc-sections','-Wl,--wrap=open','-Wl,--wrap=__open_2','-Wl,--wrap=opendir','-Wl,--wrap=access','-Wl,--wrap=ioctl','-o',str(cls.build/'volume')],check=True)
         (cls.build/'layout.c').write_text('#include <stdio.h>\n#include "'+str(BACKEND/'layout.h')+'"\nint main(void) { unsigned char g[2][AR9311_GPT_BYTES]; if (fread(g,1,sizeof(g),stdin)!=sizeof(g)) return 2; return !p1_layout_valid(g); }\n')
         subprocess.run(common+[str(cls.build/'layout.c'),'-o',str(cls.build/'layout')],check=True)
 
@@ -71,6 +73,27 @@ class P1Tests(unittest.TestCase):
         parts=list(PARTS);parts[-1]=parts[-2]
         self.assertFalse(self.layout(record(0),record(parts=parts)))
 
+    def volume(self,kind,data='usrdata',app='userapp'):
+        with tempfile.TemporaryDirectory() as t:
+            d=Path(t)
+            for n,(mtd,offset,size,name,ebs) in enumerate((('usr_data',0x7100000,0x600000,data,40),('userapp0',0x1700000,0x2d00000,app,353))):
+                for path,text in {f'sys/class/mtd/mtd{n}/name':mtd,f'sys/class/mtd/mtd{n}/offset':str(offset),
+                                  f'sys/class/ubi/ubi{n}/mtd_num':str(n),f'sys/class/ubi/ubi{n}/ro_mode':'0',
+                                  f'sys/class/ubi/ubi{n}_0/name':name,f'sys/class/ubi/ubi{n}_0/type':'dynamic',
+                                  f'sys/class/ubi/ubi{n}_0/reserved_ebs':str(ebs),
+                                  f'sys/class/ubi/ubi{n}_0/usable_eb_size':'126976',f'dev/ubi{n}_0':''}.items():
+                    (d/path).parent.mkdir(parents=True,exist_ok=True);(d/path).write_text(text+'\n' if text else '')
+                with open(d/f'dev/mtd{n}','wb') as f: f.truncate(size)
+            r=subprocess.run([str(self.build/'volume'),kind],cwd=d,capture_output=True,text=True)
+            return r.stdout.strip() if r.returncode==0 else None
+
+    def test_stock_volume_names(self):
+        # As on a stock 1.0.44 unit: MTD usr_data holds volume usrdata, userapp0 holds userapp.
+        self.assertEqual(self.volume('data'),'/dev/ubi0_0')
+        self.assertEqual(self.volume('app'),'/dev/ubi1_0')
+        self.assertIsNone(self.volume('data',data='usr_data'))
+        self.assertIsNone(self.volume('app',app='userapp0'))
+
     def flash_directory(self):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);d=Path(temp.name)
         data=bytearray(b'\xff'*0x80000);data[0x40000:0x44400]=record()
@@ -79,8 +102,9 @@ class P1Tests(unittest.TestCase):
         (d/'dtb0').write_bytes(b'\x55'*0x60000)
         return d
 
-    def flash(self,d,operation,arg,fault=0):
-        return subprocess.run([str(self.build/'flash'),operation,str(arg),str(fault)],cwd=d).returncode
+    def flash(self,d,operation,arg,fault=0,output=False):
+        r=subprocess.run([str(self.build/'flash'),operation,str(arg),str(fault)],cwd=d,capture_output=True,text=True)
+        return (r.returncode,r.stderr) if output else r.returncode
 
     def test_direct_selection_and_return_preserve_other_metadata(self):
         d=self.flash_directory();before=(d/'boot-state').read_bytes()
@@ -101,14 +125,25 @@ class P1Tests(unittest.TestCase):
         self.assertEqual(end[0x40400:0x44400],before[0x40400:0x44400])
 
     def test_torn_gpt_keeps_previous_record_and_can_retry(self):
-        for fault in (1,3,4):
+        # 1: torn write, 3: wrong byte read back, 4: erase fails,
+        # 5: the new record reads back with an uncorrectable ECC error.
+        for fault in (1,3,4,5):
             with self.subTest(fault=fault):
                 d=self.flash_directory();before=(d/'boot-state').read_bytes()
                 self.assertNotEqual(self.flash(d,'select',0,fault),0)
                 after=(d/'boot-state').read_bytes()
                 self.assertEqual(after[0x40000:],before[0x40000:])
+                # A failed write is erased again: SPL then only sees a bad CRC.
+                self.assertEqual(after[:0x4800],b'\xff'*0x4800)
                 self.assertTrue(self.layout(after[:0x4400],after[0x40000:0x44400]))
                 self.assertEqual(self.flash(d,'select',0),0)
+
+    def test_gpt_left_unreadable_is_reported(self):
+        d=self.flash_directory();before=(d/'boot-state').read_bytes()
+        rc,err=self.flash(d,'select',0,6,output=True)
+        self.assertNotEqual(rc,0)
+        self.assertIn('keep the unit powered',err)
+        self.assertEqual((d/'boot-state').read_bytes()[0x40000:],before[0x40000:])
 
     def test_nand_bad_block_skipping_readback_and_errors(self):
         d=self.flash_directory();image=bytes(range(256))*1200;(d/'image').write_bytes(image)
@@ -118,7 +153,7 @@ class P1Tests(unittest.TestCase):
         self.assertEqual(data[0x20000:0x40000],b'\x55'*0x20000)
         self.assertEqual(data[0x40000:0x40000+len(image)-0x20000],image[0x20000:])
         self.assertEqual(self.flash(d,'compare','image',2),0)
-        for fault in (1,3,4):
+        for fault in (1,3,4,7):
             self.assertNotEqual(self.flash(d,'write','image',fault),0)
 
     def transaction(self,mode):
@@ -172,7 +207,7 @@ class BootGuardTests(unittest.TestCase):
         image[56:60] = b'ARM\x64'
         struct.pack_into('<I', image, 4, 0x14000010)
         struct.pack_into('<Q', image, 16, 4096)
-        code = bytes(56) + mod['branch'](0)
+        code = bytes(mod['GUARD_BYTES'] - 4) + mod['branch'](0)
         result = mod['guard'](bytes(image), code)
         self.assertEqual(result[4:256], image[4:])
         def target(pc):
@@ -186,5 +221,64 @@ class BootGuardTests(unittest.TestCase):
         struct.pack_into('<Q', image, 16, 4096)
         struct.pack_into('<Q', image, 8, 0x80000)
         with self.assertRaises(ValueError): mod['guard'](bytes(image), code)
+
+    def test_guard_assembles_to_the_checked_size(self):
+        gcc, objcopy = shutil.which('aarch64-linux-gnu-gcc'), shutil.which('aarch64-linux-gnu-objcopy')
+        if not gcc or not objcopy: self.skipTest('no aarch64 cross toolchain')
+        mod = runpy.run_path(str(ROOT / 'boot/p1-bootguard.py'))
+        with tempfile.TemporaryDirectory() as d:
+            subprocess.run([gcc, '-c', str(ROOT / 'boot/p1-bootguard.S'), '-o', f'{d}/g.o'], check=True)
+            subprocess.run([objcopy, '-O', 'binary', '-j', '.text', f'{d}/g.o', f'{d}/g.bin'], check=True)
+            code = Path(f'{d}/g.bin').read_bytes()
+        self.assertEqual(len(code), mod['GUARD_BYTES'])
+        self.assertEqual(code[-4:], mod['branch'](0))
+
+    def test_crash_restarts_boot_fpvos_until_the_last_try(self):
+        # Runs the guard itself under qemu-aarch64, with its two register pages
+        # mapped at their physical addresses (the test build returns at the end).
+        gcc, qemu = shutil.which('aarch64-linux-gnu-gcc'), shutil.which('qemu-aarch64')
+        if not gcc or not qemu: self.skipTest('no aarch64 cross toolchain or qemu-aarch64')
+        harness = r'''
+#define _GNU_SOURCE
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+void p1_bootguard(void);
+static volatile uint32_t *page(uintptr_t at)
+{
+    void *p = mmap((void *)at, 4096, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+    if (p != (void *)at) exit(2);
+    return p;
+}
+int main(int argc, char **argv)
+{
+    volatile uint32_t *scratch = page(0x0a106000) + 0x138 / 4, *wdt = page(0x01600000);
+    (void)argc;
+    *scratch = strtoul(argv[1], NULL, 0);
+    p1_bootguard();
+    printf("%#x %#x %#x %#x\n", *scratch, wdt[0], wdt[1], wdt[3]);
+    return 0;
+}
+'''
+        with tempfile.TemporaryDirectory() as d:
+            Path(f'{d}/h.c').write_text(harness)
+            subprocess.run([gcc, '-static', '-O1', '-DP1_BOOTGUARD_TEST', f'{d}/h.c',
+                            str(ROOT / 'boot/p1-bootguard.S'), '-o', f'{d}/h'], check=True)
+            def boot(scratch):
+                out = subprocess.run([qemu, f'{d}/h', hex(scratch)], capture_output=True,
+                                     text=True, check=True).stdout.split()
+                value, enable, top, _ = (int(x, 16) for x in out)
+                self.assertEqual((enable, top), (1, 0xff))  # watchdog armed every time
+                return value
+            # Power-up, then two panics/hangs in a row: fpvOS again, bit 0 clear.
+            self.assertEqual(boot(0), 0x102)
+            self.assertEqual(boot(0x102), 0x202)
+            # The third reset in a row asks the SPL for the USB downloader.
+            self.assertEqual(boot(0x202), 3)
+            self.assertEqual(boot(0xf02), 3)
+            # syscon-reboot-mode's normal restart (2) and a power cycle (0) start over.
+            self.assertEqual(boot(2), 0x102)
 
 if __name__=='__main__': unittest.main()

@@ -2,13 +2,17 @@
 # Explicit source-camera launcher; the OS owns module loading and board policy.
 set -eu
 STATE_DIR=/var/lib/kestrel-air
-REQUIRE_PERSISTENT_STATE=0
+PERSISTENT_STATE=0
 [ ! -r /etc/default/kestrel-air ] || . /etc/default/kestrel-air
-if [ "$REQUIRE_PERSISTENT_STATE" = 1 ]; then
-    awk -v point="$STATE_DIR" '$2 == point && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { ok=1 } END { exit !ok }' /proc/mounts || {
-        echo 'Persistent settings unavailable; run S45settings before Kestrel' >&2
-        exit 1
-    }
+if [ "$PERSISTENT_STATE" = 1 ] &&
+    ! awk -v point="$STATE_DIR" '$2 == point && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { ok=1 } END { exit !ok }' /proc/mounts; then
+    # Start on defaults rather than refuse: radio without video is worse than
+    # settings that are not kept. A RAM directory, not the empty mountpoint,
+    # so S45settings can still mount the volume later.
+    warning='persistent settings unavailable (see S45settings): running on defaults in RAM, changes are not saved'
+    echo "WARNING: $warning" >&2
+    echo "<4>kestrel-air: $warning" 2>/dev/null >/dev/kmsg || :
+    STATE_DIR=/run/kestrel-air-settings
 fi
 . /etc/default/ar9311-camera
 : "${SENSOR_MODULE:?}" "${TUNING:?}" "${WB_RED:?}" "${WB_BLUE:?}" "${WB_STATS_ORDER:?}"
@@ -26,7 +30,7 @@ modprobe ar-isp gates=1 seed=0
 modprobe ar-cvisp assert_clk=1
 modprobe wave5
 export KA_CAMERA_TUNING="$TUNING" KA_WB_RED="$WB_RED" KA_WB_BLUE="$WB_BLUE" KA_WB_ORDER="$WB_STATS_ORDER"
-mkdir -p "$STATE_DIR"
+mkdir -p -m 0700 "$STATE_DIR"
 export KA_CONFIG="$STATE_DIR/settings.json"
 export KA_PEER_CONFIG="$STATE_DIR/peer.json"
 export KA_READY_FILE=/run/kestrel-air/ready

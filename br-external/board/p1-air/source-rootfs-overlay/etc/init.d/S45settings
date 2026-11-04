@@ -46,14 +46,15 @@ start)
         find_ubi
     fi
     [ -n "$ubi" ] || fail 'attached UBI not found'
+    # Stock creates the volume as usrdata, without the partition's underscore.
     vol=
     for p in /sys/class/ubi/"${ubi}"_*; do
         [ -f "$p/name" ] || continue
-        [ "$(cat "$p/name")" = usr_data ] || continue
-        [ -z "$vol" ] || fail 'ambiguous usr_data volumes'
+        [ "$(cat "$p/name")" = usrdata ] || continue
+        [ -z "$vol" ] || fail 'ambiguous usrdata volumes'
         vol=${p##*/}
     done
-    [ -n "$vol" ] || fail 'usr_data volume not found'
+    [ -n "$vol" ] || fail 'usrdata volume not found'
     [ ! -L "$root" ] && [ ! -L "$state" ] || fail 'mountpoint is a symlink'
     if mounted "$root"; then
         expected "$root" || fail 'unexpected existing data mount'

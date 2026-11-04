@@ -24,7 +24,7 @@ class SettingsMount(unittest.TestCase):
             self.put('sys/class/mtd/mtd4/'+k, v)
         self.put('sys/class/ubi/ubi2/mtd_num', '4')
         self.put('sys/class/ubi/ubi2/ro_mode', '0')
-        self.put('sys/class/ubi/ubi2_0/name', 'usr_data')
+        self.put('sys/class/ubi/ubi2_0/name', 'usrdata')
         self.put('proc/mounts', '')
         self.bin = self.root/'bin'
         self.bin.mkdir()
@@ -95,8 +95,8 @@ fi
     def test_missing_or_duplicate_volume(self):
         self.put('sys/class/ubi/ubi2_0/name', 'factory')
         self.assertNotEqual(self.run_start()[0].returncode, 0)
-        self.put('sys/class/ubi/ubi2_0/name', 'usr_data')
-        self.put('sys/class/ubi/ubi2_1/name', 'usr_data')
+        self.put('sys/class/ubi/ubi2_0/name', 'usrdata')
+        self.put('sys/class/ubi/ubi2_1/name', 'usrdata')
         self.assertNotEqual(self.run_start()[0].returncode, 0)
 
     def test_attach_failure_does_not_format(self):
@@ -134,18 +134,35 @@ fi
         self.assertNotEqual(r.returncode, 0)
         self.assertNotIn('mount --bind', calls)
 
-    def test_launcher_rejects_missing_persistent_mount(self):
+    def run_launcher(self, mounts):
         repo = BOARD.parents[2]
         text = (repo/'br-external/package/kestrel-air/ar9311-run').read_text()
         config = self.root/'kestrel-defaults'
-        config.write_text('REQUIRE_PERSISTENT_STATE=1\n')
+        config.write_text(f'STATE_DIR={self.root}/state\nPERSISTENT_STATE=1\n')
+        camera = self.root/'camera-defaults'
+        camera.write_text('SENSOR_MODULE=s TUNING=t WB_RED=1 WB_BLUE=1 WB_STATS_ORDER=o\n')
+        (self.root/'proc').mkdir(exist_ok=True)
+        (self.root/'proc/mounts').write_text(mounts)
         text = text.replace('/etc/default/kestrel-air', str(config))
+        text = text.replace('/etc/default/ar9311-camera', str(camera))
         text = text.replace('/proc/mounts', str(self.root/'proc/mounts'))
+        text = text.replace('/dev/kmsg', str(self.root/'kmsg'))
         launcher = self.root/'launcher'
         launcher.write_text(text)
-        r = subprocess.run(['sh', str(launcher)], capture_output=True, text=True)
-        self.assertNotEqual(r.returncode, 0)
-        self.assertIn('Persistent settings unavailable', r.stderr)
+        # Stops at the radio check (no /dev/arlink0 here), past the settings one.
+        return subprocess.run(['sh', str(launcher)], capture_output=True, text=True)
+
+    def test_launcher_starts_on_ram_defaults_without_persistent_mount(self):
+        r = self.run_launcher('')
+        self.assertIn('WARNING: persistent settings unavailable', r.stderr)
+        self.assertIn('changes are not saved', (self.root/'kmsg').read_text())
+        self.assertIn('Start/provision the radio first', r.stderr)
+
+    def test_launcher_uses_mounted_settings_quietly(self):
+        r = self.run_launcher(f'ubi0:usrdata {self.root}/state ubifs rw,relatime 0 0\n')
+        self.assertNotIn('WARNING', r.stderr)
+        self.assertFalse((self.root/'kmsg').exists())
+        self.assertIn('Start/provision the radio first', r.stderr)
 
 
 if __name__ == '__main__':

@@ -73,16 +73,51 @@ class Calibration(unittest.TestCase):
                 self.factory.write_text(json.dumps(f))
                 self.rejected()
 
-    def test_missing_wrong_or_extra_fields(self):
+    def test_missing_or_wrong_fields(self):
         for f in ({}, [], {"baseband": []}, {"baseband": {"basic": {"power": {}}}},
-                  {**FACTORY, "system": {"injected": True}}):
+                  {"system": {"injected": True}}):
             with self.subTest(f=f):
                 self.factory.write_text(json.dumps(f))
                 self.rejected()
+
+    def test_extra_factory_keys_are_ignored_not_merged(self):
         f = copy.deepcopy(FACTORY)
+        f["system"] = {"injected": True}
         f["baseband"]["basic"]["power"]["pwr_init"] = 39
+        f["baseband"]["basic"]["role"] = "dev"
         self.factory.write_text(json.dumps(f))
-        self.rejected()
+        result = self.run_helper()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = copy.deepcopy(BASE)
+        expected["baseband"]["basic"]["power"]["pwr_offset"] = [-6, 2, 6, -1]
+        self.assertEqual(json.loads(self.output.read_text()), expected)
+        for key in (b"system", b"baseband.basic.role", b"baseband.basic.power.pwr_init"):
+            self.assertIn(b"ignoring factory key " + key, result.stderr)
+
+    def uncalibrated(self, cap):
+        return subprocess.run([str(self.binary), "--uncalibrated", str(self.base), str(self.output), cap],
+                              capture_output=True)
+
+    def test_uncalibrated_caps_power_and_zeroes_offsets(self):
+        base = copy.deepcopy(BASE)
+        base["baseband"]["basic"]["power"].update(pwr_init=23, pwr_offset=[3, 3, 3, 3])
+        self.base.write_text(json.dumps(base))
+        result = self.uncalibrated("14")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        expected = copy.deepcopy(base)
+        expected["baseband"]["basic"]["power"].update(pwr_init=14, pwr_offset=[0]*4)
+        self.assertEqual(json.loads(self.output.read_text()), expected)
+        self.assertEqual(self.output.stat().st_mode & 0o777, 0o600)
+
+    def test_uncalibrated_never_raises_power_or_picks_a_missing_row(self):
+        result = self.uncalibrated("20")  # base runs at 14: stays at 14
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(self.output.read_text())["baseband"]["basic"]["power"]["pwr_init"], 14)
+        self.output.unlink()
+        for cap in ("9", "8", "37", "", "14x"):
+            with self.subTest(cap=cap):
+                self.assertNotEqual(self.uncalibrated(cap).returncode, 0)
+                self.assertFalse(self.output.exists())
 
     def test_malformed_trailing_duplicate_and_oversized_inputs(self):
         for text in ('{"baseband":', json.dumps(FACTORY)+'{}',
@@ -150,7 +185,23 @@ class Calibration(unittest.TestCase):
     def test_wrong_loader_path_rejected(self):
         self.startup(wrong_link=True)
 
-    def startup(self, valid=True, writable=False, wrong_link=False):
+    def test_fallback_starts_uncalibrated_without_factory_data(self):
+        for case in ({"valid": False}, {"writable": True}):
+            with self.subTest(**case):
+                self.tearDown_root()
+                self.startup(fallback="14", **case)
+
+    def test_fallback_without_a_calibration_row_stays_stopped(self):
+        self.startup(valid=False, fallback="9")
+
+    def tearDown_root(self):
+        for name in ("run", "lib", "mounts", "defaults", "bin", "module-called", "start"):
+            path = self.root/name
+            if path.is_dir(): subprocess.run(["rm", "-rf", str(path)], check=True)
+            elif path.exists() or path.is_symlink(): path.unlink()
+        self.factory.write_text(json.dumps(FACTORY))
+
+    def startup(self, valid=True, writable=False, wrong_link=False, fallback=""):
         run = self.root/"run/ar9311-radio"
         run.mkdir(parents=True)
         fw = self.root/"lib/firmware"
@@ -162,7 +213,8 @@ class Calibration(unittest.TestCase):
         mounts.write_text(f"/dev/ubi0_0 /factory ubifs {'rw' if writable else 'ro'},nosuid 0 0\n")
         defaults = self.root/"defaults"
         defaults.write_text(f"config=p1.json\ncalibration_base={self.base}\n"
-                            f"calibration_factory={self.factory}\ncalibration_mount=/factory\n")
+                            f"calibration_factory={self.factory}\ncalibration_mount=/factory\n"
+                            f"calibration_fallback_power={fallback}\n")
         if not valid:
             self.factory.write_text('{}')
         text = (PACKAGE/"src/S44ar9311-radio").read_text()
@@ -170,7 +222,7 @@ class Calibration(unittest.TestCase):
         text = text.replace('/usr/libexec/radio-calibrate', str(self.binary))
         for old, new in [('/sys/module/arlink', str(self.root/'not-loaded')),
                          ('/proc/mounts', str(mounts)), ('/lib/firmware', str(fw)),
-                         ('/run/ar9311-radio', str(run))]:
+                         ('/run/ar9311-radio', str(run)), ('/dev/kmsg', str(self.root/'kmsg'))]:
             text = text.replace(old, new)
         # The fake module loader exits on its first call. No hardware access.
         binpath = self.root/"bin"
@@ -183,9 +235,15 @@ class Calibration(unittest.TestCase):
         script.write_text(text)
         subprocess.run(['sh', str(script), 'start'], capture_output=True,
                        env={**os.environ, 'PATH': str(binpath)+':'+os.environ['PATH']})
-        self.assertEqual(marker.exists(), valid and not writable and not wrong_link)
-        if valid and not writable:
-            self.assertEqual(json.loads((run/'config.json').read_text())['baseband']['basic']['power']['pwr_offset'], [-6,2,6,-1])
+        calibrated = valid and not writable
+        # Without usable factory data only a fallback with a calibration row starts.
+        started = not wrong_link and (calibrated or fallback == "14")
+        self.assertEqual(marker.exists(), started)
+        power = json.loads((run/'config.json').read_text())['baseband']['basic']['power'] if started else None
+        if started and calibrated:
+            self.assertEqual(power['pwr_offset'], [-6,2,6,-1])
+        elif started:
+            self.assertEqual((power['pwr_offset'], power['pwr_init']), ([0]*4, 14))
 
 
 if __name__ == '__main__':

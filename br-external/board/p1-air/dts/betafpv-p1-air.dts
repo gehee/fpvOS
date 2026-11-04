@@ -7,8 +7,9 @@
 	model = "BETAFPV P1 Air (AR9311) source bring-up";
 	compatible = "betafpv,p1-air", "artosyn,proxima-9311";
 
-	/* The SPL reads and clears this scratch word on watchdog reset.
-	 * Normal reboot selects direct boot; reboot bootloader requests USB.
+	/* The SPL reads this scratch word at every reset and clears it when it
+	 * enters the USB downloader. Normal reboot selects direct boot (and
+	 * clears the boot guard's attempt count); reboot bootloader requests USB.
 	 */
 	reboot-scratch@a106138 {
 		compatible = "syscon", "simple-mfd";

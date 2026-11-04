@@ -23,6 +23,9 @@
 #ifndef RETRY_MS
 #define RETRY_MS 2000
 #endif
+#ifndef MAX_RETRY_MS
+#define MAX_RETRY_MS 10000
+#endif
 #ifndef STABLE_MS
 #define STABLE_MS 60000
 #endif
@@ -32,7 +35,6 @@
 #ifndef LOG_BYTES
 #define LOG_BYTES (1024 * 1024)
 #endif
-#define ATTEMPTS 5
 
 static volatile sig_atomic_t stopping;
 static int logfile = -1;
@@ -128,17 +130,27 @@ int main(int argc, char **argv)
         int pipefd[2];
         if (pipe2(pipefd, O_CLOEXEC)) { result = 1; break; }
         long long started = now_ms();
+        /* Blocked across fork(): a stop in that window stays pending until the
+         * child has the default handlers back, so it ends the child instead of
+         * setting the copy of our flag and letting the exec go ahead. */
+        sigset_t stops, previous;
+        sigemptyset(&stops);
+        sigaddset(&stops, SIGINT);
+        sigaddset(&stops, SIGTERM);
+        sigprocmask(SIG_BLOCK, &stops, &previous);
         pid_t child = fork();
         if (!child) {
             close(pipefd[0]);
             if (setpgid(0, 0)) _exit(126);
             signal(SIGINT, SIG_DFL); signal(SIGTERM, SIG_DFL);
+            sigprocmask(SIG_SETMASK, &previous, NULL);
             if (dup2(pipefd[1], STDOUT_FILENO) < 0 || dup2(pipefd[1], STDERR_FILENO) < 0) _exit(126);
             close(pipefd[1]);
             execvp(argv[2], argv + 2);
             perror("exec air launcher");
             _exit(127);
         }
+        sigprocmask(SIG_SETMASK, &previous, NULL);
         close(pipefd[1]);
         if (child < 0) { close(pipefd[0]); result = 1; break; }
         /* Both sides establish the group, including a stop immediately after fork. */
@@ -166,13 +178,15 @@ int main(int argc, char **argv)
             if (leader_done && kill(-child, 0) < 0 && errno == ESRCH) break;
             if (phase && now_ms() >= deadline) {
                 kill(-child, SIGKILL);
-                if (phase == 2) {
-                    /* Never start a competing generation if kernel teardown
-                     * is stuck. Leave SSH and the rest of init running. */
+                /* Never start a competing generation while kernel teardown is
+                 * stuck. A stop gives up (SSH and the rest of init keep
+                 * running); otherwise keep killing and restart once it's gone. */
+                if (phase == 2 && stopping) {
                     status("failed-cleanup", child, failures);
                     result = 1;
                     goto out;
                 }
+                if (phase == 2) status("stuck-cleanup", child, failures);
                 phase = 2; deadline = now_ms() + STOP_MS;
             }
         }
@@ -185,9 +199,13 @@ int main(int argc, char **argv)
         log_write(message, (size_t)n);
         if (stopping) break;
         failures = ended - started >= STABLE_MS ? 0 : failures + 1;
-        if (failures >= ATTEMPTS) { status("failed", 0, failures); result = 1; goto out; }
+        /* Never give up: a flight unit must get its video back. Each short run
+         * doubles the wait from RETRY_MS, up to MAX_RETRY_MS. */
+        long long delay = RETRY_MS;
+        for (unsigned i = 1; i < failures && delay < MAX_RETRY_MS; i++) delay *= 2;
+        if (delay > MAX_RETRY_MS) delay = MAX_RETRY_MS;
         status("backoff", 0, failures);
-        long long retry = now_ms() + RETRY_MS;
+        long long retry = now_ms() + delay;
         while (!stopping && now_ms() < retry) poll(NULL, 0, 50);
     }
     status(result ? "failed" : "stopped", 0, failures);

@@ -4,7 +4,7 @@
 #include <assert.h>
 #include <stdarg.h>
 static int fault;
-static unsigned writes;
+static unsigned writes, pwrites, ecc_failed;
 /* Match mtdchar rather than regular-file fsync semantics. */
 int __wrap_fsync(int fd) { (void)fd; errno=EINVAL; return -1; }
 int __real_open(const char *,int,...);
@@ -28,21 +28,36 @@ int p1_mtd(const char *name,unsigned offset,unsigned size,unsigned *number) {
 }
 int p1_gpt_read(unsigned char g[2][AR9311_GPT_BYTES]) {
     int fd=open("boot-state",O_RDONLY);assert(fd>=0);
-    int rc=p1_exact(fd,g[0],AR9311_GPT_BYTES,0)||p1_exact(fd,g[1],AR9311_GPT_BYTES,0x40000);
+    int rc=p1_read_checked(fd,g[0],AR9311_GPT_BYTES,0)||p1_read_checked(fd,g[1],AR9311_GPT_BYTES,0x40000);
     close(fd);return rc || !p1_layout_valid(g) ? -1 : 0;
 }
 ssize_t __wrap_pwrite(int fd,const void *data,size_t n,off_t off) {
     assert(n%2048==0 && off%2048==0);
     unsigned char old[0x20000];assert(n<=sizeof(old));assert(pread(fd,old,n,off)==(ssize_t)n);
     for (size_t i=0;i<n;i++) assert((old[i]&((const unsigned char *)data)[i])==((const unsigned char *)data)[i]);
+    pwrites++;
     if (fault==1 && ++writes==1) { assert(__real_pwrite(fd,data,512,off)==512);errno=EIO;return -1; }
     ssize_t rc=__real_pwrite(fd,data,n,off);
     if (fault==3) { unsigned char zero=((const unsigned char *)data)[0]^1;assert(__real_pwrite(fd,&zero,1,off)==1); }
     return rc;
 }
+/* ECC failures read back data like mtdchar: only the failure count shows them.
+ * 5: the new GPT record's first readback; 6: every GPT read after its write,
+ * the erased one too; 7: the first kernel readback. */
+ssize_t __real_pread(int,void *,size_t,off_t);
+ssize_t __wrap_pread(int fd,void *data,size_t n,off_t off) {
+    static int once;
+    if ((fault==5 && pwrites && off==0 && n==AR9311_GPT_BYTES && !once++) ||
+        (fault==6 && pwrites && off==0 && n>=AR9311_GPT_BYTES) ||
+        (fault==7 && pwrites && off==0 && n==0x20000 && !once++)) ecc_failed++;
+    return __real_pread(fd,data,n,off);
+}
 int __wrap_ioctl(int fd,unsigned long request,...) {
     va_list ap;va_start(ap,request);void *arg=va_arg(ap,void *);va_end(ap);
     if (request==MEMGETBADBLOCK) return fault==2 && *(loff_t *)arg==0x20000;
+    if (request==ECCGETSTATS) {
+        struct mtd_ecc_stats *s=arg;memset(s,0,sizeof(*s));s->failed=ecc_failed;return 0;
+    }
     assert(request==MEMERASE);
     struct erase_info_user *e=arg;assert(e->length==0x20000 && e->start%0x20000==0);
     if (fault==4) {errno=EIO;return -1;}

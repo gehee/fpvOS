@@ -4,3 +4,6 @@ config=p1-air-radio.json
 calibration_base=/usr/share/radio/p1-air.json
 calibration_factory=/factory/ar8030_pwr.json
 calibration_mount=/factory
+# Without usable factory data (S43factory failed, or no valid pwr_offset), start
+# on the board defaults at up to this power (dBm) rather than not at all.
+calibration_fallback_power=14
