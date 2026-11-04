@@ -1,0 +1,34 @@
+#!/bin/sh
+# Explicit source-camera launcher; the OS owns module loading and board policy.
+set -eu
+STATE_DIR=/var/lib/kestrel-air
+REQUIRE_PERSISTENT_STATE=0
+[ ! -r /etc/default/kestrel-air ] || . /etc/default/kestrel-air
+if [ "$REQUIRE_PERSISTENT_STATE" = 1 ]; then
+    awk -v point="$STATE_DIR" '$2 == point && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { ok=1 } END { exit !ok }' /proc/mounts || {
+        echo 'Persistent settings unavailable; run S45settings before Kestrel' >&2
+        exit 1
+    }
+fi
+. /etc/default/ar9311-camera
+: "${SENSOR_MODULE:?}" "${TUNING:?}" "${WB_RED:?}" "${WB_BLUE:?}" "${WB_STATS_ORDER:?}"
+[ -c /dev/arlink0 ] || { echo 'Start/provision the radio first' >&2; exit 1; }
+exec 9>/run/ar9311-camera.lock
+flock -n 9 || { echo 'Camera already in use' >&2; exit 1; }
+# Workers inherit the lock; the supervisor reaps survivors after a crash.
+grep -q ' /sys/kernel/debug debugfs ' /proc/mounts || mount -t debugfs debugfs /sys/kernel/debug
+modprobe artosyn_gpio
+modprobe clk-ar9311-cgu
+modprobe "$SENSOR_MODULE"
+modprobe ar-csi2
+modprobe ar-vif
+modprobe ar-isp gates=1 seed=0
+modprobe ar-cvisp assert_clk=1
+modprobe wave5
+export KA_CAMERA_TUNING="$TUNING" KA_WB_RED="$WB_RED" KA_WB_BLUE="$WB_BLUE" KA_WB_ORDER="$WB_STATS_ORDER"
+mkdir -p "$STATE_DIR"
+export KA_CONFIG="$STATE_DIR/settings.json"
+export KA_PEER_CONFIG="$STATE_DIR/peer.json"
+export KA_READY_FILE=/run/kestrel-air/ready
+rm -f "$KA_READY_FILE"
+exec /usrdata/fpv/air/kestrel-air "$@"

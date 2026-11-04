@@ -212,6 +212,7 @@ def main():
     sub.add_parser('info')
     sub.add_parser('clean')
     sub.add_parser('reboot')
+    sub.add_parser('stock', help='return to preserved stock firmware when supported by the backend')
     sub.add_parser('verify').add_argument('package', type=Path)
     install_parser = sub.add_parser('install')
     install_parser.add_argument('package', type=Path)
@@ -246,6 +247,9 @@ def main():
                 else:
                     result['boot_verified'] = False
                     result['note'] = 'Vendor USB identity differs; verify the stock boot separately.'
+        elif args.command == 'stock':
+            client.ack(3, b'stock'.ljust(32, b'\0'))
+            result = {'reboot_requested': True, 'note': 'Verify the stock boot separately; its USB identity differs.'}
         elif args.command == 'reboot':
             client.ack(3, b'reboot'.ljust(32, b'\0'))
             result = {'reboot_requested': True}

@@ -46,7 +46,7 @@ jobs:
           for f in $(git ls-files 'br-external/board/ascent-vrx/*' \
                      'br-external/board/common/ar9311/*' \
                      'br-external/package/ar9311-radio/src/*' \
-                     'br-external/package/ascent-vrx-recovery/src/*' \
+                     'br-external/package/fpvos-recovery/src/*' \
                      'br-external/package/fpvos-update/*'); do
             if head -1 "$f" | grep -q '^#!/bin/sh'; then
               sh -n "$f" || exit 1
@@ -55,8 +55,36 @@ jobs:
 
       - name: AR9311 host tools and updater tests
         run: |
-          python3 -m py_compile boot/mkar9311img.py scripts/ar9311-ram-transfer.py
+          python3 -m py_compile boot/mkar9311img.py boot/p1-bootguard.py scripts/ar9311-ram-transfer.py
           python3 -m unittest discover -s tools/fpvos-update/tests -v
 
       - name: AR9311 firmware extraction tests
         run: python3 -m unittest discover -s br-external/package/ar9311-firmware/tests -v
+
+      - name: P1 stock-runtime package checks
+        run: |
+          sh -n br-external/board/p1-air/source-rootfs-overlay/etc/init.d/S43factory
+          python3 br-external/board/p1-air/tests/test_factory.py -v
+          sh -n br-external/board/p1-air/source-rootfs-overlay/etc/init.d/S45settings
+          sh -n br-external/package/kestrel-air/ar9311-run
+          sh -n br-external/package/kestrel-air/S60kestrel-air
+          python3 br-external/package/kestrel-air/tests/test_supervise.py -v
+          python3 br-external/board/p1-air/tests/test_settings.py -v
+          sh -n br-external/board/p1-air/post-image.sh
+          sh -n br-external/board/p1-air/source-post-image.sh
+          sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh
+          python3 -m unittest discover -s br-external/package/p1-air-vendor/tests -v
+
+      - name: Source camera white-balance checks
+        run: |
+          sh -n br-external/package/ar9311-camera-control/ar9311-camera-record
+          python3 br-external/package/ar9311-camera-control/tests/test_awb.py -v
+          cc -Wall -Wextra -Werror br-external/package/ar9311-camera-control/awbd.c \
+             br-external/package/ar9311-camera-control/awb.c -lm -o /tmp/ar9311-awbd
+
+      - name: Radio calibration provisioning tests
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libjansson-dev
+          python3 br-external/package/ar9311-radio/tests/test_calibration.py -v
+          python3 -m py_compile br-external/package/p1-air-radio-config/configure.py

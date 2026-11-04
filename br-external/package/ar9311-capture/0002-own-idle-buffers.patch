@@ -1,0 +1,88 @@
+From: fpvOS developers
+Subject: [PATCH] media: own idle capture buffers and disable vendor seeding
+
+Keep idle writes away from buffers handed to userspace or returned to the
+allocator. P1 source boot must not depend on inherited vendor DRAM contents.
+
+--- a/overlay/drivers/media/artosyn/ar-cvisp.c
++++ b/overlay/drivers/media/artosyn/ar-cvisp.c
+@@ -40,6 +40,7 @@
+  */
+ 
+ #include <linux/clk.h>
++#include <linux/delay.h>
+ #include <linux/debugfs.h>
+ 
+ #include "ar-camera-hook.h"
+@@ -278,6 +279,8 @@
+ 	unsigned int sequence;
+ 	u32 completions;	/* buffers handed back through the node */
+ 	u32 drops;		/* ticks with nothing queued to arm */
++	void *scratch[AR_CVISP_PLANES];
++	dma_addr_t scratch_dma[AR_CVISP_PLANES];
+ };
+ 
+ static inline struct ar_cvisp_buffer *to_ar_cvisp_buffer(struct vb2_v4l2_buffer *vb)
+@@ -307,18 +310,29 @@
+ static void ar_cvisp_apply(struct ar_cvisp *cv, const struct ar_cvisp_reg *tbl,
+ 			   size_t n)
+ {
+-	for (size_t i = 0; i < n; i++)
+-		writel(tbl[i].val, cv->base + tbl[i].off);
++	for (size_t i = 0; i < n; i++) {
++		u32 val = tbl[i].val;
++
++		/* Never publish physical addresses from a vendor trace. */
++		if (tbl[i].off == AR_CVISP_PLANE_Y)
++			val = lower_32_bits(cv->scratch_dma[0]);
++		else if (tbl[i].off == AR_CVISP_PLANE_U)
++			val = lower_32_bits(cv->scratch_dma[1]);
++		else if (tbl[i].off == AR_CVISP_PLANE_V)
++			val = lower_32_bits(cv->scratch_dma[2]);
++		writel(val, cv->base + tbl[i].off);
++	}
+ }
+ 
+ /* Arm one ring slot. The three plane bases go in the vendor's own order. */
+ static void ar_cvisp_arm(struct ar_cvisp *cv, unsigned int slot)
+ {
+-	const struct ar_cvisp_bufset *b = &ar_cvisp_ring[slot];
+-
+-	writel(b->y, cv->base + AR_CVISP_PLANE_Y);
+-	writel(b->u, cv->base + AR_CVISP_PLANE_U);
+-	writel(b->v, cv->base + AR_CVISP_PLANE_V);
++	/* Idle output always lands in driver-owned storage. */
++	(void)slot;
++
++	writel(lower_32_bits(cv->scratch_dma[0]), cv->base + AR_CVISP_PLANE_Y);
++	writel(lower_32_bits(cv->scratch_dma[1]), cv->base + AR_CVISP_PLANE_U);
++	writel(lower_32_bits(cv->scratch_dma[2]), cv->base + AR_CVISP_PLANE_V);
+ }
+ 
+ /*
+@@ -1141,6 +1155,12 @@
+ 				     AR_CVISP_MAX_DEPTH);
+ 
+ 	cv->dev = dev;
++	for (unsigned int i = 0; i < AR_CVISP_PLANES; i++) {
++		cv->scratch[i] = dmam_alloc_coherent(dev, i ? AR_CVISP_C_ALLOC : AR_CVISP_Y_ALLOC,
++						  &cv->scratch_dma[i], GFP_KERNEL);
++		if (!cv->scratch[i])
++			return dev_err_probe(dev, -ENOMEM, "no idle output buffer\n");
++	}
+ 	mutex_init(&cv->lock);
+ 	spin_lock_init(&cv->buffer_lock);
+ 	INIT_LIST_HEAD(&cv->buffer_list);
+@@ -1224,6 +1244,12 @@
+ 	 * is still running.
+ 	 */
+ 	ar_isp_set_frame_hook(NULL, NULL);
++	if (cv->chain_up) {
++		ar_vif_input_stop();
++		msleep(100);
++		writel(0, cv->base + AR_CVISP_CONTROL);
++		readl(cv->base + AR_CVISP_CONTROL);
++	}
+ 
+ 	/*
+ 	 * Only now, with no tick left running, is it safe to take the queue

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Build the independent, static recovery root before compiling the kernel."""
 from pathlib import Path
+import json
 import shutil
 import struct
 import subprocess
@@ -9,7 +10,11 @@ import sys
 
 target, root, links = map(Path, sys.argv[1:4])
 strip, mkpasswd = sys.argv[4:6]
-overlay = Path(sys.argv[6])
+profile = json.loads(Path(sys.argv[6]).read_text())
+overlays = list(map(Path, sys.argv[7:]))
+def overlay_file(name):
+    matches = [p / name for p in overlays if (p / name).is_file()]
+    return matches[-1] if matches else None
 source = Path(__file__).parent
 if root.exists():
     shutil.rmtree(root)
@@ -43,7 +48,7 @@ for name in links.read_text().splitlines():
 for name in ('usr/libexec/fpvos-update-backend', 'usr/sbin/fpvos-update-service',
              'etc/init.d/S50dropbear'):
     shutil.copy2(target / name, root / name)
-usb = (overlay / 'etc/init.d/S40ar9311-usb').read_text()
+usb = overlay_file('etc/init.d/S40ar9311-usb').read_text()
 usb = '\n'.join(line for line in usb.splitlines() if 'modprobe ' not in line) + '\n'
 (root / 'etc/init.d/S40ar9311-usb').write_text(usb)
 (root / 'etc/init.d/S40ar9311-usb').chmod(0o755)
@@ -54,7 +59,11 @@ hash_ = subprocess.check_output([mkpasswd, '-m', 'sha-256', '-S', 'fpvosrec', 'r
 (root / 'etc/shadow').chmod(0o600)
 (root / 'etc/shells').write_text('/bin/sh\n')
 (root / 'etc/issue').write_text('fpvOS AR9311 NAND recovery (root:root)\n')
-(root / 'etc/default/dropbear').write_text('DROPBEAR_ARGS="-p 192.168.3.102:22 -R"\n')
+for name in ('etc/default/ar9311-usb', 'etc/default/dropbear', 'etc/fpvos-watchdog'):
+    path = overlay_file(name)
+    if path:
+        shutil.copy2(path, root / name)
+(root / 'etc/fpvos-recovery-root').write_text(profile['names'][2] + '\n')
 for name in ('init', 'etc/inittab'):
     shutil.copy2(source / Path(name).name, root / name)
 (root / 'init').chmod(0o755)

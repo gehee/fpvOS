@@ -1,0 +1,285 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/dts-v1/;
+#include "ar9311.dtsi"
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "BETAFPV P1 Air (AR9311) source bring-up";
+	compatible = "betafpv,p1-air", "artosyn,proxima-9311";
+
+	/* The SPL reads and clears this scratch word on watchdog reset.
+	 * Normal reboot selects direct boot; reboot bootloader requests USB.
+	 */
+	reboot-scratch@a106138 {
+		compatible = "syscon", "simple-mfd";
+		reg = <0 0x0a106138 0 4>;
+		reboot-mode {
+			compatible = "syscon-reboot-mode";
+			offset = <0>;
+			/* reboot-mode ignores zero; clear request bit 0, retain mode bit 1. */
+			mode-normal = <2>;
+			mode-bootloader = <3>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		led-0 {
+			label = "p1-air:status-0";
+			gpios = <&gpio 0 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+		led-1 {
+			label = "p1-air:status-1";
+			gpios = <&gpio 1 GPIO_ACTIVE_LOW>;
+			default-state = "off";
+		};
+	};
+
+	keys {
+		compatible = "gpio-keys-polled";
+		label = "p1-air-bind";
+		poll-interval = <20>;
+		button-bind {
+			label = "bind";
+			gpios = <&gpio 42 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_WPS_BUTTON>;
+			debounce-interval = <20>;
+		};
+	};
+
+	aliases {
+		serial0 = &uart0;
+	};
+
+	chosen {
+		stdout-path = "serial0:1152000n8";
+		bootargs = "console=ttyS0,1152000 earlycon loglevel=7 mem=128M rdinit=/init";
+	};
+
+	/* Live P1 has 256 MiB total. Keep the stock 128 MiB Linux / 128 MiB
+	 * media split until capture and encoder buffer ownership is validated.
+	 */
+	memory@20000000 {
+		device_type = "memory";
+		reg = <0 0x20000000 0 0x10000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/* Preserve the range reserved by the live stock device tree. */
+		qspi@27400000 {
+			reg = <0 0x27400000 0 0x00500000>;
+			no-map;
+		};
+
+		/* Camera pools are isolated from Linux and the RAM loader's parked
+		 * secondary CPU at 0x2ff00000. Each DMA master owns its pool.
+		 */
+		cvisp_pool: dma-pool@28000000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x28000000 0 0x02800000>;
+			no-map;
+		};
+		isp_pool: dma-pool@2a800000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x2a800000 0 0x00800000>;
+			no-map;
+		};
+		vif_pool: dma-pool@2b000000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x2b000000 0 0x00800000>;
+			no-map;
+		};
+		codec_pool: dma-pool@2b800000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x2b800000 0 0x04700000>;
+			no-map;
+		};
+		loader@2ff00000 {
+			reg = <0 0x2ff00000 0 0x00100000>;
+			no-map;
+		};
+	};
+};
+
+&cpu0 {
+	enable-method = "ar-spin-table";
+};
+
+&cpu1 {
+	enable-method = "ar-spin-table";
+	cpu-release-addr = <0 0x00100000>;
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&usb {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+
+&camera_clocks { status = "okay"; };
+&gpio { status = "okay"; };
+
+&i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+	i2c-sda-hold-time-ns = <300>;
+	i2c-sda-falling-time-ns = <300>;
+	i2c-scl-falling-time-ns = <300>;
+
+	sensor: camera@30 {
+		compatible = "smartsens,sc231ai";
+		reg = <0x30>;
+		clocks = <&camera_clocks 35>;
+		clock-names = "xclk";
+		assigned-clocks = <&camera_clocks 35>;
+		assigned-clock-rates = <24000000>;
+		reset-gpios = <&gpio 107 GPIO_ACTIVE_LOW>;
+		powerdown-gpios = <&gpio 104 GPIO_ACTIVE_HIGH>;
+		port {
+			sensor_out: endpoint {
+				remote-endpoint = <&csi_in>;
+				clock-lanes = <0>;
+				data-lanes = <1 2>;
+				link-frequencies = /bits/ 64 <378000000>;
+			};
+		};
+	};
+};
+
+&csi {
+	status = "okay";
+	/* Measured SC231AI 1920x1080@60 IPI HSA/HBP/HSD clocks. */
+	artosyn,ipi-timing = <16 16 33>;
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		port@0 {
+			reg = <0>;
+			csi_in: endpoint {
+				remote-endpoint = <&sensor_out>;
+				data-lanes = <1 2>;
+			};
+		};
+		port@1 {
+			reg = <1>;
+			csi_out: endpoint { remote-endpoint = <&vif_in>; };
+		};
+	};
+};
+
+&vif {
+	status = "okay";
+	memory-region = <&vif_pool>;
+	port { vif_in: endpoint { remote-endpoint = <&csi_out>; }; };
+};
+
+&isp {
+	status = "okay";
+	memory-region = <&isp_pool>;
+	artosyn,tuning-firmware = "artosyn/sc231-tuning-preview-fpv.bin";
+};
+
+&cvisp {
+	status = "okay";
+	memory-region = <&cvisp_pool>;
+	artosyn,tuning-firmware = "artosyn/sc231-tuning-preview-fpv.bin";
+};
+
+&vpu {
+	status = "okay";
+	memory-region = <&codec_pool>;
+	firmware-name = "artosyn/p1-chagall-lowmem.bin";
+	artosyn,enable-encoder;
+};
+
+/* Stock P1 start_ar813x.sh resets the radio on GPIO23. Its SDIO
+ * interface uses MMC0 without a GPIO-selectable voltage regulator.
+ */
+/ {
+	p1_radio_pwrseq: radio-pwrseq {
+		compatible = "artosyn,ar8030-pwrseq";
+		reset-gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+	};
+};
+&mmc_clocks {
+	status = "okay";
+	artosyn,clock-config = <0x87 2>, <0x80 0>;
+};
+&mmc0 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	broken-cd;
+	no-mmc;
+	no-sd;
+	no-1-8-v;
+	mmc-pwrseq = <&p1_radio_pwrseq>;
+};
+
+/* P1 1.0.44 layout, verified against stock MTD and backup.
+ * Factory stays read-only; usr_data holds a separate fpvOS settings directory.
+ * Bank 0 holds fpvOS kernel, DTB and rootfs. GPT selects the complete bank
+ * only after readback verification. Stock bank 1 contents are never written.
+ */
+&qspi_clock { status = "okay"; };
+
+&qspi {
+	status = "okay";
+	clocks = <&qspi_clock>;
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			partition@100000 {
+				label = "boot-state";
+				reg = <0x100000 0x80000>;
+			};
+			partition@200000 {
+				label = "factory";
+				reg = <0x200000 0x600000>;
+				read-only;
+			};
+			partition@a40000 {
+				label = "kernel0";
+				reg = <0xa40000 0x600000>;
+			};
+			partition@1640000 {
+				label = "dtb0";
+				reg = <0x1640000 0x60000>;
+			};
+			partition@1040000 {
+				label = "stock-kernel";
+				reg = <0x1040000 0x600000>;
+				read-only;
+			};
+			partition@1700000 {
+				label = "userapp0";
+				reg = <0x1700000 0x2d00000>;
+			};
+			partition@7100000 {
+				label = "usr_data";
+				reg = <0x7100000 0x600000>;
+			};
+		};
+	};
+};

@@ -8,6 +8,9 @@
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
 #   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
+#   ./build.sh p1-air [config|all] # P1 stock-runtime development bundle
+#
+#   ./build.sh p1-air-source [config|all] # experimental source kernel, RAM rootfs
 #
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
@@ -37,11 +40,27 @@ need_vendor() {
 ASCENT_VRX_PRO_OUT="$ROOT/output/ascent-vrx-pro"
 AIR_OUT="$ROOT/output/ascent-lite"
 ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
+P1_AIR_OUT="$ROOT/output/p1-air"
+P1_AIR_SOURCE_OUT="$ROOT/output/p1-air-source"
 
 # The VRX Pro is the default board; ascent-vrx-pro names it like the others.
 [ "${1:-}" = ascent-vrx-pro ] && shift
 
 case "${1:-all}" in
+  p1-air-source)
+    case "${2:-all}" in
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_SOURCE_OUT" p1air_source_defconfig ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_SOURCE_OUT" p1air_source_defconfig
+              make -C "$P1_AIR_SOURCE_OUT" ;;
+      *) echo "usage: $0 p1-air-source [config|all]" >&2; exit 1 ;;
+    esac ;;
+  p1-air)
+    case "${2:-all}" in
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_OUT" p1air_defconfig ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_OUT" p1air_defconfig
+              make -C "$P1_AIR_OUT" ;;
+      *) echo "usage: $0 p1-air [config|all]" >&2; exit 1 ;;
+    esac ;;
   ascent-vrx)
     # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
     case "${2:-all}" in
@@ -73,5 +92,5 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" ascentvrxpro_defconfig
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-air [config|all]|p1-air-source [config|all]}" >&2; exit 1 ;;
 esac

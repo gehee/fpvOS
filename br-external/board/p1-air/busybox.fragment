@@ -1,0 +1,5 @@
+# Attach existing factory and settings UBI volumes; no formatting tools are required.
+CONFIG_UBIATTACH=y
+CONFIG_UBIDETACH=y
+
+CONFIG_WATCHDOG=y

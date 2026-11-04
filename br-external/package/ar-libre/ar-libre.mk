@@ -25,7 +25,7 @@ AR_LIBRE_INSTALL_STAGING = YES
 # kernel.org's 5.10.221 with the stock modules' vermagic; see ascentlite_defconfig).
 AR_LIBRE_MODULE_SUBDIRS = driver
 
-ifeq ($(BR2_PACKAGE_KESTREL_AIR),y)
+ifeq ($(BR2_PACKAGE_KESTREL_AIR):$(BR2_STATIC_LIBS),y:)
 
 # The library, for kestrel-air to link against. The directory layout in staging
 # is what kestrel-air's Makefile calls ARLIBRE: <dir>/lib has the library and
@@ -84,6 +84,16 @@ endef
 
 endif
 
+endif
+
+# Both library variants expose Kestrel's established ARLIBRE layout.
+ifeq ($(BR2_PACKAGE_KESTREL_AIR):$(BR2_STATIC_LIBS),y:y)
+define AR_LIBRE_STAGE_STATIC_AIR
+	$(INSTALL) -d $(STAGING_DIR)/usr/share/ar-libre/lib
+	$(INSTALL) -m 0644 $(@D)/lib/libar8030_client.a $(@D)/lib/arlink.h $(@D)/lib/ioctl_sizes.inc \
+		$(STAGING_DIR)/usr/share/ar-libre/lib/
+endef
+AR_LIBRE_POST_INSTALL_STAGING_HOOKS += AR_LIBRE_STAGE_STATIC_AIR
 endif
 
 $(eval $(kernel-module))

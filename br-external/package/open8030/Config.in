@@ -16,8 +16,18 @@ config BR2_PACKAGE_OPEN8030
 
 if BR2_PACKAGE_OPEN8030
 
+config BR2_PACKAGE_OPEN8030_PROFILE_P1_STOCK
+	bool "Extract P1 Air profile from stock firmware"
+	depends on BR2_aarch64
+	select BR2_PACKAGE_P1_AIR_VENDOR
+	help
+	  Generate the P1 board data from the pinned vendor radio image.
+	  Overrides the profile filename below; private-directory overrides
+	  still apply for development.
+
 config BR2_PACKAGE_OPEN8030_PROFILE
 	string "Board profile source"
+	depends on !BR2_PACKAGE_OPEN8030_PROFILE_P1_STOCK
 	help
 	  Profile filename from open8030-profiles, or an absolute path
 	  to a private profile. Set this in the board defconfig. A
@@ -54,6 +64,25 @@ config BR2_PACKAGE_OPEN8030_FACTORY_OPTIONAL
 	help
 	  Build with AR_FACTORY_OPTIONAL. Select only for boards whose
 	  profile has been validated without mandatory factory data.
+
+config BR2_PACKAGE_OPEN8030_PINS_BEFORE_FACTORY
+	bool "Initialize pins before reading factory storage"
+	help
+	  Set up the board's pin mux before attempting factory-data access.
+
+config BR2_PACKAGE_OPEN8030_EXPLICIT_IO_DOMAINS
+	bool "Apply the profile's explicit I/O voltage domains"
+	help
+	  Replace the two I/O-domain select bits with the profile value,
+	  rather than preserving bootloader-selected bits.
+
+config BR2_PACKAGE_OPEN8030_SDIO_BLOCK_TRAILER
+	bool "Stock P1 SDIO block-tail framing"
+	depends on BR2_PACKAGE_OPEN8030_TRANSPORT_SDIO
+	help
+	  Use the DD block trailer expected by P1's stock Linux 4.9
+	  artosyn_sdio command transport. This is not the ar_libre wire
+	  format; do not enable it with an arlink host driver.
 
 config BR2_PACKAGE_OPEN8030_CONFIG
 	string "Ground radio configuration"

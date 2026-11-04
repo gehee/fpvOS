@@ -1,0 +1,38 @@
+#!/bin/sh
+# Board init chooses whether to start this shared source-camera service.
+set -eu
+dir=/run/kestrel-air
+daemon=/usr/sbin/kestrel-air-supervise
+mkdir -p "$dir"
+chmod 700 "$dir"
+# Serialize service operations. Do not pass this lock to the daemon.
+exec 9>/run/kestrel-air-service.lock
+flock -x 9
+running() { start-stop-daemon -K -t -q -p "$dir/pid" -x "$daemon"; }
+start() {
+    running && return 0
+    start-stop-daemon -S -b -q -x "$daemon" -- "$dir" /usr/bin/kestrel-air-run 9>&-
+    i=0
+    until running; do
+        i=$((i + 1))
+        [ "$i" -lt 20 ] || { echo 'Kestrel supervisor failed to start' >&2; return 1; }
+        sleep 0.1
+    done
+}
+stop() {
+    running || return 0
+    start-stop-daemon -K -q -p "$dir/pid" -x "$daemon"
+    i=0
+    while running; do
+        i=$((i + 1))
+        [ "$i" -lt 120 ] || { echo 'Kestrel shutdown timed out' >&2; return 1; }
+        sleep 0.1
+    done
+}
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; start ;;
+    status) [ ! -r "$dir/status" ] || cat "$dir/status"; running ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac

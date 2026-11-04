@@ -1,0 +1,29 @@
+{
+  "board_id": 1345409867,
+  "hardware": "P1_SKY",
+  "usb_identity": [
+    "1d6b",
+    "0104",
+    "fpvos-p1-air"
+  ],
+  "names": [
+    "kernel.img",
+    "betafpv-p1-air.dtb",
+    "rootfs.cpio.gz"
+  ],
+  "limits": [
+    6291456,
+    65536,
+    8388608
+  ],
+  "counts": [
+    3,
+    0
+  ],
+  "bundle_limits": [
+    16777216,
+    512
+  ],
+  "restore_sources": [],
+  "bootstrap_resources": {}
+}

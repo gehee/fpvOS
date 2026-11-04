@@ -1,0 +1,45 @@
+# Experimental P1 RAM boot. Camera modules are started explicitly.
+CONFIG_USB_DWC2_PERIPHERAL=y
+# Sensor clock/reset sequencing uses runtime PM; system sleep stays disabled.
+CONFIG_PM=y
+CONFIG_MEDIA_CAMERA_SUPPORT=y
+CONFIG_MEDIA_CONTROLLER=y
+CONFIG_VIDEO_V4L2_SUBDEV_API=y
+CONFIG_V4L2_FWNODE=m
+# DT exposes factory read-only, user data, and the bank-0 updater partitions.
+CONFIG_MTD=y
+CONFIG_MTD_SPI_NAND=y
+CONFIG_MTD_OF_PARTS=y
+# CONFIG_MTD_CMDLINE_PARTS is not set
+# CONFIG_MTD_PARTITIONED_MASTER is not set
+CONFIG_SPI_ARTOSYN_QSPI=y
+CONFIG_MTD_UBI=y
+# CONFIG_MTD_UBI_FASTMAP is not set
+CONFIG_UBIFS_FS=y
+CONFIG_UBIFS_FS_ADVANCED_COMPR=y
+CONFIG_UBIFS_FS_LZO=y
+CONFIG_UBIFS_FS_ZLIB=y
+# CONFIG_UBIFS_FS_ZSTD is not set
+CONFIG_VIDEO_WAVE_VPU=m
+# CONFIG_DRM is not set
+CONFIG_VIDEO_ARTOSYN_CAPTURE_SUPPORT=y
+
+# Board controls use standard Linux classes; the SoC GPIO driver has no IRQs yet.
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_KEYBOARD_GPIO_POLLED=y
+CONFIG_NEW_LEDS=y
+CONFIG_LEDS_CLASS=y
+CONFIG_LEDS_GPIO=y
+
+CONFIG_MFD_SYSCON=y
+CONFIG_SYSCON_REBOOT_MODE=y
+CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y
+
+# SPL supplies stock root arguments; this image always starts its own recovery.
+CONFIG_CMDLINE="console=ttyS0,1152000 earlycon loglevel=7 mem=128M rdinit=/init maxcpus=1 nr_cpus=1 clk_ignore_unused"
+CONFIG_CMDLINE_FORCE=y
+CONFIG_WATCHDOG_OPEN_TIMEOUT=60
+
+CONFIG_COMMON_CLK_AR9311_QSPI=y

@@ -1,0 +1,42 @@
+From: fpvOS developers
+Subject: [PATCH] media: drain capture DMA before releasing buffers
+
+--- a/overlay/drivers/media/artosyn/ar-cvisp.c
++++ b/overlay/drivers/media/artosyn/ar-cvisp.c
+@@ -957,6 +957,8 @@
+ 
+ 	spin_unlock_irqrestore(&cv->buffer_lock, flags);
+ 
++	/* Allow the old output destination to drain before vb2 frees it. */
++	msleep(34);
+ 	ar_cvisp_return_buffers(cv, VB2_BUF_STATE_ERROR);
+ 
+ 	dev_info(cv->dev, "stopped: %u completions, %u drops\n",
+@@ -1244,12 +1246,6 @@
+ 	 * is still running.
+ 	 */
+ 	ar_isp_set_frame_hook(NULL, NULL);
+-	if (cv->chain_up) {
+-		ar_vif_input_stop();
+-		msleep(100);
+-		writel(0, cv->base + AR_CVISP_CONTROL);
+-		readl(cv->base + AR_CVISP_CONTROL);
+-	}
+ 
+ 	/*
+ 	 * Only now, with no tick left running, is it safe to take the queue
+@@ -1258,6 +1254,14 @@
+ 	 */
+ 	vb2_video_unregister_device(&cv->video_dev);
+ 	v4l2_device_unregister(&cv->v4l2_dev);
++
++	if (cv->chain_up) {
++		/* Stop output while the input clocks still run. */
++		writel(0, cv->base + AR_CVISP_CONTROL);
++		readl(cv->base + AR_CVISP_CONTROL);
++		ar_vif_input_stop();
++		msleep(100);
++	}
+ 
+ 	debugfs_remove_recursive(cv->debugfs);
+ 
