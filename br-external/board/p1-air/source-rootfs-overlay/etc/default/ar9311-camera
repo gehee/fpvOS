@@ -1,0 +1,10 @@
+# SC231AI 1920x1080@60.
+SENSOR_MODULE=sc231ai
+SENSOR_NAME='sc231ai*'
+TUNING=/lib/firmware/artosyn/sc231-tuning-preview-fpv.bin
+# Initial/fallback Q8 gains measured on the stock P1.
+WB_RED=313
+WB_BLUE=807
+# Statistics channel order is distinct from the sensor bus Bayer order.
+WB_STATS_ORDER=grbg
+WB_MODE=auto

@@ -1,0 +1,9 @@
+config BR2_PACKAGE_P1_AIR_CAMERA_FIRMWARE
+	bool "P1 Air camera firmware and tuning"
+	depends on BR2_aarch64
+	select BR2_PACKAGE_P1_AIR_VENDOR
+	help
+	  Extract verified SC231AI ISP tuning and Wave521C encoder
+	  microcode from the pinned P1 release. Linux capture and
+	  codec drivers remain source-built; vendor media libraries
+	  are not installed.

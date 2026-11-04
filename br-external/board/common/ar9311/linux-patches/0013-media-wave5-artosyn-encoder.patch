@@ -1,0 +1,1409 @@
+From: fpvOS developers
+Subject: [PATCH] media: wave5: add opt-in AR9311 encoder support
+
+Adapt encoder stride, DMA buffer ownership, rate changes and recovery from
+Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
+Keep the existing decoder path and platform power resources.
+
+--- a/drivers/media/platform/chips-media/wave5/wave5-helper.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-helper.c
+@@ -36,6 +36,13 @@
+ {
+ 	int i;
+ 
++	/* ML (Artosyn): the encoder arms a delayed work to bound a job the firmware never
++	 * answers. Nothing below may free the instance while that work can still run.
++	 * Cancelling here rather than in the release path is deliberate: the release path is
++	 * itself waiting on that work when a job is stuck. */
++	if (inst->type == VPU_INST_TYPE_ENC)
++		cancel_delayed_work_sync(&inst->job_timeout_work);
++
+ 	/*
+ 	 * For Wave515 SRAM memory is allocated at
+ 	 * wave5_vpu_dec_register_device() and freed at
+@@ -45,10 +52,19 @@
+ 	    inst->dev->product_code != WAVE515_CODE)
+ 		wave5_vdi_free_sram(inst->dev);
+ 
+-	for (i = 0; i < inst->fbc_buf_count; i++)
+-		wave5_vpu_dec_reset_framebuffer(inst, i);
+-
+-	wave5_vdi_free_dma_memory(inst->dev, &inst->bitstream_vbuf);
++	/* ML (Artosyn): when close left the firmware instance running (keep_dma_bufs),
++	 * the framebuffers and bitstream ring are still firmware DMA targets; freeing
++	 * them lets the firmware write reallocated memory and hard-hangs the SoC.
++	 * Leak them, matching the work/task buffers the close path already leaked. */
++	if (inst->keep_dma_bufs) {
++		dev_warn(inst->dev->dev,
++			 "instance not quiesced, leaking framebuffers and bitstream ring\n");
++	} else {
++		for (i = 0; i < inst->fbc_buf_count; i++)
++			wave5_vpu_dec_reset_framebuffer(inst, i);
++
++		wave5_vdi_free_dma_memory(inst->dev, &inst->bitstream_vbuf);
++	}
+ 	v4l2_ctrl_handler_free(&inst->v4l2_ctrl_hdl);
+ 	if (inst->v4l2_fh.vdev) {
+ 		v4l2_fh_del(&inst->v4l2_fh, filp);
+@@ -82,9 +98,20 @@
+ 	 * in the wave5_vpu_dec_finish_decode.
+ 	 * So the spin lock and mutex were used to protect the list in the release function.
+ 	 */
+-	ret = mutex_lock_interruptible(&inst->dev->irq_lock);
+-	if (ret)
+-		return ret;
++	/* ML (Artosyn): must NOT be interruptible, and every path below must reach
++	 * wave5_cleanup_instance. This runs from the file-release path; on SIGKILL the
++	 * fatal signal is already pending, so an interruptible lock returns -EINTR
++	 * immediately and the whole instance (FBC framebuffers, bitstream ring, work/task
++	 * buffers) leaks from the fixed mmz pool until power cycle. Same for the early
++	 * returns on close failure: the fd is gone either way, so bailing out only
++	 * converts a firmware hiccup into a permanent pool leak. */
++	if (inst->type == VPU_INST_TYPE_ENC) {
++		mutex_lock(&inst->dev->irq_lock);
++	} else {
++		ret = mutex_lock_interruptible(&inst->dev->irq_lock);
++		if (ret)
++			return ret;
++	}
+ 	spin_lock_irqsave(&inst->dev->irq_spinlock, flags);
+ 	list_del_init(&inst->list);
+ 	spin_unlock_irqrestore(&inst->dev->irq_spinlock, flags);
+@@ -96,14 +123,18 @@
+ 		if (fail_res == WAVE5_SYSERR_VPU_STILL_RUNNING) {
+ 			dev_err(inst->dev->dev, "%s close failed, device is still running\n",
+ 				name);
+-			return -EBUSY;
++			if (inst->type != VPU_INST_TYPE_ENC)
++				return -EBUSY;
++			ret = -EBUSY;
++		} else if (ret && ret != -EIO) {
++			dev_err(inst->dev->dev, "%s close, fail: %d\n", name, ret);
++			if (inst->type != VPU_INST_TYPE_ENC)
++				return ret;
+ 		}
+-		if (ret && ret != -EIO) {
+-			dev_err(inst->dev->dev, "%s close, fail: %d\n", name, ret);
+-			return ret;
+-		}
+-	}
+-
++	}
++
++	if (inst->type == VPU_INST_TYPE_ENC && ret == -EIO)
++		ret = 0;
+ 	wave5_cleanup_instance(inst, filp);
+ 
+ 	return ret;
+--- a/drivers/media/platform/chips-media/wave5/wave5-hw.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-hw.c
+@@ -1588,8 +1588,23 @@
+ 	vpu_write_reg(inst->dev, W5_ADDR_WORK_BASE, p_enc_info->vb_work.daddr);
+ 	vpu_write_reg(inst->dev, W5_WORK_SIZE, p_enc_info->vb_work.size);
+ 
+-	vpu_write_reg(inst->dev, W5_CMD_ADDR_SEC_AXI, vpu_dev->sram_buf.daddr);
+-	vpu_write_reg(inst->dev, W5_CMD_SEC_AXI_SIZE, vpu_dev->sram_buf.size);
++	/*
++	 * ML (Artosyn WAVE521C): no W5_CMD_ADDR_SEC_AXI / W5_CMD_SEC_AXI_SIZE in
++	 * the CREATE_INSTANCE register context. sram_buf is one device-global
++	 * 64 KiB window, so declaring it here gives every encoder instance the
++	 * same scratch and two concurrent instances overlap completely. The
++	 * vendor's Wave5VpuBuildUpEncParam writes only WORK_BASE, WORK_SIZE,
++	 * BS_PARAM, NUM_CQ_DEPTH_M1, ENC_SRC_OPTIONS and ENC_VCORE_INFO before
++	 * issuing CREATE_INSTANCE, and never declares a sec-AXI window to an
++	 * encoder instance at all. Its writes to 0x130/0x134 live in
++	 * Wave5VpuEncInitSeq, where the same mailbox offsets carry packed
++	 * ENC_SEQ bitfields rather than addresses.
++	 */
++
++	if (!vpu_dev->artosyn) {
++		vpu_write_reg(inst->dev, W5_CMD_ADDR_SEC_AXI, vpu_dev->sram_buf.daddr);
++		vpu_write_reg(inst->dev, W5_CMD_SEC_AXI_SIZE, vpu_dev->sram_buf.size);
++	}
+ 
+ 	reg_val = (open_param->line_buf_int_en << 6) | BITSTREAM_ENDIANNESS_BIG_ENDIAN;
+ 	vpu_write_reg(inst->dev, W5_CMD_BS_PARAM, reg_val);
+@@ -1897,6 +1912,125 @@
+ 	return send_firmware_command(inst, W5_ENC_SET_PARAM, true, NULL, NULL);
+ }
+ 
++/*
++ * OPT_CHANGE_PARAM runs while the instance is encoding, so the wait cannot use
++ * VPU_ENC_TIMEOUT (60 s) - that would park the m2m job queue. The instance
++ * command queue is empty at the point start_encode() issues the change, so the
++ * firmware only has this one command to retire.
++ */
++#define W5_ENC_CHANGE_PARAM_TIMEOUT	200
++
++int wave5_vpu_enc_change_param(struct vpu_instance *inst, u32 enable)
++{
++	struct enc_info *p_enc_info = &inst->codec_info->enc_info;
++	struct enc_open_param *p_open_param = &p_enc_info->open_param;
++	u32 reg_val;
++	int ret;
++
++	vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_SET_PARAM_OPTION, OPT_CHANGE_PARAM);
++	vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_SET_PARAM_ENABLE, enable);
++	if (enable & W5_ENC_CHANGE_RC_FRAME_RATE)
++		vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_RC_FRAME_RATE,
++			      p_open_param->frame_rate_info);
++	/*
++	 * Same register and same unit as the OPT_COMMON write in
++	 * wave5_vpu_enc_init_seq(): bits per second. Vendor
++	 * ar_video_h26x_enc_exe_set_dynamic_param() stores kbps << 10 into the
++	 * open-param field that feeds both writes, i.e. it approximates bps
++	 * with a shift; the startup path here already writes exact bps and
++	 * measures the requested rate, so the live path uses exact bps too.
++	 */
++	/* Intra parameters. Composed exactly like the HEVC arm of the seq-init write so the fields we
++	 * are not changing keep their configured values; only intra_period differs, and only while a
++	 * forced keyframe is armed. */
++	if (enable & W5_ENC_CHANGE_INTRA_PARAM) {
++		struct enc_wave_param *ip = &p_open_param->wave_param;
++
++		vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_INTRA_PARAM,
++			      ip->decoding_refresh_type |
++			      (ip->intra_qp << ENC_HEVC_INTRA_QP_SHIFT) |
++			      (ip->forced_idr_header_enable << ENC_HEVC_FORCED_IDR_HEADER_SHIFT) |
++			      (ip->intra_period << ENC_HEVC_INTRA_PERIOD_SHIFT));
++	}
++	if (enable & W5_ENC_CHANGE_RC_TARGET_RATE)
++		vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_RC_TARGET_RATE,
++			      p_open_param->bit_rate);
++	if (enable & W5_ENC_CHANGE_RC_PARAM) {
++		struct enc_wave_param *p_param = &p_open_param->wave_param;
++		u32 vbv = p_open_param->vbv_buffer_size;
++		u32 rc_param;
++
++		/*
++		 * Vendor ar_video_h26x_enc_msg_change_param() floors the window
++		 * before handing it to the firmware, at the same value the open path
++		 * already rejects below.
++		 */
++		if (vbv < MIN_VBV_BUFFER_SIZE)
++			vbv = MIN_VBV_BUFFER_SIZE;
++		else if (vbv > MAX_VBV_BUFFER_SIZE)
++			vbv = MAX_VBV_BUFFER_SIZE;
++
++		/*
++		 * Vendor's Wave5VpuEncParaChange() writes only hvs_qp_enable,
++		 * hvs_qp_scale and the window into this register, leaving rc_enable,
++		 * the CU/MB-level RC bit and initial_rc_qp as zero. Nothing
++		 * distinguishes "the firmware ignores those fields under
++		 * OPT_CHANGE_PARAM" from "vendor never exercises this bit", and
++		 * zeroing bit 0 would read as rate control off. Compose the whole
++		 * word from current state the way the sequence init does, which is a
++		 * no-op in the first case and correct in the second.
++		 */
++		rc_param = p_open_param->rc_enable |
++			(p_param->hvs_qp_enable << 2) |
++			(p_param->hvs_qp_scale << 4) |
++			((p_param->initial_rc_qp & 0x3F) << 14) |
++			(vbv << 20);
++		if (inst->std == W_AVC_ENC)
++			rc_param |= p_param->mb_level_rc_enable << 1;
++		else if (inst->std == W_HEVC_ENC)
++			rc_param |= p_param->cu_level_rc_enable << 1;
++
++		vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_RC_PARAM, rc_param);
++	}
++
++	reinit_completion(&inst->irq_done);
++
++	ret = send_firmware_command(inst, W5_ENC_SET_PARAM, true, NULL, NULL);
++	if (ret) {
++		dev_warn(inst->dev->dev, "%s: inst %d enable 0x%x queue fail: %d\n",
++			 __func__, inst->id, enable, ret);
++		return ret;
++	}
++
++	/*
++	 * The change command reports through INT_WAVE5_ENC_SET_PARAM like the
++	 * sequence init does, and leaves one report on the instance report
++	 * queue. Vendor ar_video_h26x_enc_msg_set_param_done() drains it with
++	 * VPU_EncGetOutputInfo(). Without the drain the report sits in front of
++	 * every later ENC_PIC report, the next finish_encode() consumes it
++	 * instead of its own frame, and the instance stalls for the rest of the
++	 * stream.
++	 */
++	ret = wave5_vpu_wait_interrupt(inst, W5_ENC_CHANGE_PARAM_TIMEOUT);
++	if (ret)
++		dev_warn(inst->dev->dev,
++			 "%s: inst %d no SET_PARAM interrupt, draining anyway\n",
++			 __func__, inst->id);
++
++	ret = wave5_send_query(inst->dev, inst, GET_RESULT);
++	if (ret) {
++		dev_warn(inst->dev->dev, "%s: inst %d GET_RESULT fail: %d\n",
++			 __func__, inst->id, ret);
++		return ret;
++	}
++
++	reg_val = vpu_read_reg(inst->dev, W5_RET_QUEUE_STATUS);
++	p_enc_info->instance_queue_count = (reg_val >> 16) & 0xff;
++	p_enc_info->report_queue_count = reg_val & QUEUE_REPORT_MASK;
++
++	return 0;
++}
++
+ int wave5_vpu_enc_get_seq_info(struct vpu_instance *inst, struct enc_initial_info *info)
+ {
+ 	int ret;
+@@ -2130,16 +2264,29 @@
+ 
+ 	return ret;
+ 
++	/*
++	 * ML (Artosyn): free the p_enc_info copies, not the local vpu_bufs. The
++	 * buffers already published above (vb_mv at minimum, more the further the
++	 * function got) live on in p_enc_info with the same daddr; freeing the
++	 * local copy leaves those stale, and wave5_vpu_enc_close() then frees the
++	 * same dma handles a second time. Freeing the p_enc_info copy zeroes it
++	 * (wave5_vdi_free_dma_memory memsets its argument), making close a no-op.
++	 * Each label frees only buffers published before its goto site; a
++	 * not-yet-published field is zero and the free is a harmless -EINVAL.
++	 * vb_task may pre-exist this call (vb_task.daddr == 0 then): leave it for
++	 * close.
++	 */
+ free_vb_mem:
+-	wave5_vdi_free_dma_memory(vpu_dev, &vb_task);
++	if (vb_task.daddr)
++		wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_task);
+ free_vb_task:
+-	wave5_vdi_free_dma_memory(vpu_dev, &vb_sub_sam_buf);
++	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_sub_sam_buf);
+ free_vb_sam_buf:
+-	wave5_vdi_free_dma_memory(vpu_dev, &vb_fbc_c_tbl);
++	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_fbc_c_tbl);
+ free_vb_fbc_c_tbl:
+-	wave5_vdi_free_dma_memory(vpu_dev, &vb_fbc_y_tbl);
++	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_fbc_y_tbl);
+ free_vb_fbc_y_tbl:
+-	wave5_vdi_free_dma_memory(vpu_dev, &vb_mv);
++	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_mv);
+ 	return ret;
+ }
+ 
+@@ -2150,6 +2297,16 @@
+ 	u32 sram_size = inst->dev->sram_size;
+ 
+ 	if (!sram_size)
++		return 0;
++
++	/*
++	 * ML (Artosyn WAVE521C): same mainline TODO as the decode path above - the
++	 * rdo/lf size calc is unimplemented, so the sizes stay 0 and this enables
++	 * sec-AXI RDO+LF (BIT(11)|BIT(15)) into the tiny 64 KiB SRAM with bogus
++	 * (zero) size accounting. That exact pattern corrupted decode write-back
++	 * until forced to 0 (vendor writes USE_SEC_AXI=0). No sec-AXI on WAVE521C.
++	 */
++	if (inst->dev->artosyn)
+ 		return 0;
+ 
+ 	/*
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
+@@ -125,6 +125,30 @@
+ 	return -EINVAL;
+ }
+ 
++static struct vb2_v4l2_buffer *wave5_vpu_enc_active_src_buf(struct vpu_instance *inst)
++{
++	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
++	struct vb2_buffer *vb;
++
++	if (inst->active_enc_src_idx < 0)
++		return NULL;
++
++	vb = vb2_get_buffer(v4l2_m2m_get_src_vq(m2m_ctx), inst->active_enc_src_idx);
++	if (!vb) {
++		dev_warn(inst->dev->dev, "%s: no active source buffer with index: %d\n",
++			 __func__, inst->active_enc_src_idx);
++		return NULL;
++	}
++
++	if (vb->state != VB2_BUF_STATE_ACTIVE) {
++		dev_warn(inst->dev->dev, "%s: source buffer (%d) was not active: %i\n",
++			 __func__, inst->active_enc_src_idx, vb->state);
++		return NULL;
++	}
++
++	return to_vb2_v4l2_buffer(vb);
++}
++
+ static int start_encode(struct vpu_instance *inst, u32 *fail_res)
+ {
+ 	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
+@@ -138,8 +162,42 @@
+ 	u32 luma_size = 0;
+ 	u32 chroma_size = 0;
+ 
++	ret = wave5_vpu_enc_apply_pending_rate(inst);
++	if (ret)
++		dev_warn(inst->dev->dev, "%s: live rate update fail: %d\n", __func__, ret);
++
+ 	memset(&pic_param, 0, sizeof(struct enc_param));
+ 	memset(&frame_buf, 0, sizeof(struct frame_buffer));
++
++	/* A forced keyframe is one frame encoded at intra_period 1, then a restore. The per-picture
++	 * PIC_PARAM route does not work on this firmware (swept on hardware, no IDR at any layout);
++	 * the vendor's own request lands on the OPT_CHANGE_PARAM path, change bit 1, which rewrites
++	 * W5_CMD_ENC_SEQ_INTRA_PARAM. Both edges go through the same pending mask the live rate
++	 * controls use, so they are applied by apply_pending_rate above on the following frame. */
++	if (inst->enc_force_idr) {
++		struct enc_wave_param *wp = &inst->codec_info->enc_info.open_param.wave_param;
++
++		inst->enc_force_idr = false;
++		/* Save the live value rather than re-deriving it: for HEVC the seq-init path falls
++		 * back to avc_idr_period when intra_period is zero, so enc_param is not the truth.
++		 *
++		 * Only save when a restore is not already outstanding. A second force arriving before
++		 * the restore frame runs takes this branch again, and saving here would capture the 1
++		 * written below rather than the real period - the restore would then put 1 back and
++		 * every subsequent frame would be an IDR, for the life of the instance. Two forces on
++		 * consecutive frames are enough to latch it. */
++		if (!inst->enc_idr_restore)
++			inst->enc_idr_saved_period = wp->intra_period;
++		inst->enc_idr_restore = true;
++		wp->intra_period = 1;
++		inst->enc_rate_change_pending |= W5_ENC_CHANGE_INTRA_PARAM;
++		dev_dbg(inst->dev->dev, "%s: inst %d forcing a keyframe\n", __func__, inst->id);
++	} else if (inst->enc_idr_restore) {
++		inst->enc_idr_restore = false;
++		inst->codec_info->enc_info.open_param.wave_param.intra_period =
++			inst->enc_idr_saved_period;
++		inst->enc_rate_change_pending |= W5_ENC_CHANGE_INTRA_PARAM;
++	}
+ 
+ 	info = v4l2_format_info(inst->src_fmt.pixelformat);
+ 	if (!info)
+@@ -172,24 +230,35 @@
+ 		else
+ 			return -EAGAIN;
+ 	} else {
++		/* data_offset locates the plane data inside an imported DMABUF (several
++		 * planes can share one buffer at different offsets); MMAP buffers carry 0.
++		 */
++		struct vb2_plane *planes = src_buf->vb2_buf.planes;
++
+ 		if (inst->src_fmt.num_planes == 1) {
+ 			frame_buf.buf_y =
+-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0);
++				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0) +
++				planes[0].data_offset;
+ 			frame_buf.buf_cb = frame_buf.buf_y + luma_size;
+ 			frame_buf.buf_cr = frame_buf.buf_cb + chroma_size;
+ 		} else if (inst->src_fmt.num_planes == 2) {
+ 			frame_buf.buf_y =
+-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0);
++				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0) +
++				planes[0].data_offset;
+ 			frame_buf.buf_cb =
+-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 1);
++				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 1) +
++				planes[1].data_offset;
+ 			frame_buf.buf_cr = frame_buf.buf_cb + chroma_size;
+ 		} else if (inst->src_fmt.num_planes == 3) {
+ 			frame_buf.buf_y =
+-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0);
++				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 0) +
++				planes[0].data_offset;
+ 			frame_buf.buf_cb =
+-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 1);
++				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 1) +
++				planes[1].data_offset;
+ 			frame_buf.buf_cr =
+-				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 2);
++				vb2_dma_contig_plane_dma_addr(&src_buf->vb2_buf, 2) +
++				planes[2].data_offset;
+ 		}
+ 		frame_buf.stride = stride;
+ 		pic_param.src_idx = src_buf->vb2_buf.index;
+@@ -200,11 +269,11 @@
+ 	pic_param.code_option.encode_aud = inst->encode_aud;
+ 	ret = wave5_vpu_enc_start_one_frame(inst, &pic_param, fail_res);
+ 	if (ret) {
++		/* bring-up instrumentation: dev_dbg is compiled out on this kernel */
++		dev_warn(inst->dev->dev, "%s: wave5_vpu_enc_start_one_frame fail: %d (res: 0x%x)\n",
++			 __func__, ret, *fail_res);
+ 		if (*fail_res == WAVE5_SYSERR_QUEUEING_FAIL)
+ 			return -EINVAL;
+-
+-		dev_dbg(inst->dev->dev, "%s: wave5_vpu_enc_start_one_frame fail: %d\n",
+-			__func__, ret);
+ 		src_buf = v4l2_m2m_src_buf_remove(m2m_ctx);
+ 		if (!src_buf) {
+ 			dev_dbg(inst->dev->dev,
+@@ -219,38 +288,153 @@
+ 				__func__);
+ 			return -EINVAL;
+ 		}
++		inst->active_enc_src_idx = -1;
+ 		switch_state(inst, VPU_INST_STATE_STOP);
+ 		dst_buf->vb2_buf.timestamp = src_buf->vb2_buf.timestamp;
+ 		v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_ERROR);
+ 		v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_ERROR);
+ 	} else {
+-		dev_dbg(inst->dev->dev, "%s: wave5_vpu_enc_start_one_frame success\n",
+-			__func__);
++		dev_dbg(inst->dev->dev, "%s: ENC_PIC queued (src_idx %d, end_flag %u)\n",
++			__func__, pic_param.src_idx, pic_param.src_end_flag);
+ 		/*
+ 		 * Remove the source buffer from the ready-queue now and finish
+ 		 * it in the videobuf2 framework once the index is returned by the
+ 		 * firmware in finish_encode
+ 		 */
+-		if (src_buf)
++		if (src_buf) {
++			inst->active_enc_src_idx = src_buf->vb2_buf.index;
+ 			v4l2_m2m_src_buf_remove_by_idx(m2m_ctx, src_buf->vb2_buf.index);
+-	}
+-
+-	return 0;
++		} else {
++			inst->active_enc_src_idx = -1;
++		}
++	}
++
++	return 0;
++}
++
++/*
++ * How long an encode job may stay in flight before the driver stops waiting for the firmware.
++ *
++ * The firmware reports its own watchdog (WAVE5_SYSERR_WATCHDOG_TIMEOUT) about 125 ms after a
++ * picture it cannot finish, and that report arrives as an ordinary completion which
++ * finish_encode already handles. The default sits well above that, so it fires only when no
++ * completion arrives at all. That case has nothing else to break it: v4l2_m2m_cancel_job() waits
++ * uninterruptibly with no timeout, holding the mutex both video nodes are registered with, so one
++ * unanswered job takes the encoder and both decoders down until the SoC is power cycled.
++ *
++ * Zero disables the timeout, restoring the unbounded wait. Paired with inject_lost_enc_irq
++ * (0260) that reproduces the deadlock deliberately, which is how this recovery is shown to be
++ * the thing preventing it rather than merely correlated with its absence.
++ */
++static unsigned int enc_job_timeout_ms = 500;
++module_param(enc_job_timeout_ms, uint, 0644);
++MODULE_PARM_DESC(enc_job_timeout_ms, "ms before an unanswered encode job is failed (0 disables)");
++
++/**
++ * wave5_vpu_enc_job_timeout - finish an encode job the firmware never completed.
++ *
++ * Runs on a workqueue and takes irq_lock only, which is what makes it able to help: the task it
++ * releases is itself inside v4l2_m2m_cancel_job() holding dev_lock. irq_lock is the same lock the
++ * IRQ thread holds around finish_process, so a completion arriving at the same moment is
++ * serialised against this rather than racing it.
++ *
++ * The buffers are returned with VB2_BUF_STATE_ERROR. By the time this runs the firmware's own
++ * watchdog window has long passed, so the block is not still writing into them.
++ */
++static void wave5_vpu_enc_job_timeout(struct work_struct *work)
++{
++	struct vpu_instance *inst = container_of(to_delayed_work(work),
++						 struct vpu_instance, job_timeout_work);
++	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
++	struct vb2_v4l2_buffer *src_buf;
++	struct vb2_v4l2_buffer *dst_buf;
++
++	mutex_lock(&inst->dev->irq_lock);
++
++	inst->job_timeout_count++;
++	if (!inst->job_timeout_warned) {
++		inst->job_timeout_warned = true;
++		dev_warn(inst->dev->dev,
++			 "%s: no completion for an encode job in %u ms, finishing it as an error\n",
++			 __func__, enc_job_timeout_ms);
++	}
++
++	src_buf = wave5_vpu_enc_active_src_buf(inst);
++	if (src_buf) {
++		inst->timestamp = src_buf->vb2_buf.timestamp;
++		v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_ERROR);
++	}
++	inst->active_enc_src_idx = -1;
++
++	dst_buf = v4l2_m2m_dst_buf_remove(m2m_ctx);
++	if (dst_buf) {
++		dst_buf->vb2_buf.timestamp = inst->timestamp;
++		dst_buf->field = V4L2_FIELD_NONE;
++		v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_ERROR);
++	}
++
++	v4l2_m2m_job_finish(inst->v4l2_m2m_dev, m2m_ctx);
++
++	mutex_unlock(&inst->dev->irq_lock);
+ }
+ 
+ static void wave5_vpu_enc_finish_encode(struct vpu_instance *inst)
+ {
+ 	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
+ 	int ret;
+-	struct enc_output_info enc_output_info;
++	struct enc_output_info enc_output_info = {};
+ 	struct vb2_v4l2_buffer *src_buf = NULL;
+ 	struct vb2_v4l2_buffer *dst_buf = NULL;
++	bool recoverable_vlc_buf_full;
++	enum vb2_buffer_state src_state;
++
++	cancel_delayed_work(&inst->job_timeout_work);
+ 
+ 	ret = wave5_vpu_enc_get_output_info(inst, &enc_output_info);
+ 	if (ret) {
+-		dev_dbg(inst->dev->dev,
+-			"%s: vpu_enc_get_output_info fail: %d  reason: %u | info: %u\n",
+-			__func__, ret, enc_output_info.error_reason, enc_output_info.warn_info);
++		/*
++		 * Mainline only dev_dbg's here and returns WITHOUT finishing the
++		 * m2m job, so a single failed ENC_PIC leaves the job active forever
++		 * and a later STREAMOFF deadlocks in v4l2_m2m_cancel_job (D-state,
++		 * device mutex held, whole VPU unusable). Log loudly and finish
++		 * the job so userspace gets its buffers back as errors.
++		 */
++		inst->enc_fault_count++;
++		if (!inst->enc_fault_warned) {
++			inst->enc_fault_warned = true;
++			dev_warn(inst->dev->dev,
++				 "%s: vpu_enc_get_output_info fail: %d  reason: 0x%x | info: 0x%x\n",
++				 __func__, ret, enc_output_info.error_reason,
++				 enc_output_info.warn_info);
++		}
++		recoverable_vlc_buf_full =
++			enc_output_info.error_reason == WAVE5_SYSERR_VLC_BUF_FULL;
++		src_state = recoverable_vlc_buf_full ? VB2_BUF_STATE_DONE : VB2_BUF_STATE_ERROR;
++
++		src_buf = wave5_vpu_enc_active_src_buf(inst);
++		if (src_buf) {
++			inst->timestamp = src_buf->vb2_buf.timestamp;
++			v4l2_m2m_buf_done(src_buf, src_state);
++		}
++		inst->active_enc_src_idx = -1;
++
++		if (recoverable_vlc_buf_full) {
++			dst_buf = v4l2_m2m_next_dst_buf(m2m_ctx);
++			dev_warn(inst->dev->dev,
++				 "%s: vlc buf full recovery: src %s, dst %s kept queued, ready src %u dst %u\n",
++				 __func__, src_buf ? "done" : "missing",
++				 dst_buf ? "present" : "missing",
++				 v4l2_m2m_num_src_bufs_ready(m2m_ctx),
++				 v4l2_m2m_num_dst_bufs_ready(m2m_ctx));
++		} else {
++			dst_buf = v4l2_m2m_dst_buf_remove(m2m_ctx);
++			if (dst_buf) {
++				dst_buf->vb2_buf.timestamp = inst->timestamp;
++				dst_buf->field = V4L2_FIELD_NONE;
++				v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_ERROR);
++			}
++		}
++		v4l2_m2m_job_finish(inst->v4l2_m2m_dev, m2m_ctx);
+ 		return;
+ 	}
+ 
+@@ -281,6 +465,7 @@
+ 			dev_warn(inst->dev->dev, "%s: no source buffer with index: %d found\n",
+ 				 __func__, enc_output_info.enc_src_idx);
+ 		}
++		inst->active_enc_src_idx = -1;
+ 	}
+ 
+ 	dst_buf = v4l2_m2m_dst_buf_remove(m2m_ctx);
+@@ -401,6 +586,24 @@
+ 
+ 	wave5_update_pix_fmt(&f->fmt.pix_mp, VPU_FMT_TYPE_CODEC,
+ 			     width, height, frmsize);
++	/*
++	 * Artosyn: clamp the coded (bitstream) sizeimage, mirroring the decoder
++	 * (wave5-vpu-dec.c). GStreamer asks for a worst-case ~17 MiB coded buffer at 1080p;
++	 * unclamped, the CAPTURE vb2 pool (from the 64 MiB CMA, shared during DVR with the two
++	 * tile decoders' capture pools) exhausts CMA and wedges the encoder.
++	 *
++	 * The ceiling is the uncompressed frame rather than a fixed byte count. A fixed 1 MiB
++	 * follows from an average (a 50 Mbit/s 60 fps stream averages ~104 KiB/frame), and an
++	 * average does not bound the frame after a total content change: at 1920x560 a
++	 * full-entropy source overflows it and the firmware returns WAVE5_SYSERR_VLC_BUF_FULL,
++	 * after which the instance produces nothing further. Rate control does not prevent it,
++	 * because it governs the average and not the first frame after the change. A coded
++	 * frame larger than the raw frame is pathological, so w*h*3/2 bounds the worst case
++	 * from the geometry instead of from an assumption about content, and stays far below
++	 * the ~17 MiB the clamp exists to refuse.
++	 */
++	f->fmt.pix_mp.plane_fmt[0].sizeimage = min(f->fmt.pix_mp.plane_fmt[0].sizeimage,
++						   (u32)width * height * 3 / 2);
+ 	f->fmt.pix_mp.colorspace = inst->colorspace;
+ 	f->fmt.pix_mp.ycbcr_enc = inst->ycbcr_enc;
+ 	f->fmt.pix_mp.quantization = inst->quantization;
+@@ -484,11 +687,44 @@
+ 	return 0;
+ }
+ 
++/*
++ * Artosyn: honour a caller-supplied luma stride wider than the picture.
++ *
++ * wave5_update_pix_fmt() ends in v4l2_fill_pixfmt_mp(), which derives
++ * bytesperline from the width and overwrites the caller's value, so a padded
++ * source can only be encoded through a repacked copy. The hardware has no such
++ * limit: start_encode() programs src_fmt.plane_fmt[0].bytesperline as the
++ * source stride, independent of the picture width.
++ *
++ * Only a wider stride is taken. Every plane scales by the same ratio so chroma
++ * keeps its relation to luma, and each sizeimage grows with its stride.
++ */
++static void wave5_widen_src_stride(struct v4l2_pix_format_mplane *pix_mp, unsigned int stride)
++{
++	unsigned int base = pix_mp->plane_fmt[0].bytesperline;
++
++	if (!base || stride <= base)
++		return;
++
++	for (unsigned int i = 0; i < pix_mp->num_planes; i++) {
++		unsigned int bpl = pix_mp->plane_fmt[i].bytesperline;
++		unsigned int rows;
++
++		if (!bpl)
++			continue;
++
++		rows = pix_mp->plane_fmt[i].sizeimage / bpl;
++		pix_mp->plane_fmt[i].bytesperline = bpl * stride / base;
++		pix_mp->plane_fmt[i].sizeimage = pix_mp->plane_fmt[i].bytesperline * rows;
++	}
++}
++
+ static int wave5_vpu_enc_try_fmt_out(struct file *file, void *fh, struct v4l2_format *f)
+ {
+ 	struct vpu_instance *inst = file_to_vpu_inst(file);
+ 	const struct v4l2_frmsize_stepwise *frmsize;
+ 	const struct vpu_format *vpu_fmt;
++	unsigned int stride = f->fmt.pix_mp.plane_fmt[0].bytesperline;
+ 	int width, height;
+ 
+ 	dev_dbg(inst->dev->dev, "%s: fourcc: %u width: %u height: %u num_planes: %u field: %u\n",
+@@ -510,6 +746,7 @@
+ 
+ 	wave5_update_pix_fmt(&f->fmt.pix_mp, VPU_FMT_TYPE_RAW,
+ 			     width, height, frmsize);
++	wave5_widen_src_stride(&f->fmt.pix_mp, stride);
+ 	return 0;
+ }
+ 
+@@ -518,6 +755,17 @@
+ 	struct vpu_instance *inst = file_to_vpu_inst(file);
+ 	const struct vpu_format *vpu_fmt;
+ 	const struct v4l2_format_info *info;
++	/*
++	 * Artosyn: the picture the caller asked for, before RAW alignment.
++	 *
++	 * The source and coded sides align differently, 16 rows against 8, and
++	 * the source rule is the coarser. Sizing the coded picture from the
++	 * aligned source height codes the buffer's padding rows as image: a
++	 * 1080-row frame becomes a 1088-row stream whose last 8 rows are
++	 * whatever the writer left in the allocation.
++	 */
++	unsigned int coded_width = f->fmt.pix_mp.width;
++	unsigned int coded_height = f->fmt.pix_mp.height;
+ 	int i, ret;
+ 
+ 	dev_dbg(inst->dev->dev, "%s: fourcc: %u width: %u height: %u num_planes: %u field: %u\n",
+@@ -566,8 +814,15 @@
+ 		return -EINVAL;
+ 
+ 	wave5_update_pix_fmt(&inst->dst_fmt, VPU_FMT_TYPE_CODEC,
+-			     f->fmt.pix_mp.width, f->fmt.pix_mp.height,
++			     coded_width, coded_height,
+ 			     vpu_fmt->v4l2_frmsize);
++	/* Artosyn: re-apply the coded sizeimage clamp (see wave5_vpu_enc_try_fmt_cap). s_fmt_out
++	 * recomputes dst_fmt after the CAPTURE clamp, and this is the value the CAPTURE vb2 pool
++	 * actually allocates from, so the ceiling here is the one that takes effect and the two
++	 * must not diverge. */
++	inst->dst_fmt.plane_fmt[0].sizeimage = min(inst->dst_fmt.plane_fmt[0].sizeimage,
++						   (u32)inst->dst_fmt.width *
++						   inst->dst_fmt.height * 3 / 2);
+ 	inst->conf_win.width = inst->dst_fmt.width;
+ 	inst->conf_win.height = inst->dst_fmt.height;
+ 
+@@ -684,6 +939,7 @@
+ static int wave5_vpu_enc_s_parm(struct file *file, void *fh, struct v4l2_streamparm *a)
+ {
+ 	struct vpu_instance *inst = file_to_vpu_inst(file);
++	u32 old_frame_rate = inst->frame_rate;
+ 
+ 	dev_dbg(inst->dev->dev, "%s: type: %u\n", __func__, a->type);
+ 
+@@ -702,6 +958,9 @@
+ 	dev_dbg(inst->dev->dev, "%s: numerator: %u | denominator: %u\n",
+ 		__func__, a->parm.output.timeperframe.numerator,
+ 		a->parm.output.timeperframe.denominator);
++
++	if (inst->state >= VPU_INST_STATE_PIC_RUN && inst->frame_rate != old_frame_rate)
++		inst->enc_rate_change_pending |= W5_ENC_CHANGE_RC_FRAME_RATE;
+ 
+ 	return 0;
+ }
+@@ -746,6 +1005,8 @@
+ static int wave5_vpu_enc_s_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct vpu_instance *inst = wave5_ctrl_to_vpu_inst(ctrl);
++	bool update_rate = false;
++	bool update_vbv = false;
+ 
+ 	dev_dbg(inst->dev->dev, "%s: name: %s | value: %d\n", __func__, ctrl->name, ctrl->val);
+ 
+@@ -763,6 +1024,7 @@
+ 		inst->rot_angle = ctrl->val;
+ 		break;
+ 	case V4L2_CID_MPEG_VIDEO_VBV_SIZE:
++		update_vbv = inst->vbv_buf_size != ctrl->val;
+ 		inst->vbv_buf_size = ctrl->val;
+ 		break;
+ 	case V4L2_CID_MPEG_VIDEO_BITRATE_MODE:
+@@ -778,10 +1040,14 @@
+ 		}
+ 		break;
+ 	case V4L2_CID_MPEG_VIDEO_BITRATE:
++		update_rate = inst->bit_rate != ctrl->val;
+ 		inst->bit_rate = ctrl->val;
+ 		break;
+ 	case V4L2_CID_MPEG_VIDEO_GOP_SIZE:
+ 		inst->enc_param.avc_idr_period = ctrl->val;
++		break;
++	case V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME:
++		inst->enc_force_idr = true;
+ 		break;
+ 	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE:
+ 		inst->enc_param.independ_slice_mode = ctrl->val;
+@@ -1081,6 +1347,13 @@
+ 		return -EINVAL;
+ 	}
+ 
++	if (inst->state >= VPU_INST_STATE_PIC_RUN) {
++		if (update_rate)
++			inst->enc_rate_change_pending |= W5_ENC_CHANGE_RC_TARGET_RATE;
++		if (update_vbv)
++			inst->enc_rate_change_pending |= W5_ENC_CHANGE_RC_PARAM;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -1156,9 +1429,21 @@
+ 	else
+ 		open_param->src_format = FORMAT_420;
+ 
++	/*
++	 * Values with no V4L2 control are set to what the vendor's MPP service opens this same
++	 * firmware with. Its defaults live in a rodata template that
++	 * ar_video_h26x_enc_exe_gen_default_param() copies into the channel object, and every field
++	 * is named by that function's own log strings; the recovered table is in
++	 * userspace/docs/air-video-benchmark.md. Fields the vendor agrees with upstream on
++	 * (gop_preset_idx 9, hvs_qp_scale 2, skip_intra_trans, intra_nx_n_enable, the six noise
++	 * weights, rc_weight_param 16) are left alone.
++	 */
+ 	open_param->wave_param.gop_preset_idx = PRESET_IDX_IPP_SINGLE;
+ 	open_param->wave_param.hvs_qp_scale = 2;
+-	open_param->wave_param.hvs_max_delta_qp = 10;
++	/* Vendor hvsMaxDeltaQp. Bounds how far CU-level RC may pull a block below the picture QP,
++	 * so upstream's 10 permits an intra picture 6 QP steps finer than the vendor allows.
++	 */
++	open_param->wave_param.hvs_max_delta_qp = 4;
+ 	open_param->wave_param.skip_intra_trans = 1;
+ 	open_param->wave_param.intra_nx_n_enable = 1;
+ 	open_param->wave_param.nr_intra_weight_y = 7;
+@@ -1167,8 +1452,16 @@
+ 	open_param->wave_param.nr_inter_weight_y = 4;
+ 	open_param->wave_param.nr_inter_weight_cb = 4;
+ 	open_param->wave_param.nr_inter_weight_cr = 4;
+-	open_param->wave_param.rdo_skip = 1;
+-	open_param->wave_param.lambda_scaling_enable = 1;
++	/* Vendor rdoSkip / lambdaScalingEnable, both 0 under its useRecommendEncParam 0. Skipping
++	 * rate-distortion optimisation spends more bits for the same QP.
++	 */
++	open_param->wave_param.rdo_skip = 0;
++	open_param->wave_param.lambda_scaling_enable = 0;
++	/* Vendor tmvpEnable / maxNumMerge. Neither has a control, so both were left at the zero the
++	 * instance is allocated with; max_num_merge 0 is outside the 1..2 the field accepts.
++	 */
++	open_param->wave_param.tmvp_enable = 1;
++	open_param->wave_param.max_num_merge = 2;
+ 
+ 	open_param->line_buf_int_en = true;
+ 	open_param->pic_width = inst->conf_win.width;
+@@ -1176,9 +1469,17 @@
+ 	open_param->frame_rate_info = inst->frame_rate;
+ 	open_param->rc_enable = inst->rc_enable;
+ 	if (inst->rc_enable) {
++		/* -1 selects the firmware's own initial QP, and matches the vendor's initialRcQp
++		 * (the s32FirstFrameStartQp its SetRcParam leaves at -1). Under it the first
++		 * intra picture of an instance appears to be coded at wave_param.intra_qp: the
++		 * vendor's open-parameter template carries intraQP 35 and its session-opening
++		 * IDR measures exactly QP 35 on the wire (glue/capture/hevc-slice-qp.py over
++		 * archive/out/rf-capture/assoc-arm.c0.h265). Untested on this side.
++		 */
+ 		open_param->wave_param.initial_rc_qp = -1;
+ 		open_param->wave_param.rc_weight_param = 16;
+-		open_param->wave_param.rc_weight_buf = 128;
++		/* Vendor rcWeightBuf. Upstream's 128 is the Chips&Media reference value. */
++		open_param->wave_param.rc_weight_buf = 1;
+ 	}
+ 	open_param->wave_param.mb_level_rc_enable = input.mb_level_rc_enable;
+ 	open_param->wave_param.cu_level_rc_enable = input.cu_level_rc_enable;
+@@ -1212,6 +1513,14 @@
+ 		}
+ 	} else {
+ 		open_param->wave_param.avc_idr_period = input.avc_idr_period;
++		/* The firmware refreshes on intra_period, which is why the forced-keyframe path
++		 * drives it rather than avc_idr_period. Only H264_I_PERIOD writes it, so a client
++		 * that sets GOP_SIZE alone gets one IDR when the instance opens and none after,
++		 * and anything joining mid-stream has nothing to start decoding on. Carry the same
++		 * fallback the HEVC branch above uses.
++		 */
++		if (input.intra_period == 0)
++			open_param->wave_param.intra_period = input.avc_idr_period;
+ 	}
+ 	open_param->wave_param.entropy_coding_mode = input.entropy_coding_mode;
+ 	open_param->wave_param.lossless_enable = input.lossless_enable;
+@@ -1343,17 +1652,20 @@
+ 
+ 		ret = wave5_set_enc_openparam(&open_param, inst);
+ 		if (ret) {
+-			dev_dbg(inst->dev->dev, "%s: wave5_set_enc_openparam, fail: %d\n",
+-				__func__, ret);
++			/* bring-up instrumentation: dev_dbg is compiled out */
++			dev_warn(inst->dev->dev, "%s: wave5_set_enc_openparam, fail: %d\n",
++				 __func__, ret);
+ 			goto return_buffers;
+ 		}
+ 
+ 		ret = wave5_vpu_enc_open(inst, &open_param);
+ 		if (ret) {
+-			dev_dbg(inst->dev->dev, "%s: wave5_vpu_enc_open, fail: %d\n",
+-				__func__, ret);
++			dev_warn(inst->dev->dev, "%s: wave5_vpu_enc_open, fail: %d\n",
++				 __func__, ret);
+ 			goto return_buffers;
+ 		}
++		dev_dbg(inst->dev->dev, "%s: enc instance open (id %d)\n",
++			__func__, inst->id);
+ 
+ 		if (inst->mirror_direction) {
+ 			wave5_vpu_enc_give_command(inst, ENABLE_MIRRORING, NULL);
+@@ -1376,6 +1688,17 @@
+ 			dev_warn(inst->dev->dev, "Sequence not found: %d\n", ret);
+ 			goto return_buffers;
+ 		}
++		/* What the instance was actually configured with, which a capture can be judged
++		 * against. profile and level reach the SPS, so a stream that does not match them
++		 * says the controls never arrived rather than that the firmware ignored them.
++		 * frame_rate is what the rate controller divides the bitrate by and only S_PARM
++		 * writes it, so a client that never issues one leaves it at the 30 set in open()
++		 * and a 60 fps stream then encodes at twice the requested bitrate.
++		 */
++		dev_info(inst->dev->dev,
++			 "%s: enc seq init done (fbc_buf_count %u, min_src %u, profile %u, level %u, frame_rate %u)\n",
++			 __func__, inst->fbc_buf_count, inst->min_src_buf_count,
++			 inst->enc_param.profile, inst->enc_param.level, inst->frame_rate);
+ 		ret = switch_state(inst, VPU_INST_STATE_INIT_SEQ);
+ 		if (ret)
+ 			goto return_buffers;
+@@ -1390,6 +1713,7 @@
+ 		}
+ 
+ 		ret = switch_state(inst, VPU_INST_STATE_PIC_RUN);
++		dev_info(inst->dev->dev, "%s: enc entering PIC_RUN\n", __func__);
+ 	}
+ 	if (ret)
+ 		goto return_buffers;
+@@ -1429,10 +1753,28 @@
+ 	v4l2_m2m_clear_state(m2m_ctx);
+ }
+ 
++/*
++ * Total budget for STREAMOFF to drain the firmware's report queue.
++ *
++ * The drain below waits per pass, and a firmware that has stopped answering makes every pass wait
++ * the full VPU_ENC_TIMEOUT of 60 s. Measured: 124 s in D state across two passes, with the job
++ * timeout already armed - so this is a second uninterruptible wait, independent of the one that
++ * timeout covers. A budget across the whole loop bounds both the per-pass wait and the number of
++ * passes. Two seconds is far above a healthy drain, which completes in milliseconds.
++ *
++ * Zero restores the upstream per-pass VPU_ENC_TIMEOUT with no total budget.
++ */
++static unsigned int enc_drain_timeout_ms = 2000;
++module_param(enc_drain_timeout_ms, uint, 0644);
++MODULE_PARM_DESC(enc_drain_timeout_ms,
++		 "ms STREAMOFF waits for the encoder report queue to drain (0 restores the 60 s per-pass wait)");
++
+ static void wave5_vpu_enc_stop_streaming(struct vb2_queue *q)
+ {
+ 	struct vpu_instance *inst = vb2_get_drv_priv(q);
+ 	bool check_cmd = true;
++	unsigned int drain_ms = enc_drain_timeout_ms ? enc_drain_timeout_ms : VPU_ENC_TIMEOUT;
++	unsigned long drain_deadline = jiffies + msecs_to_jiffies(drain_ms);
+ 
+ 	/*
+ 	 * Note that we don't need m2m_ctx->next_buf_last for this driver, so we
+@@ -1454,7 +1796,15 @@
+ 		if (q_status.report_queue_count == 0)
+ 			break;
+ 
+-		if (wave5_vpu_wait_interrupt(inst, VPU_ENC_TIMEOUT) < 0)
++		if (time_after_eq(jiffies, drain_deadline)) {
++			dev_warn(inst->dev->dev,
++				 "%s: %u report(s) still queued after %u ms, abandoning the drain\n",
++				 __func__, q_status.report_queue_count, drain_ms);
++			break;
++		}
++
++		if (wave5_vpu_wait_interrupt(inst,
++					     jiffies_to_msecs(drain_deadline - jiffies)) < 0)
+ 			break;
+ 
+ 		if (wave5_vpu_enc_get_output_info(inst, &enc_output_info))
+@@ -1520,6 +1870,9 @@
+ 			break;
+ 		}
+ 		dev_dbg(inst->dev->dev, "%s: leave with active job", __func__);
++		if (enc_job_timeout_ms)
++			schedule_delayed_work(&inst->job_timeout_work,
++					      msecs_to_jiffies(enc_job_timeout_ms));
+ 		pm_runtime_put_autosuspend(inst->dev->dev);
+ 		return;
+ 	default:
+@@ -1558,8 +1911,23 @@
+ 	return false;
+ }
+ 
++/**
++ * wave5_vpu_enc_job_abort - teardown is waiting on the running job.
++ *
++ * v4l2_m2m_cancel_job() calls this and then waits for the job to clear. Moving to STOP keeps
++ * job_ready from starting another one; the running job is left to its completion, or to
++ * wave5_vpu_enc_job_timeout() when none arrives, which is what bounds that wait.
++ */
++static void wave5_vpu_enc_job_abort(void *priv)
++{
++	struct vpu_instance *inst = priv;
++
++	switch_state(inst, VPU_INST_STATE_STOP);
++}
++
+ static const struct v4l2_m2m_ops wave5_vpu_enc_m2m_ops = {
+ 	.device_run = wave5_vpu_enc_device_run,
++	.job_abort = wave5_vpu_enc_job_abort,
+ 	.job_ready = wave5_vpu_enc_job_ready,
+ };
+ 
+@@ -1579,6 +1947,7 @@
+ 	inst->dev = dev;
+ 	inst->type = VPU_INST_TYPE_ENC;
+ 	inst->ops = &wave5_vpu_enc_inst_ops;
++	inst->active_enc_src_idx = -1;
+ 
+ 	inst->codec_info = kzalloc(sizeof(*inst->codec_info), GFP_KERNEL);
+ 	if (!inst->codec_info) {
+@@ -1590,6 +1959,7 @@
+ 	v4l2_fh_add(&inst->v4l2_fh, filp);
+ 
+ 	INIT_LIST_HEAD(&inst->list);
++	INIT_DELAYED_WORK(&inst->job_timeout_work, wave5_vpu_enc_job_timeout);
+ 
+ 	inst->v4l2_m2m_dev = inst->dev->v4l2_m2m_enc_dev;
+ 	inst->v4l2_fh.m2m_ctx =
+@@ -1740,6 +2110,8 @@
+ 	v4l2_ctrl_new_std(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
+ 			  V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR,
+ 			  0, 1, 1, 0);
++	v4l2_ctrl_new_std(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
++			  V4L2_CID_MPEG_VIDEO_FORCE_KEY_FRAME, 0, 0, 0, 0);
+ 
+ 	if (v4l2_ctrl_hdl->error) {
+ 		ret = -ENODEV;
+@@ -1791,6 +2163,13 @@
+ 
+ static int wave5_vpu_enc_release(struct file *filp)
+ {
++	struct vpu_instance *inst = file_to_vpu_inst(filp);
++
++	if (inst->enc_fault_count || inst->job_timeout_count)
++		dev_warn(inst->dev->dev,
++			 "encoder instance closing after %u firmware error(s) and %u timed-out job(s)\n",
++			 inst->enc_fault_count, inst->job_timeout_count);
++
+ 	return wave5_vpu_release_device(filp, wave5_vpu_enc_close, "encoder");
+ }
+ 
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu.c
+@@ -344,6 +344,11 @@
+ 	dev_set_drvdata(&pdev->dev, dev);
+ 	dev->dev = &pdev->dev;
+ 	dev->artosyn = match_data->flags & WAVE5_IS_ARTOSYN;
++	dev->artosyn_encoder = dev->artosyn &&
++		device_property_read_bool(&pdev->dev, "artosyn,enable-encoder");
++	dev->fw_name = match_data->fw_name;
++	if (dev->artosyn)
++		device_property_read_string(&pdev->dev, "firmware-name", &dev->fw_name);
+ 	if (dev->artosyn) {
+ 		/* Never fall back to general Linux RAM on this board. */
+ 		ret = of_reserved_mem_device_init(&pdev->dev);
+@@ -440,7 +445,7 @@
+ 			goto err_v4l2_unregister;
+ 		}
+ 	}
+-	if (match_data->flags & WAVE5_IS_ENC) {
++	if ((match_data->flags & WAVE5_IS_ENC) || dev->artosyn_encoder) {
+ 		ret = wave5_vpu_enc_register_device(dev);
+ 		if (ret) {
+ 			dev_err(&pdev->dev, "wave5_vpu_enc_register_device, fail: %d\n", ret);
+@@ -448,14 +453,14 @@
+ 		}
+ 	}
+ 
+-	ret = wave5_vpu_load_firmware(&pdev->dev, match_data->fw_name, &fw_revision);
++	ret = wave5_vpu_load_firmware(&pdev->dev, dev->fw_name, &fw_revision);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "wave5_vpu_load_firmware, fail: %d\n", ret);
+ 		goto err_enc_unreg;
+ 	}
+ 
+ 	dev_info(&pdev->dev, "Added wave5 driver with caps: %s %s\n",
+-		 (match_data->flags & WAVE5_IS_ENC) ? "'ENCODE'" : "",
++		 ((match_data->flags & WAVE5_IS_ENC) || dev->artosyn_encoder) ? "'ENCODE'" : "",
+ 		 (match_data->flags & WAVE5_IS_DEC) ? "'DECODE'" : "");
+ 	dev_info(&pdev->dev, "Product Code:      0x%x\n", dev->product_code);
+ 	dev_info(&pdev->dev, "Firmware Revision: %u\n", fw_revision);
+@@ -470,7 +475,7 @@
+ 	return 0;
+ 
+ err_enc_unreg:
+-	if (match_data->flags & WAVE5_IS_ENC)
++	if ((match_data->flags & WAVE5_IS_ENC) || dev->artosyn_encoder)
+ 		wave5_vpu_enc_unregister_device(dev);
+ err_dec_unreg:
+ 	if (match_data->flags & WAVE5_IS_DEC)
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
+@@ -6,6 +6,7 @@
+  */
+ 
+ #include <linux/bug.h>
++#include <linux/firmware.h>
+ #include <linux/pm_runtime.h>
+ #include <linux/delay.h>
+ #include "wave5-vpuapi.h"
+@@ -24,7 +25,7 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	if (wave5_vpu_is_init(vpu_dev)) {
++	if (wave5_vpu_is_init(vpu_dev) && !vpu_dev->artosyn_encoder) {
+ 		wave5_vpu_re_init(dev, (void *)code, size);
+ 		ret = -EBUSY;
+ 		goto err_out;
+@@ -47,6 +48,47 @@
+ 		return -EINVAL;
+ 
+ 	return wave5_initialize_vpu(dev, bitcode, size);
++}
++
++int wave5_vpu_recover_locked(struct vpu_device *vpu_dev)
++{
++	const struct firmware *fw;
++	int ret;
++
++	if (!vpu_dev->artosyn_encoder || !vpu_dev->fw_name)
++		return -ENOENT;
++
++	ret = request_firmware(&fw, vpu_dev->fw_name, vpu_dev->dev);
++	if (ret) {
++		dev_err(vpu_dev->dev, "VPU recover, request_firmware fail: %d\n", ret);
++		return ret;
++	}
++
++	ret = wave5_vpu_reset(vpu_dev->dev, SW_RESET_ON_BOOT);
++	if (!ret)
++		ret = wave5_vpu_init(vpu_dev->dev, (void *)fw->data, fw->size);
++	release_firmware(fw);
++	if (ret) {
++		dev_err(vpu_dev->dev, "VPU recover, reset and firmware download fail: %d\n", ret);
++		return ret;
++	}
++
++	dev_warn(vpu_dev->dev, "VPU recovered: block reset and firmware re-download\n");
++	return 0;
++}
++
++int wave5_vpu_recover(struct vpu_device *vpu_dev)
++{
++	int ret;
++
++	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
++	if (ret)
++		return ret;
++
++	ret = wave5_vpu_recover_locked(vpu_dev);
++
++	mutex_unlock(&vpu_dev->hw_lock);
++	return ret;
+ }
+ 
+ int wave5_vpu_flush_instance(struct vpu_instance *inst)
+@@ -720,30 +762,73 @@
+ 
+ 	pm_runtime_resume_and_get(inst->dev->dev);
+ 
+-	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
+-	if (ret) {
+-		pm_runtime_resume_and_get(inst->dev->dev);
+-		return ret;
+-	}
++	/* ML (Artosyn): same leak shape as wave5_vpu_dec_close - the interruptible lock
++	 * fails instantly on SIGKILL-driven release, and the early returns below skipped
++	 * every free (they also leaked a pm_runtime ref via resume_and_get on the way out).
++	 * Take the lock uninterruptibly and always fall through to the frees. */
++	mutex_lock(&vpu_dev->hw_lock);
+ 
+ 	do {
+ 		ret = wave5_vpu_enc_finish_seq(inst, fail_res);
+ 		if (ret < 0 && *fail_res != WAVE5_SYSERR_VPU_STILL_RUNNING) {
+ 			dev_warn(inst->dev->dev, "enc_finish_seq timed out\n");
+-			pm_runtime_resume_and_get(inst->dev->dev);
+-			mutex_unlock(&vpu_dev->hw_lock);
+-			return ret;
++			break;
+ 		}
+ 
+ 		if (*fail_res == WAVE5_SYSERR_VPU_STILL_RUNNING &&
+ 		    retry++ >= MAX_FIRMWARE_CALL_RETRY) {
+-			pm_runtime_resume_and_get(inst->dev->dev);
+-			mutex_unlock(&vpu_dev->hw_lock);
+-			return -ETIMEDOUT;
++			ret = -ETIMEDOUT;
++			break;
+ 		}
+ 	} while (ret != 0);
+ 
+ 	dev_dbg(inst->dev->dev, "%s: enc_finish_seq complete\n", __func__);
++
++	/* ML (Artosyn): same stop-before-free + last-instance-only reset rule as
++	 * wave5_vpu_dec_close. */
++	if (ret < 0) {
++		bool last;
++		unsigned long flags;
++
++		spin_lock_irqsave(&vpu_dev->irq_spinlock, flags);
++		last = list_empty(&vpu_dev->instances);   /* this inst is already delisted (release path) */
++		spin_unlock_irqrestore(&vpu_dev->irq_spinlock, flags);
++		if (!last) {
++			dev_warn(inst->dev->dev,
++				 "%s: instance still running with siblings live, leaking its buffers (no global reset)\n",
++				 __func__);
++			inst->keep_dma_bufs = true;
++			goto unlock_and_return;
++		}
++		dev_warn(inst->dev->dev, "%s: instance still running, VPU reload before free\n",
++			 __func__);
++		if (wave5_vpu_recover_locked(vpu_dev)) {
++			dev_err(inst->dev->dev, "%s: VPU reload failed, leaking instance buffers\n",
++				__func__);
++			inst->keep_dma_bufs = true;
++			goto unlock_and_return;
++		}
++	}
++
++	/* The P1 firmware can acknowledge DESTROY_INSTANCE yet leave command
++	 * state that stalls a later session. Reinitialize only after the last
++	 * Artosyn encoder closes; never reset an active sibling codec session.
++	 */
++	if (!ret && vpu_dev->artosyn_encoder) {
++		bool last;
++		unsigned long flags;
++
++		spin_lock_irqsave(&vpu_dev->irq_spinlock, flags);
++		last = list_empty(&vpu_dev->instances);
++		spin_unlock_irqrestore(&vpu_dev->irq_spinlock, flags);
++		if (last) {
++			ret = wave5_vpu_recover_locked(vpu_dev);
++			if (ret) {
++				inst->keep_dma_bufs = true;
++				goto unlock_and_return;
++			}
++		}
++	}
+ 
+ 	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_work);
+ 
+@@ -755,10 +840,11 @@
+ 	}
+ 
+ 	wave5_vdi_free_dma_memory(vpu_dev, &p_enc_info->vb_task);
++unlock_and_return:
+ 	mutex_unlock(&vpu_dev->hw_lock);
+ 	pm_runtime_put_sync(inst->dev->dev);
+ 
+-	return 0;
++	return ret < 0 ? ret : 0;
+ }
+ 
+ int wave5_vpu_enc_register_frame_buffer(struct vpu_instance *inst, unsigned int num,
+@@ -865,6 +951,50 @@
+ 	mutex_unlock(&vpu_dev->hw_lock);
+ 
+ 	return ret;
++}
++
++int wave5_vpu_enc_update_rate(struct vpu_instance *inst, u32 enable)
++{
++	struct enc_info *p_enc_info = &inst->codec_info->enc_info;
++	struct vpu_device *vpu_dev = inst->dev;
++	int ret;
++
++	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
++	if (ret)
++		return ret;
++
++	p_enc_info->open_param.bit_rate = inst->bit_rate;
++	p_enc_info->open_param.frame_rate_info = inst->frame_rate;
++	/*
++	 * VBR pins the window at 3000 when the instance is opened; keep the live
++	 * path on that same rule so a mode change cannot be undone from here.
++	 */
++	if (inst->rc_mode != 0)
++		p_enc_info->open_param.vbv_buffer_size = inst->vbv_buf_size;
++
++	ret = wave5_vpu_enc_change_param(inst, enable);
++
++	mutex_unlock(&vpu_dev->hw_lock);
++
++	return ret;
++}
++
++int wave5_vpu_enc_apply_pending_rate(struct vpu_instance *inst)
++{
++	u32 pending = inst->enc_rate_change_pending;
++
++	if (!pending)
++		return 0;
++
++	/*
++	 * Consume the request even when the firmware rejects it. Retrying on
++	 * the next frame would queue a SET_PARAM per picture behind an encoder
++	 * that is already unhappy; one attempt per userspace request keeps the
++	 * failure bounded and visible in the log.
++	 */
++	inst->enc_rate_change_pending = 0;
++
++	return wave5_vpu_enc_update_rate(inst, pending);
+ }
+ 
+ int wave5_vpu_enc_get_output_info(struct vpu_instance *inst, struct enc_output_info *info)
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
+@@ -9,6 +9,7 @@
+ #define VPUAPI_H_INCLUDED
+ 
+ #include <linux/kfifo.h>
++#include <linux/workqueue.h>
+ #include <linux/idr.h>
+ #include <linux/genalloc.h>
+ #include <media/v4l2-device.h>
+@@ -752,8 +753,14 @@
+ 	int irq;
+ 	enum product_id product;
+ 	struct vpu_attr attr;
+-	bool artosyn; /* AR9311 integration quirks, selected by DT compatible */
++	bool artosyn;
++	bool artosyn_encoder; /* AR9311 integration quirks, selected by DT compatible */
+ 	struct vpu_buf common_mem;
++	/*
++	 * ML (Artosyn): the bitcode name probe loaded, kept so the firmware can be
++	 * downloaded again over a running VPU. See wave5_vpu_recover().
++	 */
++	const char *fw_name;
+ 	u32 last_performance_cycles;
+ 	u32 sram_size;
+ 	struct gen_pool *sram_pool;
+@@ -771,6 +778,7 @@
+ 	struct semaphore irq_sem; /* signal to irq_thread when interrupt happens*/
+ 	struct reset_control *resets;
+ 	spinlock_t irq_spinlock; /* protect instances list */
++	struct dentry *debugfs_dir; /* ML: /sys/kernel/debug/wave5 */
+ };
+ 
+ struct vpu_instance;
+@@ -819,10 +827,26 @@
+ 	bool cbcr_interleave;
+ 	bool nv21;
+ 	bool eos;
++	bool keep_dma_bufs;
++	s32 active_enc_src_idx;
++	u32 enc_rate_change_pending;
++	bool enc_force_idr; /* FORCE_KEY_FRAME seen; armed on the next start_encode */
++	bool enc_idr_restore; /* the forced intra_period 1 is live and must be put back */
++	u32 enc_idr_saved_period; /* intra_period as configured, saved across a forced keyframe */
+ 	struct vpu_buf bitstream_vbuf;
+ 	dma_addr_t last_rd_ptr;
+ 	size_t remaining_consumed_bytes;
+ 	bool needs_reallocation;
++
++	/* ML (Artosyn): bound on an encode job the firmware never answers. Armed when device_run
++	 * leaves a job active, disarmed by the completion. Its expiry is the only thing that can
++	 * release a task parked in v4l2_m2m_cancel_job(), which waits uninterruptibly with no
++	 * timeout while holding the mutex both video nodes are registered with. */
++	struct delayed_work job_timeout_work;
++	bool job_timeout_warned;    /* latch: one warning per instance, not one per job */
++	bool enc_fault_warned;      /* latch for the firmware's own error reports */
++	u32 job_timeout_count;      /* jobs finished by the timeout above */
++	u32 enc_fault_count;        /* completions that carried a firmware error */
+ 
+ 	unsigned int min_src_buf_count;
+ 	unsigned int rot_angle;
+@@ -850,6 +874,14 @@
+ void wave5_vdi_free_sram(struct vpu_device *vpu_dev);
+ 
+ int wave5_vpu_init_with_bitcode(struct device *dev, u8 *bitcode, size_t size);
++
++/* ML (Artosyn): block reset plus a forced firmware re-download, the only thing that clears a
++ * firmware instance the close path could not stop. Global: it destroys every live instance, so
++ * callers must establish that this is the last one. wave5_vpu_recover_locked() is the same body
++ * for a caller that already holds hw_lock.
++ */
++int wave5_vpu_recover(struct vpu_device *vpu_dev);
++int wave5_vpu_recover_locked(struct vpu_device *vpu_dev);
+ int wave5_vpu_flush_instance(struct vpu_instance *inst);
+ int wave5_vpu_get_version_info(struct device *dev, u32 *revision, unsigned int *product_id);
+ int wave5_vpu_dec_open(struct vpu_instance *inst, struct dec_open_param *open_param);
+@@ -879,6 +911,25 @@
+ 					enum tiled_map_type map_type);
+ int wave5_vpu_enc_start_one_frame(struct vpu_instance *inst, struct enc_param *param,
+ 				  u32 *fail_res);
++
++/* W5_CMD_ENC_SEQ_SET_PARAM_ENABLE bits accepted under OPT_CHANGE_PARAM */
++/* Forcing a keyframe on a running instance goes through the same OPT_CHANGE_PARAM path as the live
++ * rate controls, not through a per-picture register: W5_CMD_ENC_PIC_PIC_PARAM was swept across every
++ * plausible force-picture-type layout on hardware and produced no IDR. Bit 1 of the change mask is
++ * the intra parameters (vendor Wave5VpuEncParaChange, libmpp_service.so 0xffa4c -> the 0x130 write),
++ * and W5_CMD_ENC_SEQ_INTRA_PARAM carries intra_period - so a keyframe is one frame at intra_period 1
++ * followed by a restore. */
++#define W5_ENC_CHANGE_INTRA_PARAM	BIT(1)
++
++#define W5_ENC_CHANGE_RC_FRAME_RATE	BIT(6)
++#define W5_ENC_CHANGE_RC_TARGET_RATE	BIT(8)
++#define W5_ENC_CHANGE_RC_PARAM		BIT(9)
++
++int wave5_vpu_enc_update_rate(struct vpu_instance *inst, u32 enable);
++int wave5_vpu_enc_apply_pending_rate(struct vpu_instance *inst);
++
++/* Codec-pool demand in bytes, tallied in wave5-vdi.c. Reported once per encoder open rather
++ * than per allocation; a pool that fills surfaces only as a downstream V4L2 error. */
+ int wave5_vpu_enc_get_output_info(struct vpu_instance *inst, struct enc_output_info *info);
+ int wave5_vpu_enc_give_command(struct vpu_instance *inst, enum codec_command cmd, void *parameter);
+ 
+--- a/drivers/media/platform/chips-media/wave5/wave5.h
++++ b/drivers/media/platform/chips-media/wave5/wave5.h
+@@ -106,6 +106,8 @@
+ 
+ int wave5_vpu_enc_init_seq(struct vpu_instance *inst);
+ 
++int wave5_vpu_enc_change_param(struct vpu_instance *inst, u32 enable);
++
+ int wave5_vpu_enc_get_seq_info(struct vpu_instance *inst, struct enc_initial_info *info);
+ 
+ int wave5_vpu_enc_register_framebuffer(struct device *dev, struct vpu_instance *inst,

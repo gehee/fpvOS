@@ -6,10 +6,9 @@
 
 # Radio-chip firmware, independent of the Linux host SoC or application.
 # Board defconfigs select profile, transport, role and factory-data policy.
-OPEN8030_VERSION ?= 89d3c634c11d5665dcc17401c5d8b3172bbacf8b
+OPEN8030_VERSION ?= 382904174fb788ea3c69ed10c8df8590b8e6e7ab
 OPEN8030_SITE ?= https://github.com/gehee/Open8030.git
 OPEN8030_SITE_METHOD = git
-OPEN8030_PROFILE = $(call qstrip,$(BR2_PACKAGE_OPEN8030_PROFILE))
 OPEN8030_CONFIG ?= $(call qstrip,$(BR2_PACKAGE_OPEN8030_CONFIG))
 
 # Bare filenames come from the published archive; absolute paths name private
@@ -20,8 +19,23 @@ OPEN8030_CONFIG_DIR ?= $(OPEN8030_PRIVATE_DIR)
 OPEN8030_PROFILE_SOURCE = $(if $(OPEN8030_PRIVATE_DIR),$(OPEN8030_PRIVATE_DIR)/$(notdir $(OPEN8030_PROFILE)),$(if $(filter /%,$(OPEN8030_PROFILE)),$(OPEN8030_PROFILE),$(OPEN8030_PROFILES_DIR)/$(OPEN8030_PROFILE)))
 OPEN8030_CONFIG_SOURCE = $(if $(OPEN8030_CONFIG_DIR),$(OPEN8030_CONFIG_DIR)/$(notdir $(OPEN8030_CONFIG)),$(if $(filter /%,$(OPEN8030_CONFIG)),$(OPEN8030_CONFIG),$(OPEN8030_PROFILES_DIR)/$(OPEN8030_CONFIG)))
 OPEN8030_DEPENDENCIES = open8030-profiles
+ifeq ($(BR2_PACKAGE_OPEN8030_PROFILE_P1_STOCK),y)
+OPEN8030_PROFILE = $(BUILD_DIR)/p1-air-vendor-$(P1_AIR_VENDOR_VERSION)/stock/p1-air.c
+OPEN8030_DEPENDENCIES += p1-air-vendor
+else
+OPEN8030_PROFILE = $(call qstrip,$(BR2_PACKAGE_OPEN8030_PROFILE))
+endif
 OPEN8030_IMAGE = open8030.img
 OPEN8030_CFLAGS =
+ifeq ($(BR2_PACKAGE_OPEN8030_PINS_BEFORE_FACTORY),y)
+OPEN8030_CFLAGS += -DAR_PINS_BEFORE_FACTORY
+endif
+ifeq ($(BR2_PACKAGE_OPEN8030_EXPLICIT_IO_DOMAINS),y)
+OPEN8030_CFLAGS += -DAR_EXPLICIT_IO_DOMAINS
+endif
+ifeq ($(BR2_PACKAGE_OPEN8030_SDIO_BLOCK_TRAILER),y)
+OPEN8030_CFLAGS += -DAR_SDIO_P1_TRAILER
+endif
 
 ifeq ($(BR2_PACKAGE_OPEN8030_TRANSPORT_USB),y)
 OPEN8030_CFLAGS += -DAR_FORCE_USB
@@ -29,7 +43,11 @@ endif
 # SDIO retains upstream active-bus detection, matching the existing images.
 ifeq ($(BR2_PACKAGE_OPEN8030_ROLE_AP),y)
 OPEN8030_CFLAGS += -DAR_ROLE_AP
+ifeq ($(BR2_PACKAGE_KESTREL_AIR_AR9311),y)
+OPEN8030_DEST = /lib/firmware
+else
 OPEN8030_DEST = /usrdata/fpv/air/open8030
+endif
 else
 OPEN8030_DEST = /lib/firmware
 endif

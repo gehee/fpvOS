@@ -1,0 +1,209 @@
+From: fpvOS developers
+Subject: [PATCH] ml-aed: support SC231AI V4L2 controls and variable AE tables
+
+P1 carries 478 exposure entries rather than the reference sensor's 366.
+Read and validate the table length from the tuning metadata. Actuate
+SC231AI exposure and analogue/digital gain atomically through V4L2.
+
+--- /dev/null
++++ b/ml-aed/gains.h
+@@ -0,0 +1,4 @@
++/* SPDX-License-Identifier: GPL-3.0-only */
++/* SC231AI gain Q10 values, recovered from the P1 sensor control interface. */
++static const unsigned int analog[] = {1024,1055,1088,1120,1152,1183,1216,1248,1280,1311,1344,1376,1408,1439,1472,1504,1536,1567,1600,1632,1664,1695,1728,1760,1792,1823,1856,1888,1920,1951,1984,2016,2048,2112,2176,2240,2304,2368,2432,2496,2560,2624,2688,2752,2816,2880,2944,3008,3072,3136,3200,3264,3328,3392,3456,3520,3584,3648,3712,3776,3788,3907,4025,4144,4262,4380,4499,4617,4736,4854,4972,5091,5210,5327,5446,5564,5683,5801,5919,6038,6157,6275,6393,6511,6630,6749,6866,6985,7104,7222,7341,7458,7577,7814,8051,8288,8524,8761,8998,9235,9472,9708,9946,10182,10419,10655,10893,11129,11366,11602,11840,12077,12313,12550,12787,13024,13260,13497,13734,13971,14208,14444,14682,14918,15155,15629,16102,16576,17049,17523,17996,18470,18944,19418,19891,20365,20838,21312,21785,22259,22732,23206,23680,24154,24627,25101,25574,26048,26521,26995,27468,27942,28416,28890,29363,29837,30310,31257,32204,33152,34099,35046,35993,36940,37888,38835,39782,40729,41676,42624,43571,44518,45465,46412,47360,48307,49254,50201,51148,52096,53043,53990,54937,55884,56832,57779,58726,59673,60620,62515,64409,66304,68198,70092,71987,73881,75776,77670,79564,81459,83353,85248,87142,89036,90931,92825,94720,96614,98508,100403,102297,104192,106086,107980,109875,111769,113664,115558,117452,119347};
++static const unsigned int digital[] = {1024,1055,1088,1120,1152,1183,1216,1248,1280,1311,1344,1376,1408,1439,1472,1504,1536,1567,1600,1632,1664,1695,1728,1760,1792,1823,1856,1888,1920,1951,1984,2016,2048,2112,2176,2240,2304,2368,2432,2496,2560,2624,2688,2752,2816,2880,2944,3008,3072,3136,3200,3264,3328,3392,3456,3520,3584,3648,3712,3776,3840,3904,3968,4032,4096,4224,4352,4480,4608,4736,4864,4992,5120,5248,5376,5504,5632,5760,5888,6016,6144,6272,6400,6528,6656,6784,6912,7040,7168,7296,7424,7552,7680,7808,7936,8064,8192,8448,8704,8960,9216,9472,9728,9984,10240,10496,10752,11008,11264,11520,11776,12032,12288,12544,12800,13056,13312,13568,13824,14080,14336,14592,14848,15104,15360,15616,15872,16128};
+--- a/ml-aed/ml-aed-blob.h
++++ b/ml-aed/ml-aed-blob.h
+@@ -13,7 +13,8 @@
+ 
+ /* {gain Q8 u32, line_count u32}. Shipped configuration for the fixed FPV preview mode (1080p60, ceiling 1125 lines, gain ceiling 64.0), not something the vendor computes. Heap copy at state+0x68 agrees over all 366. */
+ #define MLAED_EXPOSURE_TABLE_OFF    0xb6524u
+-#define MLAED_EXPOSURE_TABLE_COUNT  366u
++#define MLAED_EXPOSURE_TABLE_COUNT  512u
++#define MLAED_EXPOSURE_COUNT_OFF    0xb6508u
+ #define MLAED_EXPOSURE_TABLE_STRIDE 8u
+ 
+ /* {index u32, target u32}, the luma target knots. Heap state+0x4000+184. */
+--- a/ml-aed/ml-aed-tuning.c
++++ b/ml-aed/ml-aed-tuning.c
+@@ -5,6 +5,7 @@
+  * Named spans are pread individually: the AE payload is under 3 KiB against 859 KiB for the blob.
+  */
+ #include <errno.h>
++#include <math.h>
+ #include <fcntl.h>
+ #include <stdio.h>
+ #include <stdlib.h>
+@@ -54,6 +55,7 @@
+     uint8_t word[4];
+     struct stat st;
+     int fd, ret;
++    uint32_t count;
+ 
+     memset(t, 0, sizeof(*t));
+ 
+@@ -74,6 +76,14 @@
+         close(fd);
+ 
+         return -EINVAL;
++    }
++
++    ret = read_span(fd, word, 4, MLAED_EXPOSURE_COUNT_OFF);
++    if (ret) { close(fd); return ret; }
++    count = le32(word);
++    if (count < 2 || count > MLAED_EXPOSURE_TABLE_COUNT) {
++        close(fd);
++        return ret ? ret : -EINVAL;
+     }
+ 
+     t->table = calloc(MLAED_EXPOSURE_TABLE_COUNT, sizeof(*t->table));
+@@ -106,14 +116,14 @@
+ 
+     /* 366 x {gain Q8, line_count}, one span. */
+     if (!ret) {
+-        size_t len = MLAED_EXPOSURE_TABLE_COUNT * MLAED_EXPOSURE_TABLE_STRIDE;
++        size_t len = count * MLAED_EXPOSURE_TABLE_STRIDE;
+         uint8_t *raw = malloc(len);
+ 
+         if (!raw) {
+             ret = -ENOMEM;
+         } else {
+             ret = read_span(fd, raw, len, MLAED_EXPOSURE_TABLE_OFF);
+-            for (unsigned int i = 0; !ret && i < MLAED_EXPOSURE_TABLE_COUNT; i++) {
++            for (unsigned int i = 0; !ret && i < count; i++) {
+                 t->table[i].gain_q8 = le32(raw + i * MLAED_EXPOSURE_TABLE_STRIDE);
+                 t->table[i].line_count = le32(raw + i * MLAED_EXPOSURE_TABLE_STRIDE + 4);
+             }
+@@ -129,7 +139,26 @@
+         return ret;
+     }
+ 
+-    t->table_len = MLAED_EXPOSURE_TABLE_COUNT;
++    if (!isfinite(t->damping) || t->damping <= 0 || t->damping > 1 ||
++        !isfinite(t->log_ladder) || t->log_ladder <= 0 || t->tolerance > 255) {
++        ae_tuning_free(t);
++        return -EINVAL;
++    }
++    for (unsigned int i = 0; i < count; i++) {
++        if (!t->table[i].line_count || t->table[i].line_count > 65535 ||
++            !t->table[i].gain_q8 || t->table[i].gain_q8 > 0x1000000) {
++            ae_tuning_free(t);
++            return -EINVAL;
++        }
++    }
++    for (unsigned int i = 0; i < MLAED_TARGET_CURVE_COUNT; i++) {
++        if (t->curve[i].target < 1 || t->curve[i].target > 255 ||
++            (i && t->curve[i].index <= t->curve[i-1].index)) {
++            ae_tuning_free(t);
++            return -EINVAL;
++        }
++    }
++    t->table_len = count;
+     t->index_min = 1;
+     t->index_max = (int)t->table_len - 1;
+ 
+--- a/ml-aed/ml-aed.c
++++ b/ml-aed/ml-aed.c
+@@ -7,6 +7,9 @@
+  * The decision law is ml-aed-core.c.
+  */
+ #include <errno.h>
++#include <linux/videodev2.h>
++#include <sys/ioctl.h>
++#include "gains.h"
+ #include <fcntl.h>
+ #include <getopt.h>
+ #include <signal.h>
+@@ -19,7 +22,7 @@
+ #include "ml-aed-core.h"
+ 
+ /* Default for a hand-run; the per-board init script passes --tuning. */
+-#define ML_AED_TUNING_FALLBACK "/lib/firmware/artosyn/nt99235-tuning-preview-fpv.bin"
++#define ML_AED_TUNING_FALLBACK "/lib/firmware/artosyn/sc231-tuning-preview-fpv.bin"
+ 
+ #define STATS_RAW_PATH  "/sys/kernel/debug/ar-isp/stats_raw"
+ #define LADDER_ARM_PATH "/sys/kernel/debug/ar-isp/ladders"
+@@ -76,6 +79,7 @@
+ #define STATS_POLL_REPORT   300
+ 
+ struct ae_opts {
++    const char *sensor_device;
+     int start_index;
+     int max_step;               /* 0 = no clamp (vendor behaviour) */
+     int floor_index;
+@@ -149,7 +153,7 @@
+     const struct mlaed_exp_entry *e = &tune->table[exp_index];
+     uint32_t lines = e->line_count;
+     uint32_t gain_q8 = e->gain_q8;
+-    unsigned int code;
++
+     int ret;
+ 
+     if (opts->dry_run) {
+@@ -173,17 +177,19 @@
+         fflush(stdout);
+     }
+ 
+-    code = ae_sensor_gain_code(gain_q8);
+-
+-    ret = write_int(SENSOR_EXPOSURE, (int)lines);
+-    if (ret) {
+-        return ret;
+-    }
+-
+-    ret = write_int(SENSOR_GAIN, (int)code);
+-    if (ret) {
+-        return ret;
+-    }
++    unsigned int ai=0, di=0;
++    while(ai+1<sizeof(analog)/sizeof(analog[0]) && analog[ai+1]<=gain_q8*4U) ai++;
++    unsigned int residual = (unsigned long long)gain_q8 * 4096 / analog[ai];
++    while(di+1<sizeof(digital)/sizeof(digital[0]) && digital[di+1]<=residual) di++;
++    if (lines > 1114) lines = 1114;
++    int sensor=open(opts->sensor_device,O_RDWR|O_CLOEXEC);
++    if(sensor<0) return -errno;
++    struct v4l2_ext_control controls[3]={{.id=V4L2_CID_EXPOSURE,.value=lines},
++      {.id=V4L2_CID_ANALOGUE_GAIN,.value=ai},{.id=V4L2_CID_DIGITAL_GAIN,.value=di}};
++    struct v4l2_ext_controls cs={.count=3,.controls=controls};
++    ret=ioctl(sensor,VIDIOC_S_EXT_CTRLS,&cs) ? -errno : 0;
++    close(sensor);
++    if(ret) return ret;
+ 
+     if (opts->no_ladders) {
+         return 0;
+@@ -503,6 +509,7 @@
+ {
+     fprintf(stderr,
+         "usage: ml-aed [options]\n"
++        "  --sensor-device PATH  SC231AI V4L2 subdevice\n"
+         "  --start-index N   initial exp_index (default 317, the boot recipe)\n"
+         "  --max-step N      clamp a decision to N indices (low authority)\n"
+         "  --floor N         never go below index N\n"
+@@ -525,6 +532,7 @@
+ int main(int argc, char **argv)
+ {
+     static const struct option longopts[] = {
++        { "sensor-device", required_argument, NULL, 300 },
+         { "start-index", required_argument, NULL, 's' },
+         { "max-step", required_argument, NULL, 'm' },
+         { "floor", required_argument, NULL, 'f' },
+@@ -552,6 +560,8 @@
+ 
+     while ((c = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
+         switch (c) {
++        case 300: opts.sensor_device = optarg; break;
++
+         case 's': {
+             opts.start_index = atoi(optarg);
+         } break;
+@@ -629,6 +639,10 @@
+      * against it. There is no fallback: rootfs/build.sh refuses to build a rootfs without the
+      * file, and compiled-in values would be exactly the stale configuration this removes.
+      */
++    if (!opts.dry_run && !opts.sensor_device) {
++        fprintf(stderr, "--sensor-device is required (SC231AI V4L2 subdevice)\n");
++        return 2;
++    }
+     ret = ae_tuning_load(&tune, tuning_path);
+     if (ret) {
+         fprintf(stderr, "ml-aed: %s: %s\n", tuning_path,

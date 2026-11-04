@@ -1,7 +1,6 @@
 config BR2_PACKAGE_FPVOS_UPDATE
 	bool "fpvOS firmware updater"
 	depends on BR2_USE_MMU
-	# Gnd485 is currently the only supplied hardware backend.
 	depends on BR2_aarch64
 	help
 	  USB CDC transport, bundle verification and update service. Storage,
@@ -17,5 +16,13 @@ config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX
 	help
 	  Fixed NAND layout, readback and rollback, clean-mode selection and
 	  original vendor kernel/DTB restoration for Gnd485.
+
+config BR2_PACKAGE_FPVOS_UPDATE_P1_AIR
+	bool "BETAFPV P1 Air NAND"
+	depends on BR2_FPVOS_BOARD_P1_AIR
+	help
+	  Direct boot with an embedded fpvOS recovery system. Write and
+	  verify bank 0 before selecting it; preserve stock bank 1, factory
+	  calibration and user settings. Stock clean mode is only an installer.
 endchoice
 endif

@@ -2,6 +2,10 @@
 # CDC-ECM development link plus vendor-framed CDC-ACM updates. All state lives in the RAM filesystem/configfs.
 set -eu
 
+. /etc/default/ar9311-usb
+: "${USB_SERIAL:?}" "${USB_PRODUCT:?}" "${USB_ADDRESS:?}"
+: "${USB_DEVICE_MAC:?}" "${USB_HOST_MAC:?}"
+
 g=/sys/kernel/config/usb_gadget/fpvos
 
 start() {
@@ -15,30 +19,30 @@ start() {
 		echo 0x1d6b > "$g/idVendor"
 		echo 0x0104 > "$g/idProduct"
 		mkdir "$g/strings/0x409"
-		echo fpvos-ar9311 > "$g/strings/0x409/serialnumber"
+		echo "$USB_SERIAL" > "$g/strings/0x409/serialnumber"
 		echo fpvOS > "$g/strings/0x409/manufacturer"
-		echo 'AR9311 development network' > "$g/strings/0x409/product"
+		echo "$USB_PRODUCT" > "$g/strings/0x409/product"
 		mkdir "$g/configs/c.1"
 		mkdir "$g/configs/c.1/strings/0x409"
 		echo 'USB Ethernet + firmware transfer' > "$g/configs/c.1/strings/0x409/configuration"
 		echo 0xc0 > "$g/configs/c.1/bmAttributes"
 		echo 2 > "$g/configs/c.1/MaxPower"
 		mkdir "$g/functions/ecm.usb0"
-		echo 02:93:11:00:00:01 > "$g/functions/ecm.usb0/dev_addr"
-		echo 02:93:11:00:00:02 > "$g/functions/ecm.usb0/host_addr"
+		echo "$USB_DEVICE_MAC" > "$g/functions/ecm.usb0/dev_addr"
+		echo "$USB_HOST_MAC" > "$g/functions/ecm.usb0/host_addr"
 		ln -s "$g/functions/ecm.usb0" "$g/configs/c.1/ecm.usb0"
 		mkdir "$g/functions/acm.usb0"
 		ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
 	fi
 	if [ -z "$(cat "$g/UDC")" ]; then
-		# Bind only the receiver's native controller.
+		# Both AR9311 boards use this native USB controller.
 		test -d /sys/class/udc/8000000.usb
 		echo 8000000.usb > "$g/UDC"
 	fi
 	# ECM registers its netdev when the gadget is bound to the controller.
-	ip address replace 192.168.3.102/24 dev usb0
+	ip address replace "$USB_ADDRESS" dev usb0
 	ip link set usb0 up
-	echo 'USB Ethernet ready: 192.168.3.102 (host: 192.168.3.100)'
+	echo "USB Ethernet ready: $USB_ADDRESS"
 }
 
 stop() {

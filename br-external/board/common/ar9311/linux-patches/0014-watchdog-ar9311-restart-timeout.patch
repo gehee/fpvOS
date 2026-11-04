@@ -1,0 +1,37 @@
+Subject: [PATCH] watchdog: dw_wdt: allow AR9311 stock recovery to start after restart
+
+The P1 stock boot path fails to re-enumerate with the minimum TOP restart
+timeout; normal watchdog expiry with a longer timeout reaches recovery.
+The vendor restart handler programs TOP=8 for clocks up to 25 MHz. Select a
+TOP of at least one second for the AR9311 integration, using its actual clock
+and timeout table. Other Synopsys integrations retain their current behavior.
+
+--- a/drivers/watchdog/dw_wdt.c
++++ b/drivers/watchdog/dw_wdt.c
+@@ -302,7 +302,15 @@
+ {
+ 	struct dw_wdt *dw_wdt = to_dw_wdt(wdd);
+ 
+-	writel(0, dw_wdt->regs + WDOG_TIMEOUT_RANGE_REG_OFFSET);
++	u32 top = 0;
++
++	/* AR9311's boot path needs time to service the still-running watchdog.
++	 * TOP=0 resets again before P1 stock recovery can bring USB back. The
++	 * vendor driver uses TOP=8 at 24 MHz; allow at least one second here.
++	 */
++	if (of_device_is_compatible(wdd->parent->of_node, "artosyn,ar9311-wdt"))
++		dw_wdt_find_best_top(dw_wdt, 1, &top);
++	writel(top, dw_wdt->regs + WDOG_TIMEOUT_RANGE_REG_OFFSET);
+ 	dw_wdt_update_mode(dw_wdt, DW_WDT_RMOD_RESET);
+ 	if (dw_wdt_is_enabled(dw_wdt))
+ 		writel(WDOG_COUNTER_RESTART_KICK_VALUE,
+--- a/Documentation/devicetree/bindings/watchdog/snps,dw-wdt.yaml
++++ b/Documentation/devicetree/bindings/watchdog/snps,dw-wdt.yaml
+@@ -18,6 +18,7 @@
+       - const: snps,dw-wdt
+       - items:
+           - enum:
++              - artosyn,ar9311-wdt
+               - rockchip,px30-wdt
+               - rockchip,rk3066-wdt
+               - rockchip,rk3128-wdt
