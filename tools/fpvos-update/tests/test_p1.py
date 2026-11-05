@@ -124,6 +124,25 @@ class P1Tests(unittest.TestCase):
         self.assertEqual(end[:0x40000],after[:0x40000])
         self.assertEqual(end[0x40400:0x44400],before[0x40400:0x44400])
 
+    def test_stock_bootloader_selections_are_validated_and_preserved(self):
+        for env_bank in (0,1):
+            for uboot_bank in (0,1):
+                parts=list(PARTS)
+                for start,bank in ((2,env_bank),(4,uboot_bank)):
+                    for n in (0,1):
+                        parts[start+n]=(*parts[start+n][:3],int(n==bank))
+                original=record(parts=parts)
+                self.assertTrue(self.layout(b'\xff'*0x4400,original))
+                d=self.flash_directory()
+                data=bytearray((d/'boot-state').read_bytes());data[0x40000:0x44400]=original
+                (d/'boot-state').write_bytes(data)
+                self.assertEqual(self.flash(d,'select',0),0)
+                after=(d/'boot-state').read_bytes()
+                self.assertEqual(after[1024+2*128:1024+6*128],original[1024+2*128:1024+6*128])
+                self.assertEqual(self.flash(d,'select',1),0)
+                final=(d/'boot-state').read_bytes()
+                self.assertEqual(final[0x40000+1024+2*128:0x40000+1024+6*128],original[1024+2*128:1024+6*128])
+
     def test_torn_gpt_keeps_previous_record_and_can_retry(self):
         # 1: torn write, 3: wrong byte read back, 4: erase fails,
         # 5: the new record reads back with an uncorrectable ECC error.
