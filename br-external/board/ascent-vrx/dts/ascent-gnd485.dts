@@ -12,6 +12,7 @@
 	aliases {
 		serial0 = &uart0;
 		i2c1 = &i2c1;
+		i2c3 = &i2c3;
 	};
 
 	chosen {
@@ -198,6 +199,25 @@
 			};
 		};
 	};
+};
+
+/* Front-panel ADC: stock reads register 0 at 7-bit address 0x54.
+ * Kestrel owns decoding/debounce through i2c-dev. Do not bind an EEPROM
+ * driver solely because the address resembles one.
+ */
+&i2c3 {
+	status = "okay";
+	clock-frequency = <400000>;
+	i2c-sda-hold-time-ns = <300>;
+	i2c-sda-falling-time-ns = <300>;
+	i2c-scl-falling-time-ns = <300>;
+};
+
+/* Beeper: channel 0, stock 1 kHz tone with duty-controlled volume.
+ * Leave the channel unclaimed for the application's feedback scheduler.
+ */
+&pwm0 {
+	status = "okay";
 };
 
 &qspi {
