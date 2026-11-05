@@ -51,6 +51,7 @@
 
 	aliases {
 		serial0 = &uart0;
+		serial1 = &uart2;	/* /dev/ttyS1, kestrel-air's flight controller */
 	};
 
 	chosen {
@@ -120,6 +121,12 @@
 	status = "okay";
 };
 
+/* The flight controller (MSP, 115200 8N1), where stock has it. Pins as the
+ * bootloader muxes them, like the console's. */
+&uart2 {
+	status = "okay";
+};
+
 &usb {
 	status = "okay";
 	dr_mode = "peripheral";
@@ -131,6 +138,16 @@
 
 
 &camera_clocks { status = "okay"; };
+/* The supply (the FC connector's 5 V) on SAR ADC channel 0, the one stock's
+ * adc.sh calibrates, through stock's x10.09 divider. Stock's ar_lowdelay
+ * (project c401) reads in_voltage1_input / 0.0991, but channel 1 floats near
+ * 0 V on this board; channel 0 follows the input (bench 2026-11-04: 4.63 V
+ * on USB alone, 4.77 V with the FC's 5 V as well). */
+&soc_temp {
+	status = "okay";
+	artosyn,vin-channel = <0>;
+	artosyn,vin-ratio-permille = <10090>;
+};
 &gpio { status = "okay"; };
 
 &i2c0 {

@@ -1,0 +1,45 @@
+From: fpvOS contributors
+Subject: [PATCH] media: wave5: keep the HEVC refresh band at two CTU rows or more
+
+On the AR9311's WAVE521C (firmware revision 330638) the refreshed band moves
+one CTU row a picture whatever the count; the count only sets the band's
+width, and a count of 1 refreshes nothing. A period equal to the picture's
+CTU rows (17 at 1080p) rounded up to a count of 1, so the stream ran with no
+refresh at all: keep the count at 2 or more.
+
+Also check the CTU-row argument against the CTU-row count: the validation
+read the H.264 macroblock field.
+
+Upstream: not submitted
+
+--- a/drivers/media/platform/chips-media/wave5/wave5-hw.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-hw.c
+@@ -2677,7 +2677,7 @@ static bool wave5_vpu_enc_check_common_param_valid(struct vpu_instance *inst,
+ 	}
+ 	switch (param->intra_refresh_mode) {
+ 	case REFRESH_MODE_CTU_ROWS:
+-		if (param->intra_mb_refresh_arg > num_ctu_row)
++		if (param->intra_refresh_arg > num_ctu_row)
+ 			goto invalid_refresh_argument;
+ 		break;
+ 	case REFRESH_MODE_CTU_COLUMNS:
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
+@@ -1558,9 +1558,16 @@ static int wave5_set_enc_openparam(struct enc_open_param *open_param,
+ 		/* Firmware refreshes whole CTU rows. Round up so a sweep takes
+ 		 * no longer than the requested number of pictures, including when
+ 		 * the requested period exceeds the number of rows.
++		 *
++		 * Measured on the AR9311 firmware (WAVE521C, revision 330638): the
++		 * refreshed band moves one CTU row a picture whatever the count,
++		 * so a 1080p sweep takes 17 pictures; the count only sets the
++		 * band's width, and a count of 1 refreshes nothing. Keep it at 2
++		 * or more where the picture has that many rows.
+ 		 */
+ 		open_param->wave_param.intra_refresh_arg =
+-			DIV_ROUND_UP(num_ctu_row, input.intra_refresh_arg);
++			max_t(u32, min_t(u32, 2, num_ctu_row),
++			      DIV_ROUND_UP(num_ctu_row, input.intra_refresh_arg));
+ 	}
+ 	open_param->wave_param.forced_idr_header_enable = input.forced_idr_header_enable;
+ 

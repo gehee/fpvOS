@@ -30,7 +30,8 @@ def compile_framework(destination):
         files = [str(SRC / f'{name}.c'), str(profile)]
         if name == 'verify':
             files.append(str(BACKEND / 'images.c'))
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
+                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
 
 
 def load(name):
@@ -205,6 +206,70 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         with self.assertRaises(ValueError):
             self.client.ack(3, b'stock'.ljust(32, b'\0'))
         self.assertNotEqual(self.client.info()['detail'], '')
+
+    def mode(self, name):
+        reply = self.client.ack(3, name.encode().ljust(32, b'\0'))
+        return reply[4:].split(b'\0')[0].decode()
+
+    def wait_calls(self, expected):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline and (
+                not (self.dir / 'calls').exists() or (self.dir / 'calls').read_text() != expected):
+            time.sleep(.02)
+        self.assertEqual((self.dir / 'calls').read_text(), expected)
+
+    def test_bridge_mode_through_helper_and_reported(self):
+        # fpvos-usb writes the mode file; here the helper plays it.
+        (self.dir / 'helper').write_text(
+            f'#!/bin/sh\nprintf "%s\\n" "$1" >> "{self.dir / "calls"}"\n'
+            f'[ "$1" != bridge ] || echo bridge > "{self.bin / "usb-mode"}"\n')
+        self.addCleanup((self.bin / 'usb-mode').unlink, missing_ok=True)
+        self.assertEqual(self.mode('bridge'), 'OK')
+        self.assertEqual((self.dir / 'calls').read_text(), 'bridge\n')
+        self.assertEqual(self.client.info()['detail'], 'bridge mode')
+        # Back to normal, live: the mode file says so, and so does the info.
+        (self.bin / 'usb-mode').write_text('normal\n')
+        self.assertEqual(self.client.info()['detail'], 'normal mode')
+
+    def test_bridge_mode_failure_is_refused(self):
+        (self.dir / 'helper').write_text('#!/bin/sh\nexit 2\n')
+        with self.assertRaisesRegex(ValueError, 'bridge mode unsupported'):
+            self.mode('bridge')
+        self.assertEqual(self.client.info()['detail'], 'normal mode')
+
+    def test_normal_from_bridge_reboots_after_reply(self):
+        helper = self.dir / 'helper'
+        helper.write_text(f'#!/bin/sh\necho "$1" >> "{self.dir / "calls"}"\n[ "$1" != normal ] || exit 10\n')
+        self.assertEqual(self.mode('normal'), 'rebooting into normal mode')
+        self.wait_calls('normal\nreboot\n')
+
+    def test_normal_in_normal_mode_is_ok(self):
+        self.assertEqual(self.mode('normal'), 'OK')
+        self.assertEqual((self.dir / 'calls').read_text(), 'normal\n')
+
+    def test_update_is_clean_mode(self):
+        self.assertEqual(self.mode('update'), 'OK')
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\n')
+        self.assertEqual(self.client.info()['detail'], 'clean RAM mode')
+        with self.assertRaisesRegex(ValueError, 'not available in update mode'):
+            self.mode('bridge')
+        self.assertEqual(self.mode('normal'), 'rebooting into normal mode')
+        self.wait_calls('clean\nreboot\n')
+
+    def test_mode_names_must_be_exact(self):
+        for bad in (b'bridge\0x', b'bridgex', b'normal\0\0y'):
+            with self.assertRaises(ValueError):
+                self.client.ack(3, bad.ljust(32, b'\0'))
+        self.assertFalse((self.dir / 'calls').exists())
+
+    def test_bridge_mode_survives_receiver_restart(self):
+        (self.bin / 'usb-mode').write_text('bridge\n')
+        try:
+            self.tearDown()
+            self.setUp()
+            self.assertEqual(self.client.info()['detail'], 'bridge mode')
+        finally:
+            (self.bin / 'usb-mode').unlink()
 
     def test_clean_boot_runs_readiness_once(self):
         args = self.process.args

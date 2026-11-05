@@ -158,8 +158,11 @@ The source profile selects Kestrel's AR9311 backend and native SDIO radio
 transport. It uses the same source camera drivers and DMA-BUF encoder path as
 the recorder, with Kestrel owning encoded frame packetization, bitrate control,
 receiver commands and AE/AWB lifecycle. No vendor media libraries are linked.
-The initial mode is complete-frame HEVC at 1920x1080 and 60 fps; slice output,
-other camera modes and FC UART are not implemented yet.
+The initial mode is HEVC at 1920x1080 and 60 fps, sent as 4 slices, with intra
+refresh: a band of CTU rows sweeps the picture every 17 frames, so keyframes
+come only when the receiver asks for one (Wave5 controls added by
+`0016-media-wave5-intra-refresh.patch`). Slice output, other camera modes and
+FC UART are not implemented yet.
 
 Until the backend is published and the package revision is updated, use a local
 Kestrel checkout containing the AR9311 backend. After configuring the source
@@ -366,6 +369,24 @@ the receiver repeated its stream-setup exchange after application restarts.
 Continuous playback across a crash has not been validated. The standalone
 recorder was excluded while Kestrel owned the camera and worked after service
 stop. Factory and vendor configuration remained unchanged.
+
+### USB modes
+
+The source profile carries fpvOS_usb (`fpvos-usb` package). The serial port
+(CDC-ACM) is there in every mode, and the updater on it changes the mode
+(command 3 `normal`, `bridge` or `update`; fpvOS_usb `docs/protocol.md`):
+
+- normal: USB Ethernet at 192.168.3.103 and SSH, as booted.
+- update: the updater's clean mode, in RAM, for flashing.
+- bridge: Kestrel stops and the USB network becomes the unit's AR8030, as an
+  AR8030 on USB, for a host running ar_libre's `arlink.ko`. The host's
+  upload is loaded into the chip over SDIO (it must be an SDIO build).
+  `normal` reboots the unit back to its own firmware.
+
+`tools/fpvos-update/client.py --board p1-air --port /dev/ttyACM0 bridge`
+switches from the host. Bridge mode needs the FunctionFS gadget in the
+kernel, so the stock-runtime profile has no bridge mode. Not yet run on a
+unit.
 
 ### Persistent installation and USB recovery
 

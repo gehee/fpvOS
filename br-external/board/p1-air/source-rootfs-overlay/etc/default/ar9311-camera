@@ -8,3 +8,7 @@ WB_BLUE=807
 # Statistics channel order is distinct from the sensor bus Bayer order.
 WB_STATS_ORDER=grbg
 WB_MODE=auto
+# Longest exposure the AE may use, in us: past it the gain makes up the rest.
+# Its table goes to 10 ms before any gain (16.5 ms in the dark): blur, and half
+# the exposure added to what the pilot sees. Empty: the table's own.
+MAX_EXPOSURE_US=4000

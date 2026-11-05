@@ -1,0 +1,1 @@
+obj-m += ar9311_temp.o

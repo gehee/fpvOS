@@ -71,6 +71,7 @@ jobs:
           sh -n br-external/package/kestrel-air/S60kestrel-air
           python3 br-external/package/kestrel-air/tests/test_supervise.py -v
           python3 br-external/board/p1-air/tests/test_settings.py -v
+          python3 br-external/board/p1-air/tests/test_inittab.py -v
           sh -n br-external/board/p1-air/post-image.sh
           sh -n br-external/board/p1-air/source-post-image.sh
           sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh

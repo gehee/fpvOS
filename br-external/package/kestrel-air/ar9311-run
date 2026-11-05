@@ -27,12 +27,20 @@ modprobe "$SENSOR_MODULE"
 modprobe ar-csi2
 modprobe ar-vif
 modprobe ar-isp gates=1 seed=0
-modprobe ar-cvisp assert_clk=1
+# depth 2: each buffer reaches the encoder one frame (16.7 ms) sooner than at
+# the default 3. With an exposure toggled every 100 ms, 600 pictures at 2 and
+# at 3 came out whole, while at 1 half of them mixed two frames.
+modprobe ar-cvisp assert_clk=1 depth=2
+# kestrel-air reads a frame's rows as they land (KA_EARLY_ROW): depth 1 for its
+# streams, 5.5 ms sooner again (0008-depth-per-stream.patch; read at stream start).
+echo 1 > /sys/module/ar_cvisp/parameters/depth
 modprobe wave5
+# The SoC temperature kestrel-air sends the ground (hwmon ar9311_temp).
+modprobe ar9311_temp || :
 export KA_CAMERA_TUNING="$TUNING" KA_WB_RED="$WB_RED" KA_WB_BLUE="$WB_BLUE" KA_WB_ORDER="$WB_STATS_ORDER"
 mkdir -p -m 0700 "$STATE_DIR"
 export KA_CONFIG="$STATE_DIR/settings.json"
 export KA_PEER_CONFIG="$STATE_DIR/peer.json"
 export KA_READY_FILE=/run/kestrel-air/ready
 rm -f "$KA_READY_FILE"
-exec /usrdata/fpv/air/kestrel-air "$@"
+exec /usrdata/fpv/air/kestrel-air ${MAX_EXPOSURE_US:+--max-exposure-us "$MAX_EXPOSURE_US"} "$@"

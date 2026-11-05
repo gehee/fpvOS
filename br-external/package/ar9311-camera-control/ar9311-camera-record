@@ -53,7 +53,12 @@ modprobe "$SENSOR_MODULE"
 modprobe ar-csi2
 modprobe ar-vif
 modprobe ar-isp gates=1 seed=0
-modprobe ar-cvisp assert_clk=1
+# depth 2: each buffer reaches the encoder one frame (16.7 ms) sooner than at
+# the default 3. With an exposure toggled every 100 ms, 600 pictures at 2 and
+# at 3 came out whole, while at 1 half of them mixed two frames.
+modprobe ar-cvisp assert_clk=1 depth=2
+# ar9311-camera-test encodes a buffer as soon as it has it: whole frames.
+echo 2 > /sys/module/ar_cvisp/parameters/depth
 modprobe wave5
 
 find_node()
