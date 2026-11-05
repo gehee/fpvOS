@@ -63,6 +63,9 @@ case "${1:-}" in
         trap 'exit 1' HUP INT TERM
         /usr/libexec/fpvos-update-verify "$2" "$work"
         ;;
+    normal)
+        # No bridge mode on this board yet: it is always in normal mode.
+        ;;
     reboot)
         sync
         if [ "$stock" = 1 ]; then /bin/reboot -f; else /sbin/reboot; fi

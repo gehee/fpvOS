@@ -42,6 +42,10 @@ case "${1:-}" in
         [ ! -x /etc/init.d/S43factory ] || /etc/init.d/S43factory stop
         /usr/sbin/fpvos-update nand stock
         ;;
+    bridge|normal)
+        # fpvOS_usb's USB modes; normal exits 10 when only a reboot gets there.
+        exec /usr/sbin/fpvos-usb mode "$1"
+        ;;
     reboot)
         sync
         if [ -e /etc/fpvos-stock-bootstrap ]; then /bin/reboot -f; else /sbin/reboot; fi

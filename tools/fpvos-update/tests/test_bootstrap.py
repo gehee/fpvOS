@@ -25,7 +25,8 @@ def compile_unified(destination):
     subprocess.run(['python3', str(PKG/'generate-profile.py'), str(BACKEND/'profile.json'), str(destination/'profile.c')], check=True)
     for source, name in ((SRC/'receiver.c', 'receiver'), (SRC/'verify.c', 'verify'), (BACKEND/'nand.c', 'nand')):
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC),
-                        f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"', '-Dmain=fpvos_'+name+'_main', '-c', str(source), '-o', str(destination/(name+'.o'))], check=True)
+                        f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
+                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', '-Dmain=fpvos_'+name+'_main', '-c', str(source), '-o', str(destination/(name+'.o'))], check=True)
     busybox = destination/'busybox.fixture'; busybox.write_bytes(BootstrapArtifact.elf())
     bootstrap.build(busybox, BACKEND, destination/'resources.c')
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', '-I'+str(SRC), str(SRC/'main.c'),

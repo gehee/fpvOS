@@ -1,0 +1,269 @@
+From: fpvOS developers
+Subject: [PATCH] media: ar-isp: saturation and contrast a pilot can set
+
+Two percent-of-tuning adjustments, 100 leaving every register and table
+byte as before. Saturation scales the chroma rows of the colour-space
+matrix (words 2 to 5 of the rgb2yuv bank hold only Cb and Cr coefficients;
+the luma row stays). Contrast stretches the gamma curve about mid-scale
+after the tuning blend, clamped to the 12-bit output, at configure and at
+every tone rebuild. Both are module parameters and debugfs files
+(saturation, contrast) that apply to a running ISP; a mutex serialises the
+contrast rebuild with the AE's tone writes.
+
+Upstream: not submitted
+
+--- a/overlay/drivers/media/artosyn/ar-isp-codec.h
++++ b/overlay/drivers/media/artosyn/ar-isp-codec.h
+@@ -174,9 +174,23 @@
+  * The monotonic clamp matters: the hardware reads a transfer curve, and a
+  * non-monotonic entry inverts the response over that interval.
+  */
+-static inline void ar_isp_gamma_from_blob(u8 *dst, const u8 *blob,
+-					  unsigned int low, unsigned int high,
+-					  u32 t_q12)
++/*
++ * fpvOS: contrast, the curve stretched about mid-scale (AR_ISP_GAMMA_MID) by
++ * contrast_pct / 100 after the blend and clamped to the 12-bit output. 100 is
++ * the tuning file's curve unchanged; the monotonic clamp below still holds.
++ */
++#define AR_ISP_GAMMA_MID	0x800
++
++static inline u16 ar_isp_gamma_contrast(u32 v, int pct)
++{
++	int c = AR_ISP_GAMMA_MID + ((int)v - AR_ISP_GAMMA_MID) * pct / 100;
++
++	return c < 0 ? 0 : c > 0xfff ? 0xfff : c;
++}
++
++static inline void ar_isp_gamma_from_blob_contrast(u8 *dst, const u8 *blob,
++						   unsigned int low, unsigned int high,
++						   u32 t_q12, int contrast_pct)
+ {
+ 	const u8 *curve = blob + AR_ISP_GAMMA_BLOB_OFFSET + low * AR_ISP_GAMMA_BLOB_STRIDE;
+ 	const u8 *other = blob + AR_ISP_GAMMA_BLOB_OFFSET + high * AR_ISP_GAMMA_BLOB_STRIDE;
+@@ -195,6 +209,8 @@
+ 		samples[i] = ar_isp_tone_blend(ar_isp_get_le32(curve + at),
+ 					       ar_isp_get_le32(other + at),
+ 					       t_q12) & 0xfff;
++		if (contrast_pct != 100)
++			samples[i] = ar_isp_gamma_contrast(samples[i], contrast_pct);
+ 	}
+ 
+ 	for (i = 1; i < AR_ISP_GAMMA_SAMPLES; i++)
+@@ -213,12 +229,21 @@
+ 			ar_isp_get_le32(other + (AR_ISP_GAMMA_BLOB_ENTRIES - 1) * 4),
+ 			t_q12) & 0xfff;
+ 
++	if (contrast_pct != 100)
++		tail = ar_isp_gamma_contrast(tail, contrast_pct);
+ 	if (tail < samples[AR_ISP_GAMMA_SAMPLES - 1])
+ 		tail = samples[AR_ISP_GAMMA_SAMPLES - 1];
+ 
+ 	ar_isp_gamma_pack_page(dst, samples, tail);
+ }
+ 
++static inline void ar_isp_gamma_from_blob(u8 *dst, const u8 *blob,
++					  unsigned int low, unsigned int high,
++					  u32 t_q12)
++{
++	ar_isp_gamma_from_blob_contrast(dst, blob, low, high, t_q12, 100);
++}
++
+ /*
+  * Pack a 257-sample curve into one DRC bank.
+  *
+--- a/overlay/drivers/media/artosyn/ar-isp-main.c
++++ b/overlay/drivers/media/artosyn/ar-isp-main.c
+@@ -728,17 +728,57 @@
+  * rebuild, which is what a forced sweep over gamma_curve and drc_profile needs,
+  * because those parameters change the selection without changing the scalar.
+  */
++/* fpvOS: the AE's tone writes and a contrast change rebuild the same pages. */
++static DEFINE_MUTEX(ar_isp_tone_mutex);
++
+ static int ar_isp_tone_set(void *data, u64 val)
+ {
+ 	struct ar_isp *isp = data;
+ 
+-	if (val)
++	if (val) {
++		mutex_lock(&ar_isp_tone_mutex);
+ 		ar_isp_tone_apply(isp, val > 1, false);
++		mutex_unlock(&ar_isp_tone_mutex);
++	}
+ 
+ 	return 0;
+ }
+ DEFINE_DEBUGFS_ATTRIBUTE(ar_isp_tone_fops, NULL, ar_isp_tone_set, "%llu\n");
+ 
++/* fpvOS: Saturation and Contrast, percent of the tuning's (100 unchanged). */
++static int ar_isp_saturation_set(void *data, u64 val)
++{
++	return val > 200 ? -ERANGE : ar_isp_set_saturation(data, (int)val);
++}
++
++static int ar_isp_saturation_get(void *data, u64 *val)
++{
++	*val = ar_isp_get_saturation();
++	return 0;
++}
++DEFINE_DEBUGFS_ATTRIBUTE(ar_isp_saturation_fops, ar_isp_saturation_get,
++			 ar_isp_saturation_set, "%llu\n");
++
++static int ar_isp_contrast_set(void *data, u64 val)
++{
++	int ret;
++
++	if (val > 200)
++		return -ERANGE;
++	mutex_lock(&ar_isp_tone_mutex);
++	ret = ar_isp_set_contrast(data, (int)val);
++	mutex_unlock(&ar_isp_tone_mutex);
++	return ret;
++}
++
++static int ar_isp_contrast_get(void *data, u64 *val)
++{
++	*val = ar_isp_get_contrast();
++	return 0;
++}
++DEFINE_DEBUGFS_ATTRIBUTE(ar_isp_contrast_fops, ar_isp_contrast_get,
++			 ar_isp_contrast_set, "%llu\n");
++
+ /*
+  * The one ISP, for the exported bring-up call. Single block, single node.
+  */
+@@ -1333,6 +1373,10 @@
+ 			    &ar_isp_ladder_banks_fops);
+ 	debugfs_create_file_unsafe("tone", 0600, isp->debugfs, isp,
+ 				   &ar_isp_tone_fops);
++	debugfs_create_file_unsafe("saturation", 0600, isp->debugfs, isp,
++				   &ar_isp_saturation_fops);
++	debugfs_create_file_unsafe("contrast", 0600, isp->debugfs, isp,
++				   &ar_isp_contrast_fops);
+ 	/*
+ 	 * The two tone pages as the hardware fetches them. gamma and DRC are
+ 	 * the only configured stages with no register readback, so this is the
+--- a/overlay/drivers/media/artosyn/ar-isp-priv.h
++++ b/overlay/drivers/media/artosyn/ar-isp-priv.h
+@@ -230,6 +230,10 @@
+ void ar_isp_cm2_apply(struct ar_isp *isp, bool verbose);
+ void ar_isp_tone_apply(struct ar_isp *isp, bool force, bool verbose);
+ void ar_isp_rgb2yuv_apply(struct ar_isp *isp);
++int ar_isp_set_saturation(struct ar_isp *isp, int pct);
++int ar_isp_get_saturation(void);
++int ar_isp_set_contrast(struct ar_isp *isp, int pct);
++int ar_isp_get_contrast(void);
+ void ar_isp_ladders_apply(struct ar_isp *isp, bool verbose);
+ int ar_isp_ladders_show(struct seq_file *s, struct ar_isp *isp);
+ void ar_isp_tables_apply(struct ar_isp *isp);
+--- a/overlay/drivers/media/artosyn/ar-isp-tables.c
++++ b/overlay/drivers/media/artosyn/ar-isp-tables.c
+@@ -157,6 +157,18 @@
+  */
+ static int csc = AR_ISP_CSC_DEFAULT;
+ module_param(csc, int, 0644);
++/*
++ * fpvOS: the picture adjustments a pilot sets (the goggle's Saturation and
++ * Contrast), in percent of the tuning's, 100 unchanged. Saturation scales the
++ * chroma rows of the colour-space matrix; contrast stretches the gamma curve
++ * about mid-scale. debugfs saturation and contrast set them on a running ISP.
++ */
++static int saturation = 100;
++module_param(saturation, int, 0644);
++MODULE_PARM_DESC(saturation, "chroma gain in percent, 0-200 (100: the matrix as is)");
++static int contrast = 100;
++module_param(contrast, int, 0644);
++MODULE_PARM_DESC(contrast, "gamma stretch about mid-scale in percent, 50-200 (100: the tuning's curve)");
+ MODULE_PARM_DESC(csc,
+ 		 "colour-space matrix index: 0 bt601_full (the vendor's), 1 bt709_full, 2 bt601_limited, 3 bt709_limited; -1 leaves the replayed bank alone");
+ 
+@@ -915,6 +927,14 @@
+  * ones at 16 and 235, and that decision reaches everything downstream of the
+  * ISP including the encoder and the DVR file.
+  */
++/* fpvOS: one sign-magnitude Q10 field scaled by pct / 100. */
++static u32 ar_isp_csc_scale(u32 field, int pct)
++{
++	u32 mag = (field & 0x7fff) * (u32)pct / 100;
++
++	return (field & 0x8000) | min_t(u32, mag, 0x7fff);
++}
++
+ void ar_isp_rgb2yuv_apply(struct ar_isp *isp)
+ {
+ 	const struct ar_isp_csc *m;
+@@ -930,8 +950,50 @@
+ 
+ 	m = &ar_isp_csc_matrices[csc];
+ 
+-	for (unsigned int i = 0; i < AR_ISP_RGB2YUV_REGS; i++)
+-		writel(m->regs[i], isp->base + AR_ISP_RGB2YUV_BANK + i * 4);
++	/*
++	 * fpvOS: words 2 to 5 hold only chroma coefficients (Cb and Cr rows,
++	 * see gen-rgb2yuv.py's pairing), so scaling every field there is the
++	 * saturation; words 0 and 1 are luma and stay.
++	 */
++	for (unsigned int i = 0; i < AR_ISP_RGB2YUV_REGS; i++) {
++		u32 w = m->regs[i];
++
++		if (i >= 2 && saturation != 100)
++			w = ar_isp_csc_scale(w >> 16, saturation) << 16 |
++			    ar_isp_csc_scale(w & 0xffff, saturation);
++		writel(w, isp->base + AR_ISP_RGB2YUV_BANK + i * 4);
++	}
++}
++
++int ar_isp_set_saturation(struct ar_isp *isp, int pct)
++{
++	if (pct < 0 || pct > 200)
++		return -ERANGE;
++	saturation = pct;
++	if (isp->configured)
++		ar_isp_rgb2yuv_apply(isp);
++	return 0;
++}
++
++int ar_isp_get_saturation(void)
++{
++	return saturation;
++}
++
++/* The caller serialises this with the other tone rebuilds. */
++int ar_isp_set_contrast(struct ar_isp *isp, int pct)
++{
++	if (pct < 50 || pct > 200)
++		return -ERANGE;
++	contrast = pct;
++	if (isp->configured)
++		ar_isp_tone_apply(isp, true, false);
++	return 0;
++}
++
++int ar_isp_get_contrast(void)
++{
++	return contrast;
+ }
+ 
+ /*
+@@ -1307,8 +1369,8 @@
+ 	}
+ 
+ 	if (want_gamma) {
+-		ar_isp_gamma_from_blob(isp->gamma, blob, gamma.low, gamma.high,
+-				       gamma.t_q12);
++		ar_isp_gamma_from_blob_contrast(isp->gamma, blob, gamma.low, gamma.high,
++						gamma.t_q12, contrast);
+ 		ar_isp_gamma_pack_page(isp->gamma + AR_ISP_GAMMA_PAGE,
+ 				       ar_isp_gamma_page1,
+ 				       AR_ISP_GAMMA_PAGE1_TAIL);
+@@ -1404,7 +1466,8 @@
+ 		return;
+ 
+ 	page = isp->gamma;
+-	ar_isp_gamma_from_blob(page, blob, pick.low, pick.high, pick.t_q12);
++	ar_isp_gamma_from_blob_contrast(page, blob, pick.low, pick.high, pick.t_q12,
++					contrast);
+ 
+ 	/*
+ 	 * Page 1 is not an AE selection and is not in the tuning file: it is a

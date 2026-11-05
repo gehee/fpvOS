@@ -144,6 +144,11 @@ class Client:
 
 
 
+# fpvOS_usb's bridge mode: the AR8030's boot ROM and running chip IDs, with
+# the board's own serial number.
+BRIDGE_IDS = (('4152', '8030'), ('1d6b', '8030'))
+
+
 def checked_port(path, board):
     path = path.resolve(strict=True)
     sysfs = Path('/sys/class/tty') / path.name / 'device'
@@ -151,7 +156,9 @@ def checked_port(path, board):
         if (parent / 'idVendor').is_file():
             identity = tuple((parent / field).read_text().strip() for field in
                              ('idVendor', 'idProduct', 'serial'))
-            if identity != tuple(board['usb_identity']):
+            usb = tuple(board['usb_identity'])
+            bridge = identity[:2] in BRIDGE_IDS and identity[2] == usb[2]
+            if identity != usb and not bridge:
                 raise ValueError(f'not the fpvOS native USB gadget: {identity}')
             break
     else:
@@ -213,6 +220,8 @@ def main():
     sub.add_parser('clean')
     sub.add_parser('reboot')
     sub.add_parser('stock', help='return to preserved stock firmware when supported by the backend')
+    sub.add_parser('bridge', help="USB bridge mode: the unit's AR8030 on USB (fpvOS_usb docs/protocol.md)")
+    sub.add_parser('normal', help='back to normal mode (from bridge mode: a reboot)')
     sub.add_parser('verify').add_argument('package', type=Path)
     install_parser = sub.add_parser('install')
     install_parser.add_argument('package', type=Path)
@@ -250,6 +259,11 @@ def main():
         elif args.command == 'stock':
             client.ack(3, b'stock'.ljust(32, b'\0'))
             result = {'reboot_requested': True, 'note': 'Verify the stock boot separately; its USB identity differs.'}
+        elif args.command in ('bridge', 'normal'):
+            reply = client.ack(3, args.command.encode().ljust(32, b'\0'))
+            text = reply[4:].split(b'\0')[0].decode()
+            result = {'mode_requested': args.command, 'reply': text,
+                      'reboot_requested': text.startswith('rebooting')}
         elif args.command == 'reboot':
             client.ack(3, b'reboot'.ljust(32, b'\0'))
             result = {'reboot_requested': True}

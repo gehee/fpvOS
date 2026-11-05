@@ -1,0 +1,76 @@
+From: fpvOS developers
+Subject: [PATCH] media: ar-isp: lnr's sharpening fields from the ladder, and a strength
+
+Register 19 of the lnr bank (0x3d14) carries the two 9-bit fields the
+vendor's Sharpness setting scales (tuning words 0x88 and 0x8c, 60 at 1x gain
+down to 15 at the top of the ladder). The ladder did not derive them, so the
+bank kept the replayed 0x000c000a, much softer than the tuning. They are now
+packed with the rest of the ladder, and lnr_strength (0..100, 50 the
+tuning's) applies the vendor's strength law on top, ceiling 511, at each
+re-latch.
+
+Upstream: not submitted
+
+--- a/overlay/drivers/media/artosyn/ar-isp-lnr.h
++++ b/overlay/drivers/media/artosyn/ar-isp-lnr.h
+@@ -54,7 +54,7 @@
+ /*
+  * One scalar field: the payload word at @off drives bits @width wide at @shift
+  * in bank register @reg. Rows appear in the order the vendor packer writes
+- * them, and cover registers 0 to 17 and 20 to 37.
++ * them, and cover registers 0 to 17, 19 and 20 to 37.
+  */
+ struct ar_isp_lnr_field {
+ 	u8 reg;
+@@ -110,6 +110,17 @@
+ 	{ 17, 0x220,  0,  8 },
+ 	{ 17, 0x224,  8,  8 },
+ 
++	/*
++	 * fpvOS: register 19 (0x3d14), the two 9-bit fields the vendor's
++	 * Sharpness setting scales (AR_MPI_ISP_SetSharpnessTidyAttr, control
++	 * 0x712, lnr's handler at libmpp_service.so 0x1bd2e8; its apply scales
++	 * words 0x88 and 0x8c at 0x1bda18, its packer writes them at 0x1bbc38).
++	 * Bits 15:9 and 31:25 stay. Without these rows the bank kept the
++	 * replayed 0x000c000a, 10 and 12 where the tuning asks 60 at 1x gain.
++	 */
++	{ 19, 0x088,  0,  9 },
++	{ 19, 0x08c, 16,  9 },
++
+ 	/* Registers 20 to 37: mixed 10- and 16-bit fields. */
+ 	{ 20, 0x090,  0, 10 },
+ 	{ 20, 0x094, 16, 10 },
+--- a/overlay/drivers/media/artosyn/ar-isp-tables.c
++++ b/overlay/drivers/media/artosyn/ar-isp-tables.c
+@@ -185,6 +185,17 @@
+ MODULE_PARM_DESC(rnr_gain,
+ 		 "rnr ladder abscissa as a Q8 linear gain (default 256 = 1.0, the cold band; -1 leaves the replayed bank alone)");
+ 
++/*
++ * fpvOS: the vendor's Sharpness level on lnr's register 19 fields, 0..100 with
++ * 50 the tuning's, by the same law as the de3d strength pair (the vendor's
++ * lnr apply at libmpp_service.so 0x1bd8a8, ceiling 511). Applied after the
++ * ladder, at each re-latch.
++ */
++static int lnr_strength = 50;
++module_param(lnr_strength, int, 0644);
++MODULE_PARM_DESC(lnr_strength,
++		 "lnr sharpening strength, 0..100 (50 = the tuning's)");
++
+ static int lnr_gain = 256;
+ module_param(lnr_gain, int, 0644);
+ MODULE_PARM_DESC(lnr_gain,
+@@ -640,6 +651,13 @@
+ 
+ 	ar_isp_lnr_from_blob(regs, blob, (u32)lnr_gain << 8);
+ 
++	if (lnr_strength >= 0 && lnr_strength <= 100 && lnr_strength != 50) {
++		u32 lo = ar_isp_de3d_strength(regs[19] & 0x1ff, lnr_strength, 511);
++		u32 hi = ar_isp_de3d_strength((regs[19] >> 16) & 0x1ff, lnr_strength, 511);
++
++		regs[19] = (regs[19] & ~0x01ff01ffu) | (lo & 0x1ff) | (hi & 0x1ff) << 16;
++	}
++
+ 	for (i = 0; i < AR_ISP_LNR_REGS; i++) {
+ 		if (i == AR_ISP_LNR_SKIP_NEVER_WRITTEN)
+ 			continue;

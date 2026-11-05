@@ -30,6 +30,7 @@ struct sc231ai {
 	struct media_pad pad;
 	struct v4l2_ctrl_handler controls;
 	struct v4l2_ctrl *exposure_cluster[3];
+	struct v4l2_ctrl *hflip, *vflip;
 	struct mutex lock;
 	struct clk *mclk;
 	struct gpio_desc *reset;
@@ -99,11 +100,23 @@ static int sc231ai_set_control(struct v4l2_ctrl *ctrl)
 	u8 again, afine, dgain, dfine;
 	int ret = 0, release;
 
-	if (ctrl->id != V4L2_CID_EXPOSURE)
+	if (ctrl->id != V4L2_CID_EXPOSURE && ctrl->id != V4L2_CID_HFLIP &&
+	    ctrl->id != V4L2_CID_VFLIP)
 		return -EINVAL;
 	ret = pm_runtime_get_if_in_use(dev);
 	if (ret <= 0)
 		return ret;
+
+	/* Mirror is bits 2:1 of 0x3221, flip bits 6:5. The sensor keeps its
+	 * BGGR phase in all four combinations (P1 bench, 2026-11-04: colour
+	 * and edges checked in each), so the bus format does not change.
+	 */
+	if (ctrl->id != V4L2_CID_EXPOSURE) {
+		ret = sc231ai_write(sensor, 0x3221, (sensor->hflip->val ? 0x06 : 0) |
+						    (sensor->vflip->val ? 0x60 : 0));
+		pm_runtime_put(dev);
+		return ret;
+	}
 
 	/* Exposure is a 20-bit half-line count. Hold the register group so
 	 * an update cannot straddle two frames; always release after errors.
@@ -345,7 +358,7 @@ static int sc231ai_probe(struct i2c_client *client)
 	if (((hi << 8) | lo) != 0xcb6a)
 		return dev_err_probe(dev, -ENODEV, "unexpected sensor ID %02x%02x\n", hi, lo);
 
-	v4l2_ctrl_handler_init(&sensor->controls, 7);
+	v4l2_ctrl_handler_init(&sensor->controls, 9);
 	sensor->controls.lock = &sensor->lock;
 	ctrl = v4l2_ctrl_new_int_menu(&sensor->controls, NULL, V4L2_CID_LINK_FREQ,
 				    0, 0, sc231ai_link_frequencies);
@@ -370,6 +383,10 @@ static int sc231ai_probe(struct i2c_client *client)
 		&sc231ai_control_ops, V4L2_CID_ANALOGUE_GAIN, 0, 219, 1, 0);
 	sensor->exposure_cluster[2] = v4l2_ctrl_new_std(&sensor->controls,
 		&sc231ai_control_ops, V4L2_CID_DIGITAL_GAIN, 0, 127, 1, 0);
+	sensor->hflip = v4l2_ctrl_new_std(&sensor->controls, &sc231ai_control_ops,
+					  V4L2_CID_HFLIP, 0, 1, 1, 0);
+	sensor->vflip = v4l2_ctrl_new_std(&sensor->controls, &sc231ai_control_ops,
+					  V4L2_CID_VFLIP, 0, 1, 1, 0);
 	ret = sensor->controls.error;
 	if (ret)
 		goto controls;

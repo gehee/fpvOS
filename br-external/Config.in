@@ -17,6 +17,7 @@ source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-capture/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-camera-control/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-firmware/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-radio/Config.in"
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-temp/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/open8030/Config.in"
 
 config BR2_PACKAGE_HOST_LZ4

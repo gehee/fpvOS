@@ -117,6 +117,17 @@
 			status = "disabled";
 		};
 
+		/* The SoC temperature sensor (vendor DT "temperature@0a108000"),
+		 * with the SAR ADC's window (the vendor's adc@0a108000, 0x21c) for
+		 * a board's supply (artosyn,vin-channel and
+		 * artosyn,vin-ratio-permille in the board's node); the PLL bank
+		 * maps it non-exclusively too. */
+		soc_temp: temperature@a108000 {
+			compatible = "artosyn,protemp";
+			reg = <0 0x0a108000 0 0x21c>;
+			status = "disabled";
+		};
+
 		i2c0: i2c@1200000 {
 			compatible = "snps,designware-i2c";
 			reg = <0 0x01200000 0 0x2000>;
@@ -262,6 +273,17 @@
 			/* Keep earlycon's existing divisor; 8250_dw uses the clock
 			 * and hardware fractional divisor for the normal console.
 			 */
+			reg-shift = <2>;
+			reg-io-width = <4>;
+			status = "disabled";
+		};
+
+		/* The P1 Air's flight controller port (stock: enabled, its ttyS1). */
+		uart2: serial@1504000 {
+			compatible = "snps,dw-apb-uart";
+			reg = <0 0x01504000 0 0x400>;
+			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
 			reg-shift = <2>;
 			reg-io-width = <4>;
 			status = "disabled";
