@@ -25,7 +25,7 @@ static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], un
         {"userapp0",0x1700000,0x2d00000,0}, {"userapp1",0x4400000,0x2d00000,1},
         {"usr_data",0x7100000,0x600000,1}, {"usr_log",0x7700000,0x600000,1}
     };
-    unsigned found = 0, active_group[3] = {0};
+    unsigned found = 0, active_group[3] = {0}, boot_group[2] = {0};
     for (unsigned i = 0; i < 128; i++) {
         const unsigned char *e = records[selected] + 1024 + 128*i;
         unsigned nonzero = 0;
@@ -41,14 +41,18 @@ static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], un
             if (strcmp(name, expected[j].name)) continue;
             if ((found & (1U<<j)) || fpvos_get_le64(e+32) != expected[j].start/512 ||
                 fpvos_get_le64(e+40) != (expected[j].start+expected[j].size)/512-1 ||
-                (j < 6 || j > 11 ? fpvos_get_le64(e+48) != (expected[j].active ? 1ULL<<47 : 0) : (fpvos_get_le64(e+48) & ~(1ULL<<47)) != 0)) return 0;
+                (j < 2 || j > 11 ? fpvos_get_le64(e+48) != (expected[j].active ? 1ULL<<47 : 0) : (fpvos_get_le64(e+48) & ~(1ULL<<47)) != 0)) return 0;
+            /* Stock updates can select either environment/U-Boot copy. Require
+             * exactly one of each, but preserve those selections unchanged. */
+            if (j >= 2 && j <= 5 && fpvos_get_le64(e+48)) boot_group[(j-2)/2] |= 1U << ((j-2)%2);
             if (j >= 6 && j <= 11 && fpvos_get_le64(e+48)) active_group[(j-6)/2] |= 1U << ((j-6)%2);
             found |= 1U<<j;
             break;
         }
         if (j == sizeof(expected)/sizeof(expected[0])) return 0;
     }
-    if (found != (1U<<14)-1 || (active_group[0] != 1 && active_group[0] != 2) ||
+    if (found != (1U<<14)-1 || (boot_group[0] != 1 && boot_group[0] != 2) ||
+        (boot_group[1] != 1 && boot_group[1] != 2) || (active_group[0] != 1 && active_group[0] != 2) ||
         active_group[0] != active_group[1] || active_group[0] != active_group[2]) return 0;
     if (record) *record = selected;
     if (bank) *bank = active_group[0] == 2;
