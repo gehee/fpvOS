@@ -1,0 +1,250 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] drm: artosyn: add an independent ARGB UI plane
+
+Expose overlay bank 0 above the I420/RGB primary plane. Commit both planes
+under the same shadow latch after modeset enables, and deliver completion
+only after their scanout transition. This permits independent DMA-BUF video
+and UI producers without CPU composition.
+
+Register layout follows Gnd485 stock reg_overlay_set and the GPL-2.0
+Missing-Lynk display reference e3885c6394a7025eacd3a23f473276d9823beb25.
+Only full-screen 1:1 ARGB8888 is exposed. No inferred extra banks
+or scalers are advertised.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/artosyn_vo.c
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -1,6 +1,6 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * Artosyn AR9311 VO: one RGB/YUV primary plane, fixed 1920x1080 at nominal 60 Hz.
++ * Artosyn AR9311 VO: RGB/YUV primary and ARGB UI overlay, fixed 1920x1080 at nominal 60 Hz.
+  * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
+  * Register sequencing originates in that project's Artosyn display work;
+  * The explicit ascent-1080p60 profile retains the validated clock/timing setup.
+@@ -17,6 +17,9 @@
+ #include <linux/interrupt.h>
+ 
+ #include <drm/drm_atomic.h>
++#include <drm/drm_blend.h>
++#include <drm/drm_plane_helper.h>
++#include <drm/drm_modeset_helper_vtables.h>
+ #include <drm/drm_color_mgmt.h>
+ #include <drm/drm_atomic_helper.h>
+ #include <drm/drm_bridge.h>
+@@ -62,6 +65,19 @@
+ #define VO_QOS		0xff00
+ #define VO_DPI_CTRL	0x1f40
+ 
++/* Gnd485 stock reg_overlay_set: bank 0, independent of primary Y/U/V.
++ * Format 6 = A8R8G8B8, swizzle 1; alpha 0x3140 = straight source-over.
++ * Missing-Lynk e3885c6 also implements this bank (ARGB4444 on VR04).
++ */
++#define VO_OVL_CONFIG  0x1540
++#define VO_OVL_ALPHA   0x1580
++#define VO_OVL_BASE    0x15c0
++#define VO_OVL_STRIDE  0x1600
++#define VO_OVL_TL      0x1640
++#define VO_OVL_BR      0x1680
++#define VO_OVL_SIZE    0x17c0
++#define VO_OVL_EMIT    BIT(24)
++
+ #define VO_CURSOR_CFG	0x1468
+ 
+ #define VO_SYNC_VALID	0x40000000
+@@ -69,6 +85,7 @@
+ struct ar_vo {
+ 	struct drm_device		drm;
+ 	struct drm_simple_display_pipe	pipe;
++	struct drm_plane		ui;
+ 
+ 	void __iomem			*regs;
+ 	void __iomem			*crg;
+@@ -94,6 +111,35 @@
+ 	1192, 2163, 0, (-16 * 1192 - 128 * 2163) & 0x7fffff,
+ 	1, 0x00ff0000, 0x00ff0000, 0x00ff0000,
+ };
++
++static void ar_vo_set_ui(struct ar_vo *vo)
++{
++	struct drm_plane_state *s = vo->ui.state;
++	u32 addr;
++
++	if (!s || !s->fb || !s->crtc || !s->visible) {
++		writel(0, vo->regs + VO_OVL_CONFIG);
++		return;
++	}
++	addr = lower_32_bits(drm_fb_dma_get_gem_addr(s->fb, s, 0));
++	writel(addr, vo->regs + VO_OVL_BASE);
++	writel(addr, vo->regs + 0x1840);
++	writel(addr, vo->regs + 0x1880);
++	writel(s->fb->pitches[0], vo->regs + VO_OVL_STRIDE);
++	writel(0, vo->regs + 0x18c0);
++	writel(0, vo->regs + 0x1900);
++	writel(0, vo->regs + VO_OVL_TL);
++	writel(1920 | (1080 << 15), vo->regs + VO_OVL_BR);
++	writel(1920 | (1080 << 15), vo->regs + VO_OVL_SIZE);
++	writel(0, vo->regs + 0x16c0);
++	writel(0, vo->regs + 0x1700);
++	writel(0, vo->regs + 0x1740);
++	writel(0, vo->regs + 0x1780);
++	writel(0, vo->regs + 0x1940);
++	writel(s->pixel_blend_mode == DRM_MODE_BLEND_PREMULTI ? 0x3120 : 0x3140,
++	       vo->regs + VO_OVL_ALPHA);
++	writel((6 << 16) | (1 << 5) | VO_OVL_EMIT, vo->regs + VO_OVL_CONFIG);
++}
+ 
+ /* Keep a clean configuration word: readback includes hardware status bits.
+  * Shadow framebuffer addresses latch when config-lock (bit 3) is cleared.
+@@ -122,6 +168,7 @@
+ 	writel(y, vo->regs + VO_FB_BASE0);
+ 	writel(u, vo->regs + VO_PLANE2_BASE);
+ 	writel(v, vo->regs + VO_PLANE3_BASE);
++	ar_vo_set_ui(vo);
+ 	vo->cur_cfg = cfg;
+ 	writel(cfg, vo->regs + VO_MAIN_CTRL);
+ }
+@@ -194,33 +241,47 @@
+ {
+ 	struct ar_vo *vo = to_ar_vo(pipe->crtc.dev);
+ 
++	writel(0, vo->regs + VO_OVL_CONFIG);
+ 	drm_crtc_vblank_off(&pipe->crtc);
+ 	writel(0, vo->regs + VO_MAIN_CTRL);
+ 
+ 	vo->cur_cfg &= ~VO_MAIN_START;
+ }
+ 
+-static void ar_vo_pipe_update(struct drm_simple_display_pipe *pipe,
+-			      struct drm_plane_state *old_state)
+-{
+-	struct ar_vo *vo = to_ar_vo(pipe->crtc.dev);
+-	struct drm_plane_state *state = pipe->plane.state;
+-	struct drm_crtc *crtc = &pipe->crtc;
+-
+-	if (state->fb)
+-		ar_vo_set_fb_addr(vo, state);
+-
++/* Publish both planes after modeset enables, under one shadow latch. Sending
++ * the completion event here covers UI-only commits and initial modesets too.
++ * No buffer may be retired before this latch's vblank.
++ */
++static void ar_vo_commit_tail(struct drm_atomic_state *state)
++{
++	struct drm_device *dev = state->dev;
++	struct ar_vo *vo = to_ar_vo(dev);
++	struct drm_crtc *crtc = &vo->pipe.crtc;
++
++	drm_atomic_helper_commit_modeset_disables(dev, state);
++	drm_atomic_helper_commit_planes(dev, state, 0);
++	drm_atomic_helper_commit_modeset_enables(dev, state);
++
++	spin_lock_irq(&dev->event_lock);
++	if (crtc->state->active && vo->pipe.plane.state->fb)
++		ar_vo_set_fb_addr(vo, vo->pipe.plane.state);
+ 	if (crtc->state->event) {
+-		spin_lock_irq(&crtc->dev->event_lock);
+-		if (drm_crtc_vblank_get(crtc) == 0)
++		if (crtc->state->active && drm_crtc_vblank_get(crtc) == 0)
+ 			drm_crtc_arm_vblank_event(crtc, crtc->state->event);
+ 		else
+ 			drm_crtc_send_vblank_event(crtc, crtc->state->event);
+-
+ 		crtc->state->event = NULL;
+-		spin_unlock_irq(&crtc->dev->event_lock);
+ 	}
+-}
++	spin_unlock_irq(&dev->event_lock);
++
++	drm_atomic_helper_commit_hw_done(state);
++	drm_atomic_helper_wait_for_vblanks(dev, state);
++	drm_atomic_helper_cleanup_planes(dev, state);
++}
++
++static const struct drm_mode_config_helper_funcs ar_vo_commit_helpers = {
++	.atomic_commit_tail = ar_vo_commit_tail,
++};
+ 
+ static int ar_vo_enable_vblank(struct drm_simple_display_pipe *pipe)
+ {
+@@ -276,9 +337,41 @@
+ 	.check		= ar_vo_pipe_check,
+ 	.enable		= ar_vo_pipe_enable,
+ 	.disable	= ar_vo_pipe_disable,
+-	.update		= ar_vo_pipe_update,
+ 	.enable_vblank	= ar_vo_enable_vblank,
+ 	.disable_vblank	= ar_vo_disable_vblank,
++};
++
++static const u32 ar_vo_ui_formats[] = { DRM_FORMAT_ARGB8888 };
++
++static int ar_vo_ui_check(struct drm_plane *plane, struct drm_atomic_state *state)
++{
++	struct drm_plane_state *s = drm_atomic_get_new_plane_state(state, plane);
++	struct drm_crtc_state *cs;
++
++	if (!s->crtc || !s->fb)
++		return 0;
++	/* Fixed full-screen surface: no guessed scaler/crop register support. */
++	if (s->src_x || s->src_y || s->src_w != (1920 << 16) ||
++	    s->src_h != (1080 << 16) || s->crtc_x || s->crtc_y ||
++	    s->crtc_w != 1920 || s->crtc_h != 1080 ||
++	    s->fb->pitches[0] != 8192 || s->fb->offsets[0])
++		return -EINVAL;
++	cs = drm_atomic_get_new_crtc_state(state, s->crtc);
++	return drm_atomic_helper_check_plane_state(s, cs, DRM_PLANE_NO_SCALING,
++						 DRM_PLANE_NO_SCALING, false, true);
++}
++
++static const struct drm_plane_helper_funcs ar_vo_ui_helpers = {
++	.atomic_check = ar_vo_ui_check,
++};
++
++static const struct drm_plane_funcs ar_vo_ui_funcs = {
++	.update_plane = drm_atomic_helper_update_plane,
++	.disable_plane = drm_atomic_helper_disable_plane,
++	.destroy = drm_plane_cleanup,
++	.reset = drm_atomic_helper_plane_reset,
++	.atomic_duplicate_state = drm_atomic_helper_plane_duplicate_state,
++	.atomic_destroy_state = drm_atomic_helper_plane_destroy_state,
+ };
+ 
+ static irqreturn_t ar_vo_irq(int irq, void *data)
+@@ -387,6 +480,7 @@
+ 	vo->drm.mode_config.max_width = 1920;
+ 	vo->drm.mode_config.max_height = 1080;
+ 	vo->drm.mode_config.funcs = &ar_vo_mode_config_funcs;
++	vo->drm.mode_config.helper_private = &ar_vo_commit_helpers;
+ 
+ 	ret = drm_vblank_init(&vo->drm, 1);
+ 	if (ret)
+@@ -401,6 +495,25 @@
+ 	ret = drm_plane_create_color_properties(&vo->pipe.plane,
+ 			BIT(DRM_COLOR_YCBCR_BT709), BIT(DRM_COLOR_YCBCR_LIMITED_RANGE),
+ 			DRM_COLOR_YCBCR_BT709, DRM_COLOR_YCBCR_LIMITED_RANGE);
++	if (ret)
++		return ret;
++
++	ret = drm_universal_plane_init(&vo->drm, &vo->ui,
++				       drm_crtc_mask(&vo->pipe.crtc), &ar_vo_ui_funcs,
++				       ar_vo_ui_formats, ARRAY_SIZE(ar_vo_ui_formats),
++				       NULL, DRM_PLANE_TYPE_OVERLAY, "UI");
++	if (ret)
++		return ret;
++	drm_plane_helper_add(&vo->ui, &ar_vo_ui_helpers);
++	ret = drm_plane_create_zpos_immutable_property(&vo->pipe.plane, 0);
++	if (ret)
++		return ret;
++	ret = drm_plane_create_zpos_immutable_property(&vo->ui, 1);
++	if (ret)
++		return ret;
++	ret = drm_plane_create_blend_mode_property(&vo->ui,
++						 BIT(DRM_MODE_BLEND_PREMULTI) |
++						 BIT(DRM_MODE_BLEND_COVERAGE));
+ 	if (ret)
+ 		return ret;
+ 
