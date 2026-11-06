@@ -1,0 +1,65 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] media: wave5: expose HEVC row intra refresh
+
+Expose the standard refresh-period control for HEVC. Wave5 can spread an
+intra refresh across consecutive CTU rows instead of periodically sending
+a large IDR that stalls a low-latency radio stream. Round the row count up
+so the sweep completes within the requested period. Reject changes after
+sequence creation and reject enabling this HEVC control for AVC.
+
+Periodic and forced IDRs remain independently controlled by the existing
+GOP and FORCE_KEY_FRAME controls. Default refresh remains disabled.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c b/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
+@@ -1011,6 +1011,13 @@
+ 	dev_dbg(inst->dev->dev, "%s: name: %s | value: %d\n", __func__, ctrl->name, ctrl->val);
+ 
+ 	switch (ctrl->id) {
++	case V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD:
++		/* Refresh geometry is part of sequence initialization. */
++		if (inst->state != VPU_INST_STATE_NONE)
++			return -EBUSY;
++		inst->enc_param.intra_refresh_mode = ctrl->val ? REFRESH_MODE_CTU_ROWS : 0;
++		inst->enc_param.intra_refresh_arg = ctrl->val;
++		break;
+ 	case V4L2_CID_MPEG_VIDEO_AU_DELIMITER:
+ 		inst->encode_aud = ctrl->val;
+ 		break;
+@@ -1545,12 +1552,15 @@
+ 			open_param->wave_param.intra_mb_refresh_arg = num_mb_row;
+ 	}
+ 	open_param->wave_param.intra_refresh_mode = input.intra_refresh_mode;
+-	if (input.intra_refresh_mode != 0) {
+-		if (num_ctu_row >= input.intra_refresh_arg)
+-			open_param->wave_param.intra_refresh_arg =
+-				num_ctu_row / input.intra_refresh_arg;
+-		else
+-			open_param->wave_param.intra_refresh_arg = num_ctu_row;
++	if (input.intra_refresh_mode) {
++		if (inst->std != W_HEVC_ENC)
++			return -EINVAL;
++		/* Firmware refreshes whole CTU rows. Round up so a sweep takes
++		 * no longer than the requested number of pictures, including when
++		 * the requested period exceeds the number of rows.
++		 */
++		open_param->wave_param.intra_refresh_arg =
++			DIV_ROUND_UP(num_ctu_row, input.intra_refresh_arg);
+ 	}
+ 	open_param->wave_param.forced_idr_header_enable = input.forced_idr_header_enable;
+ 
+@@ -1971,6 +1981,9 @@
+ 	v4l2_m2m_set_src_buffered(inst->v4l2_fh.m2m_ctx, true);
+ 
+ 	v4l2_ctrl_handler_init(v4l2_ctrl_hdl, 50);
++	v4l2_ctrl_new_std(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
++			  V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD,
++			  0, 2047, 1, 0);
+ 	v4l2_ctrl_new_std_menu(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
+ 			       V4L2_CID_MPEG_VIDEO_HEVC_PROFILE,
+ 			       V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10, 0,
