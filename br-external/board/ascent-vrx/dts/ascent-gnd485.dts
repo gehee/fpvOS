@@ -176,7 +176,7 @@
 	bridge@3b {
 		compatible = "lontium,lt9611";
 		lontium,page-select-quirk;
-		lontium,fixed-1080p60-quirk;
+		lontium,ascent-60hz-quirk;
 		reg = <0x3b>;
 		reset-gpios = <&gpio 107 GPIO_ACTIVE_HIGH>;
 		vdd-supply = <&bridge_vdd>;
@@ -335,7 +335,7 @@
 /* Select the validated output profile; wiring remains board-specific. */
 &vo {
 	status = "okay";
-	artosyn,display-profile = "ascent-1080p60";
+	artosyn,display-profile = "ascent-60hz";
 	port {
 		vo_out: endpoint {
 			remote-endpoint = <&dsi_in>;
@@ -345,7 +345,7 @@
 
 &dsi {
 	status = "okay";
-	artosyn,display-profile = "ascent-1080p60";
+	artosyn,display-profile = "ascent-60hz";
 	ports {
 		#address-cells = <1>;
 		#size-cells = <0>;
