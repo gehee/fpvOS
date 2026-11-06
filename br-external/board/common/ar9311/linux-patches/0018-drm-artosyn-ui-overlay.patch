@@ -171,7 +171,7 @@ diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/arto
  
  static int ar_vo_enable_vblank(struct drm_simple_display_pipe *pipe)
  {
-@@ -276,9 +337,41 @@
+@@ -276,9 +337,48 @@
  	.check		= ar_vo_pipe_check,
  	.enable		= ar_vo_pipe_enable,
  	.disable	= ar_vo_pipe_disable,
@@ -200,7 +200,14 @@ diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/arto
 +						 DRM_PLANE_NO_SCALING, false, true);
 +}
 +
++/* Required by commit_planes; hardware publication is centralized in tail. */
++static void ar_vo_ui_update(struct drm_plane *plane, struct drm_atomic_state *state)
++{
++}
++
 +static const struct drm_plane_helper_funcs ar_vo_ui_helpers = {
++	.atomic_update = ar_vo_ui_update,
++	.atomic_disable = ar_vo_ui_update,
 +	.atomic_check = ar_vo_ui_check,
 +};
 +
@@ -214,7 +221,7 @@ diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/arto
  };
  
  static irqreturn_t ar_vo_irq(int irq, void *data)
-@@ -387,6 +480,7 @@
+@@ -387,6 +487,7 @@
  	vo->drm.mode_config.max_width = 1920;
  	vo->drm.mode_config.max_height = 1080;
  	vo->drm.mode_config.funcs = &ar_vo_mode_config_funcs;
@@ -222,7 +229,7 @@ diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/arto
  
  	ret = drm_vblank_init(&vo->drm, 1);
  	if (ret)
-@@ -401,6 +495,25 @@
+@@ -401,6 +502,25 @@
  	ret = drm_plane_create_color_properties(&vo->pipe.plane,
  			BIT(DRM_COLOR_YCBCR_BT709), BIT(DRM_COLOR_YCBCR_LIMITED_RANGE),
  			DRM_COLOR_YCBCR_BT709, DRM_COLOR_YCBCR_LIMITED_RANGE);
