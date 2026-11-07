@@ -1,0 +1,25 @@
+{
+  "board_id": 1448237136,
+  "hardware": "ASCENT_VRX_PRO",
+  "usb_identity": [
+    "1d77",
+    "a4a2",
+    "fpvos-ascent-vrx-pro"
+  ],
+  "names": [
+    "none"
+  ],
+  "limits": [
+    512
+  ],
+  "counts": [
+    1,
+    0
+  ],
+  "bundle_limits": [
+    512,
+    512
+  ],
+  "restore_sources": [],
+  "bootstrap_resources": {}
+}

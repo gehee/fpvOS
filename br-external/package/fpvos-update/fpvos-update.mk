@@ -19,20 +19,40 @@ ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_AIR),y)
 FPVOS_UPDATE_BOARD = p1-air
 FPVOS_UPDATE_DEPENDENCIES += host-dtc
 endif
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_LITE),y)
+FPVOS_UPDATE_BOARD = ascent-lite
+endif
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX_PRO),y)
+FPVOS_UPDATE_BOARD = ascent-vrx-pro
+FPVOS_UPDATE_SERIAL = y
+endif
+
+# A NAND board: its profile, NAND tool, image checks and an embedded bootstrap
+# for the stock runtime. The serial backend (backends/serial/backend.mk) sets
+# these for boards updated another way.
+FPVOS_UPDATE_PROFILE = $(@D)/backends/$(FPVOS_UPDATE_BOARD)/profile.json
+FPVOS_UPDATE_BOARD_SRCS = $(@D)/src/bootstrap-common.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.c \
+	$(@D)/bootstrap-resources.c $(@D)/nand.o $(@D)/backends/$(FPVOS_UPDATE_BOARD)/images.c
+define FPVOS_UPDATE_EMBED_CMDS
+	python3 $(FPVOS_UPDATE_SITE)/embed-bootstrap.py $(TARGET_DIR)/bin/busybox \
+		$(@D)/backends/$(FPVOS_UPDATE_BOARD) $(@D)/bootstrap-resources.c
+endef
+define FPVOS_UPDATE_INSTALL_BOOTSTRAP_CMDS
+	$(INSTALL) -D -m 0755 $(FPVOS_UPDATE_SITE)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.sh \
+		$(BINARIES_DIR)/fpvos-$(FPVOS_UPDATE_BOARD)-bootstrap.sh
+endef
 
 define FPVOS_UPDATE_BUILD_CMDS
-	python3 $(@D)/generate-profile.py $(@D)/backends/$(FPVOS_UPDATE_BOARD)/profile.json $(@D)/profile.c
+	python3 $(@D)/generate-profile.py $(FPVOS_UPDATE_PROFILE) $(@D)/profile.c
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror -I$(@D)/src \
 		-Dmain=fpvos_receiver_main -c $(@D)/src/receiver.c -o $(@D)/receiver.o
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror -I$(@D)/src \
 		-Dmain=fpvos_verify_main -c $(@D)/src/verify.c -o $(@D)/verify.o
 	$(FPVOS_UPDATE_BUILD_BACKEND_CMDS)
-	python3 $(FPVOS_UPDATE_SITE)/embed-bootstrap.py $(TARGET_DIR)/bin/busybox \
-		$(@D)/backends/$(FPVOS_UPDATE_BOARD) $(@D)/bootstrap-resources.c
+	$(FPVOS_UPDATE_EMBED_CMDS)
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror -I$(@D)/src \
-		$(@D)/src/main.c $(@D)/src/bootstrap-common.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.c $(@D)/bootstrap-resources.c \
-		$(@D)/receiver.o $(@D)/verify.o $(@D)/nand.o \
-		$(@D)/profile.c $(@D)/backends/$(FPVOS_UPDATE_BOARD)/images.c \
+		$(@D)/src/main.c $(@D)/receiver.o $(@D)/verify.o $(@D)/profile.c \
+		$(FPVOS_UPDATE_BOARD_SRCS) \
 		$(FPVOS_UPDATE_BACKEND_LINK) $(TARGET_LDFLAGS) -static -o $(@D)/fpvos-update
 	$(TARGET_STRIP) --remove-section=.comment --remove-section=.note $(@D)/fpvos-update
 endef
@@ -47,8 +67,7 @@ endef
 
 define FPVOS_UPDATE_INSTALL_IMAGES_CMDS
 	$(INSTALL) -D -m 0755 $(@D)/fpvos-update $(BINARIES_DIR)/fpvos-update-$(FPVOS_UPDATE_BOARD)
-	$(INSTALL) -D -m 0755 $(FPVOS_UPDATE_SITE)/backends/$(FPVOS_UPDATE_BOARD)/bootstrap.sh \
-		$(BINARIES_DIR)/fpvos-$(FPVOS_UPDATE_BOARD)-bootstrap.sh
+	$(FPVOS_UPDATE_INSTALL_BOOTSTRAP_CMDS)
 	# Remove artifacts under the names older versions of this package used.
 	rm -f $(BINARIES_DIR)/fpvos-ar9311-bootstrap.tar $(BINARIES_DIR)/fpvos-ar9311-bootstrap.sh \
 		$(BINARIES_DIR)/fpvos-update-ar9311 $(BINARIES_DIR)/fpvos-ar9311.fwu
@@ -64,4 +83,14 @@ endif
 
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_AIR),y)
 include $(FPVOS_UPDATE_SITE)/backends/p1-air/backend.mk
+endif
+
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_LITE),y)
+include $(FPVOS_UPDATE_SITE)/backends/ascent-lite/backend.mk
+endif
+
+ifeq ($(FPVOS_UPDATE_SERIAL),y)
+include $(FPVOS_UPDATE_SITE)/backends/serial/backend.mk
+FPVOS_UPDATE_EMBED_CMDS =
+FPVOS_UPDATE_INSTALL_BOOTSTRAP_CMDS =
 endif

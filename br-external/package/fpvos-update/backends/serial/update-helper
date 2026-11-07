@@ -1,0 +1,20 @@
+#!/bin/sh
+# A board updated another way (an SD card, the vendor's PC tool): its serial
+# port changes the USB mode and reboots; update (clean) mode is refused.
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+case "${1:-}" in
+    bridge|normal)
+        # fpvOS_usb's USB modes; normal exits 10 when only a reboot gets there.
+        exec /usr/sbin/fpvos-usb mode "$1"
+        ;;
+    reboot)
+        sync
+        /sbin/reboot
+        ;;
+    *)
+        echo "fpvos-update: no update over USB on this board" >&2
+        exit 1
+        ;;
+esac

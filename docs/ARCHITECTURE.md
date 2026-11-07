@@ -56,8 +56,9 @@ The image needs three proprietary pieces, none of which live in this repo:
   config (`bb_config_gnd_pro.json`). By default the radio runs
   [Open8030](https://github.com/gehee/Open8030) instead, built from source by
   the `open8030` package; the stock files are what `arlink.ko` uploads when
-  **RADIO › VRX Radio Firmware** says STOCK. Open8030's board profiles come
-  from the `open8030-profiles` package (see [BUILD.md](BUILD.md)). The host side is fpvOS's own: the `ar-libre`
+  **RADIO › VRX Radio Firmware** says STOCK. Open8030's board profiles are in
+  Open8030 itself, and its goggle config is the stock one with fpvOS's link
+  tuning, made at build time (see [BUILD.md](BUILD.md)). The host side is fpvOS's own: the `ar-libre`
   package's `arlink.ko` and its `libar8030_client.so`, a drop-in for Artosyn's
   library with no daemon. kestrel declares only the ~15 ABI functions it calls
   in `bb_client.h`, documented from observed behavior, and links the library

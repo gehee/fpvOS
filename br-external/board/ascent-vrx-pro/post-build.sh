@@ -127,6 +127,17 @@ if [ -d "$TARGET/lib/firmware/rtlwifi" ]; then
     cp "$lic" "$TARGET/lib/firmware/rtlwifi/"
 fi
 
+# The serial port (ttyGS0, S30usbgadget's acm.usb0): fpvos-update's receiver,
+# respawned by init, changes the USB mode for a host tool (fpvOS_usb). Before
+# rcK takes the gadget down, fpvos-usb leaves bridge mode: unbinding the gadget
+# under the bridge's endpoints hangs the reboot.
+if [ -x "$TARGET/usr/sbin/fpvos-update-service" ]; then
+    grep -q fpvos-update-service "$TARGET/etc/inittab" ||
+        sed -i 's|^# Stuff to do for the 3-finger salute|::respawn:/usr/sbin/fpvos-update-service\n\n&|' "$TARGET/etc/inittab"
+    grep -q 'fpvos-usb shutdown' "$TARGET/etc/inittab" ||
+        sed -i 's|^::shutdown:/etc/init.d/rcK|::shutdown:/usr/sbin/fpvos-usb shutdown\n&|' "$TARGET/etc/inittab"
+fi
+
 if [ ! -d "$VENDOR" ]; then
     echo ">>> vendor runtime absent - building blob-free."
     echo ">>>   supply it with: scripts/extract-ascent-vrx-pro-firmware.py"
@@ -192,3 +203,4 @@ if [ -f "$TARGET/factory/user_cfg.json" ]; then
 else
     echo ">>> no baked-in pairing list - stock's is merged from NAND at boot"
 fi
+

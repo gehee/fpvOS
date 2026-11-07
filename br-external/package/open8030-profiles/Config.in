@@ -1,9 +1,0 @@
-config BR2_PACKAGE_OPEN8030_PROFILES
-	bool "open8030-profiles"
-	help
-	  Open8030's board profiles for the Ascent Lite/Lite+ and the VRX
-	  Pro (register defaults, pin records, frame-control-header keys,
-	  flash parts), reverse engineered from Caddx's stock radio
-	  firmware, and the goggle radio's Open8030 configuration: what
-	  the open8030 package builds the radio firmware with. Nothing is
-	  installed on the target.

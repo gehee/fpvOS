@@ -78,7 +78,6 @@ row (like Bind) runs when you press OK.
 | **HUD** | HUD Style | OFF · CANOPY · ARENA · ARENA FULL |
 | | Betaflight OSD | ON · OFF |
 | | Canopy Voltage | PER CELL · PACK (CANOPY only) |
-| | Calib Distance | OK zeroes the distance here; Left / Right trim it |
 | | Clock | OFF · IDLE ONLY 12H · IDLE ONLY 24H · ON 12H · ON 24H |
 | | Dynamic HUD | OFF · SMALL · MEDIUM · EXTREME: how far the HUD moves with the aircraft |
 | | Debug Info | OFF · ON: a line of radio details under the right panel, for field tests. While ON, the VRX also keeps its log on the card (`fpvOS_<date>_<time>.log` next to the recordings, newest 30) and a kestrel-air unit keeps a log of each armed flight on its flash (`/usrdata/fpv/air/logs`, newest 5) |
@@ -131,7 +130,8 @@ applies the setting, then asks *Keep it?*. If you do nothing it goes back after
 | | Focus Mode | On · Off |
 | **RADIO** | Bind | only while unlinked |
 | | Channel | opens the [channel page](#channel-power-and-where-you-fly) |
-| | TX Power | Lite: 25 mW · 100 mW · 100 mW AUTO. Lite+: 25 · 100 · 200 · 500 mW · 500 mW AUTO. It reads `--` until the air unit has said which it is |
+| | TX Power Mode | FIXED · AUTO. FIXED holds the TX Power level. AUTO lets the link ask the air unit for the power it needs, up to that level. It reads `--` until the air unit has said which it is |
+| | TX Power | The level; in AUTO, the most the air unit may use. Lite: 25 mW · 100 mW (AUTO: 100). Lite+ with the fpvOS air image: 25 · 100 · 150 · 200 · 316 · 400 · 500 mW (AUTO: 150 to 500). Lite+ with Caddx's own air app: 25 · 100 · 200 · 500 mW (AUTO: 500 only) |
 | | Max MCS | AUTO · MCS 0 to 11: the highest MCS the goggle's radio may receive at (shown while it runs Open8030) |
 | | VRX Radio Firmware | OPEN8030 · STOCK: the firmware on **this goggle's** radio chip, not the air unit's. OK applies it: the radio restarts and the picture is back in about 10 s |
 | | Auto Standby | ON · OFF |
@@ -172,7 +172,8 @@ your country allows.
 - **OK** moves the link there at once. **ESC** closes the page.
 
 A channel picked here lasts for the session. **TX Power** is saved per air unit
-and starts at 25 mW; the levels offered are the ones that air unit has.
+and starts at 25 mW; the levels offered are the ones that air unit has. Mode and level are two rows of one
+setting: changing the level keeps the mode.
 
 Under **SYSTEM › Where you fly**, set your **Amateur Licence**, **Area** and
 **Country** (and **Timezone**, if your country has more than one). The channel

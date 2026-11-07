@@ -25,7 +25,7 @@
 fpvOS replaces the stock firmware on the **Caddx Ascent VRX Pro** with an open
 one, drawn on the goggle's GPU. The fpvOS air image opens up the Ascent Lite and
 Lite+ too, and the radio between them runs an open firmware on both ends,
-[Open8030](https://github.com/mh1412/Open8030) by [mh1412](https://github.com/mh1412).
+[Open8030](https://github.com/gehee/Open8030) by [mh1412](https://github.com/mh1412).
 
 ## Why fly it
 
@@ -121,7 +121,7 @@ fpvOS is **beta** software, and it runs the video link you fly by.
 
 <div align="center">
 
-Built on Artosyn's AR8030 and Caddx's Ascent, with thanks. Thank you to [mh1412](https://github.com/mh1412) for [Open8030](https://github.com/mh1412/Open8030), the open radio firmware fpvOS runs on both ends. [GPLv3](LICENSE), details in [About](docs/ABOUT.md#license).
+Built on Artosyn's AR8030 and Caddx's Ascent, with thanks. Thank you to [mh1412](https://github.com/mh1412) for [Open8030](https://github.com/gehee/Open8030), the open radio firmware fpvOS runs on both ends. [GPLv3](LICENSE), details in [About](docs/ABOUT.md#license).
 
 **fpvOS**: the goggle is open now.
 

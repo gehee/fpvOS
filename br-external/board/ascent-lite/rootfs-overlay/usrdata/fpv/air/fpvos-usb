@@ -1,0 +1,14 @@
+#!/bin/sh
+# fpvOS_usb on the Lite and Lite+ (the updater runs it for normal and bridge):
+# its program, settings and hooks are in the app volume, in usb/, since the
+# stock rootfs is read-only. The board id is the Lite's or the Lite+'s, as
+# air/start.sh found the board.
+usb=/usrdata/fpv/air/usb
+board_type=
+[ ! -r /tmp/air-radio ] || . /tmp/air-radio
+case $board_type in
+472) board=ascent-lite-plus ;;
+*) board=ascent-lite ;;
+esac
+export FPVOS_USB_CONF=$usb/$board.conf FPVOS_USB_LIBEXEC=$usb
+exec $usb/fpvos-usb "$@"

@@ -1,2 +1,4 @@
 # From toolchain.json in Open8030 (sdk-ng v1.0.1 release)
 sha256  01750834c471fbdb335c1b8b8aee17010a1968938957db85640c366235771a38  toolchain_gnu_linux-x86_64_riscv64-zephyr-elf.tar.xz
+# From the sdk-ng v1.0.1 release's sha256.sum
+sha256  7000feff1cdcf872b88bb987696035aab0807b566e9a9842881438187df6e848  toolchain_gnu_linux-aarch64_riscv64-zephyr-elf.tar.xz

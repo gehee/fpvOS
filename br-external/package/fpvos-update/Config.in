@@ -1,7 +1,7 @@
 config BR2_PACKAGE_FPVOS_UPDATE
 	bool "fpvOS firmware updater"
 	depends on BR2_USE_MMU
-	depends on BR2_aarch64
+	depends on BR2_aarch64 || BR2_arm
 	help
 	  USB CDC transport, bundle verification and update service. Storage,
 	  image validation and clean-mode policy come from a board backend.
@@ -16,6 +16,23 @@ config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX
 	help
 	  Fixed NAND layout, readback and rollback, clean-mode selection and
 	  original vendor kernel/DTB restoration for Gnd485.
+
+config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_LITE
+	bool "Caddx Ascent Lite / Lite+ (in place of the stock updater)"
+	depends on BR2_arm
+	help
+	  The stock updater's replacement, at its path in the app volume
+	  (/usrdata/fpv/ar_fpvhs_upgrade): the vendor's PC tool, the fpvOS
+	  Flasher and fpvOS's client flash the bank the unit did not boot
+	  from, read it back, then switch to it.
+
+config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX_PRO
+	bool "Caddx VRX Pro (serial port only)"
+	depends on BR2_aarch64
+	help
+	  The serial port and its USB modes (with fpvos-usb, bridge mode),
+	  no update over USB: the goggle is updated by reflashing its SD
+	  card.
 
 config BR2_PACKAGE_FPVOS_UPDATE_P1_AIR
 	bool "BETAFPV P1 Air NAND"

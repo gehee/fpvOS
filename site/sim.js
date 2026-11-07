@@ -284,7 +284,6 @@
     if (S.txPower.indexOf('AUTO') < 0) return S.txPower;
     return mwText(mwFromDbm(airDbm(t))) + ' (A)';
   }
-  var DIST = { zeroed: false };
   function modeStr() { return S.videoMode.replace(/p(\d+)/, 'p$1'); }
   var FREQ = 5840;
 
@@ -404,7 +403,7 @@
           x2 += ptext(c, M, '•', x2, rb, em(T_ROW), 0, mul(T.text, dim * 0.68), 1) + igap * ux;
           picon(c, M, 'dist', x2 + iw * ux / 2, icy, iw * ux, ih, mul(T.text, dim), 1); x2 += iw * ux + igap * ux;
           var dist = Math.max(0, Math.round(t.dist));
-          ptext(c, M, !DIST.zeroed ? '--' : dist >= 1000 ? (dist / 1000).toFixed(2) + 'km' : dist + 'm', x2, rb, em(T_ROW), 0, mul(T.text, dim), 1);
+          ptext(c, M, dist >= 1000 ? (dist / 1000).toFixed(2) + 'km' : dist + 'm', x2, rb, em(T_ROW), 0, mul(T.text, dim), 1);
         }
         // goggle row
         var gb = MY(584) + 0.25 * T_ROW * s, gcy = gb + 0.25 * T_ROW * s, x3 = X(14);
@@ -424,7 +423,7 @@
         if (t) {
           xr -= ptext(c, M, '•', xr, baseBig, em(T_UNIT), 2, mul(WHITE, 0.42 * ldim), 1); xr -= 10 * uy;
           xr -= ptext(c, M, 'm', xr, baseBig, em(T_SMALL), 2, mul(T.text, ldim * 0.72), 1);
-          var ds = DIST.zeroed ? Math.round(t.dist) + '' : '--';
+          var ds = Math.round(t.dist) + '';
           xr -= ptext(c, M, ds, xr, baseBig, em(T_UNIT), 2, mul(WHITE, 0.82 * ldim), 1);
           if (L.radio) {
             xr -= 10 * uy;
@@ -1432,7 +1431,7 @@
     var lb = 300, lh = 46, vrs = [], lcs = [], dss = [];
     for (var i3 = 0; i3 < cols; i3++) {
       var tt = tels[i3], bwc = bwAt(tEnd - (cols - 1 - i3) * col);
-      vrs.push(tt ? videoRate(tt) : 0); lcs.push(tt ? linkCap(tt, bwc) : 0); dss.push(tt && DIST.zeroed ? tt.dist : null);
+      vrs.push(tt ? videoRate(tt) : 0); lcs.push(tt ? linkCap(tt, bwc) : 0); dss.push(tt ? tt.dist : null);
     }
     var lmax = Math.ceil(Math.max(40, Math.max.apply(null, lcs), Math.max.apply(null, vrs), LINK.bw) / 20) * 20;
     var step = lmax <= 40.5 ? 10 : lmax <= 80.5 ? 20 : 40, Yl = function (v) { return lb - Math.min(v, lmax) / lmax * lh; };
@@ -1588,7 +1587,7 @@
     if (t) {
       var st = t.armed ? 1 : 0;
       if (arm.state < 0) { arm.state = st; arm.to = st ? T.accent : REST; arm.from = arm.to; arm.wipeAt = -100; }
-      else if (st !== arm.state) { arm.from = arm.state ? T.accent : REST; arm.to = st ? T.accent : REST; arm.state = st; arm.wipeAt = now; if (st) { arm.armedAt = now; DIST.zeroed = true; } }
+      else if (st !== arm.state) { arm.from = arm.state ? T.accent : REST; arm.to = st ? T.accent : REST; arm.state = st; arm.wipeAt = now; if (st) { arm.armedAt = now; } }
       if (arm.to !== REST) arm.to = T.accent;
       var cell = cellOf(t);
       if (!t.armed && t.flight < 1) peakCell = cell; else peakCell = Math.max(peakCell, cell);
