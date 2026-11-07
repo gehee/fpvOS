@@ -16,3 +16,7 @@ CONFIG_CMA_SIZE_MBYTES=32
 CONFIG_I2C_CHARDEV=y
 CONFIG_PWM=y
 CONFIG_PWM_ARTOSYN=y
+# Read-only compressed application/assets, shipped inside the initramfs.
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y
