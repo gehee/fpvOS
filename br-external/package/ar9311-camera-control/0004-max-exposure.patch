@@ -1,0 +1,270 @@
+From: fpvOS developers
+Subject: [PATCH] ae: cap the exposure, the gain making up the rest
+
+The vendor table lengthens the exposure to 10 ms before it raises the gain,
+so indoors the sensor sits at 10 ms. --max-exposure-us N holds the exposure
+at N and raises the gain by the same factor (exposure x gain, what the index
+stands for, is kept) until the sensor is out of gain; the AE index stops
+there. The noise ladders take the gain the sensor really runs at.
+--max-exposure-file PATH reads it from PATH instead, again on SIGHUP (as
+the banding toggle), so a new cap applies live from the current index.
+
+Upstream: not submitted
+
+--- a/ml-aed/ml-aed.c
++++ b/ml-aed/ml-aed.c
+@@ -92,6 +92,10 @@
+     int tone;                   /* drive gamma, DRC, cm, cm2 from the trigger scalar (default) */
+     int banding;                /* mains anti-flicker: 0 off, 50 or 60 Hz */
+     unsigned int line_ns;       /* sensor line time, for the anti-flicker snap */
++    unsigned int cap_lines;     /* fpvOS: the exposure cap in lines, 0 = the table's own */
++    long cap_us;                /* fpvOS: the same in us, as asked */
++    int cap_ceil;               /* fpvOS: the last index the capped sensor still reaches, 0 = none */
++    const char *cap_file;       /* fpvOS: --max-exposure-file, read at start and on SIGHUP */
+     int stats;                  /* print hold rate and mean luma error every N decisions, 0 = off */
+     int verbose;
+ };
+@@ -144,6 +148,87 @@
+ }
+ 
+ /*
++ * fpvOS: the most gain the sensor has, analog times digital, in Q8.
++ */
++static uint32_t ae_gain_q8_max(void)
++{
++    return (uint32_t)((uint64_t)analog[sizeof(analog) / sizeof(analog[0]) - 1] *
++                      digital[sizeof(digital) / sizeof(digital[0]) - 1] / 1024 / 4);
++}
++
++/*
++ * fpvOS: the exposure cap (--max-exposure-us). The table lengthens the
++ * exposure first and raises the gain only from 10 ms (index ~210), so indoors
++ * the sensor sits at 10 ms: motion blur, and half of it added to the latency
++ * of what the picture shows. Past the cap the exposure stays at the cap and
++ * the gain makes up the rest, so exposure x gain, what the index stands for,
++ * is kept until the sensor runs out of gain. Returns the lines to use.
++ */
++static uint32_t ae_cap_exposure(uint32_t cap_lines, uint32_t lines, uint32_t *gain_q8)
++{
++    if (!cap_lines || lines <= cap_lines) {
++        return lines;
++    }
++
++    uint64_t gain = (uint64_t)*gain_q8 * lines / cap_lines;
++    *gain_q8 = gain > ae_gain_q8_max() ? ae_gain_q8_max() : (uint32_t)gain;
++
++    return cap_lines;
++}
++
++/*
++ * fpvOS: take a cap (0: none), in lines, and the index past which the capped
++ * sensor has no gain left to follow the table: the AE stops there rather than
++ * climb indices that no longer brighten the picture (and would have to come
++ * back down through them, unseen, when the light returns).
++ */
++static void ae_set_cap(struct ae_opts *opts, const struct ae_tuning *tune, long us)
++{
++    opts->cap_us = us;
++    opts->cap_lines = 0;
++    opts->cap_ceil = 0;
++    if (us > 0) {
++        uint64_t lines = (uint64_t)us * 1000 / (opts->line_ns ? opts->line_ns : ML_AED_LINE_NS);
++        int top = tune->index_max;
++
++        opts->cap_lines = lines ? (uint32_t)lines : 1;
++        while (top > tune->index_min &&
++               (uint64_t)tune->table[top].gain_q8 * tune->table[top].line_count >
++               (uint64_t)ae_gain_q8_max() * opts->cap_lines) {
++            top--;
++        }
++        opts->cap_ceil = top;
++        printf("ml-aed: exposure capped at %ld us (%u lines), gain up to %.0fx, index up to %d\n",
++               us, opts->cap_lines, (double)ae_gain_q8_max() / 256.0, top);
++    } else {
++        printf("ml-aed: exposure not capped (the table's own)\n");
++    }
++    fflush(stdout);
++}
++
++/* fpvOS: the cap file's us, or `fallback` when it is missing or unreadable. */
++static long read_cap_file(const char *path, long fallback)
++{
++    char buf[16], *end;
++    FILE *f = fopen(path, "r");
++    long us;
++
++    if (!f) {
++        return fallback;
++    }
++    if (!fgets(buf, sizeof buf, f)) {
++        buf[0] = '\0';
++    }
++    fclose(f);
++    us = strtol(buf, &end, 10);
++    if (end == buf || (*end && *end != '\n') || us < 0 || us > 1000000) {
++        return fallback;
++    }
++
++    return us;
++}
++
++/*
+  * Apply one table entry: sensor exposure and gain (each write commits inside
+  * the sensor's group hold), the ladder abscissas in Q8, then the ladder-only
+  * re-apply. The sensor driver clamps exposure at vts - 2 = 1123, two lines
+@@ -155,6 +240,9 @@
+     const struct mlaed_exp_entry *e = &tune->table[exp_index];
+     uint32_t lines = e->line_count;
+     uint32_t gain_q8 = e->gain_q8;
++    /* fpvOS: under the exposure cap the ladders take the gain the sensor
++     * really runs at, the gain the vendor's table would have had there. */
++    uint32_t ladder_q8 = e->gain_q8;
+ 
+     int ret;
+ 
+@@ -179,6 +267,9 @@
+         fflush(stdout);
+     }
+ 
++    lines = ae_cap_exposure(opts->cap_lines, lines, &gain_q8);
++    (void)ae_cap_exposure(opts->cap_lines, e->line_count, &ladder_q8);
++
+     unsigned int ai=0, di=0;
+     while(ai+1<sizeof(analog)/sizeof(analog[0]) && analog[ai+1]<=gain_q8*4U) ai++;
+     unsigned int residual = (unsigned long long)gain_q8 * 4096 / analog[ai];
+@@ -197,21 +288,21 @@
+         return 0;
+     }
+ 
+-    ret = write_int(ISP_RNR_GAIN, (int)e->gain_q8);
++    ret = write_int(ISP_RNR_GAIN, (int)ladder_q8);
+     if (!ret) {
+-        ret = write_int(ISP_LNR_GAIN, (int)e->gain_q8);
++        ret = write_int(ISP_LNR_GAIN, (int)ladder_q8);
+     }
+ 
+     if (!ret) {
+-        ret = write_int(ISP_DE3D_GAIN, (int)e->gain_q8);
++        ret = write_int(ISP_DE3D_GAIN, (int)ladder_q8);
+     }
+ 
+     if (!ret) {
+-        ret = write_int(ISP_CFA_GAIN, (int)e->gain_q8);
++        ret = write_int(ISP_CFA_GAIN, (int)ladder_q8);
+     }
+ 
+     if (!ret) {
+-        ret = write_int(ISP_CNF_GAIN, (int)e->gain_q8);
++        ret = write_int(ISP_CNF_GAIN, (int)ladder_q8);
+     }
+ 
+     if (!ret) {
+@@ -368,13 +459,28 @@
+          */
+         if (g_reload_banding) {
+             int hz = read_banding_file();
++            int changed = 0;
+ 
+             g_reload_banding = 0;
+             if (hz != opts->banding) {
+                 opts->banding = hz;
+                 printf("banding %d Hz (SIGHUP)\n", hz);
+                 fflush(stdout);
+-
++                changed = 1;
++            }
++            /* fpvOS: a new exposure cap, the index brought under its ceiling. */
++            if (opts->cap_file) {
++                long us = read_cap_file(opts->cap_file, opts->cap_us);
++
++                if (us != opts->cap_us) {
++                    ae_set_cap(opts, tune, us);
++                    if (opts->cap_ceil && st.exp_index > opts->cap_ceil) {
++                        st.exp_index = opts->cap_ceil;
++                    }
++                    changed = 1;
++                }
++            }
++            if (changed) {
+                 ret = ae_actuate(tune, opts, st.exp_index);
+                 if (ret) {
+                     fprintf(stderr, "ml-aed: actuate after SIGHUP: %s\n",
+@@ -456,6 +562,10 @@
+             st.exp_index = opts->ceil_index;
+         }
+ 
++        if (opts->cap_ceil && st.exp_index > opts->cap_ceil) {
++            st.exp_index = opts->cap_ceil;
++        }
++
+         step = st.exp_index - prev;
+         decided++;
+ 
+@@ -546,6 +656,10 @@
+         "                    gain to match; costs 0.74 stops at 50 Hz, and more than the\n"
+         "                    sensor has at the bottom of the table\n"
+         "  --line-ns N       sensor line time in ns for that snap (default 14815)\n"
++        "  --max-exposure-us N  cap the exposure at N us, the gain making up the rest\n"
++        "                    (0, the default: the table's own, up to 16.5 ms)\n"
++        "  --max-exposure-file PATH  the cap in us from PATH instead, read again on SIGHUP\n"
++        "                    (missing or unreadable: --max-exposure-us's)\n"
+         "  --tuning PATH     sensor tuning blob (default: the board's firmware path)\n"
+         "  --stats N         every N decisions print the hold rate and the mean luma\n"
+         "                    error against target, then reset the window (0 = off)\n"
+@@ -567,6 +681,8 @@
+         { "no-tone", no_argument, NULL, 'T' },
+         { "banding", required_argument, NULL, 'B' },
+         { "line-ns", required_argument, NULL, 'B' + 128 },
++        { "max-exposure-us", required_argument, NULL, 'X' },
++        { "max-exposure-file", required_argument, NULL, 'X' + 128 },
+         { "tuning", required_argument, NULL, 'T' + 128 },
+         { "stats", required_argument, NULL, 'S' },
+         { "verbose", no_argument, NULL, 'v' },
+@@ -580,6 +696,7 @@
+         .tone = 1,
+     };
+     const char *tuning_path = ML_AED_TUNING_FALLBACK;
++    long max_exposure_us = 0;
+     struct ae_tuning tune;
+     int c, ret;
+ 
+@@ -634,6 +751,21 @@
+             opts.no_ladders = 1;
+         } break;
+ 
++        case 'X' + 128: {
++            opts.cap_file = optarg;
++        } break;
++
++        case 'X': {
++            char *end;
++
++            max_exposure_us = strtol(optarg, &end, 10);
++            if (*end || max_exposure_us < 0 || max_exposure_us > 1000000) {
++                fprintf(stderr, "ml-aed: --max-exposure-us takes 0..1000000\n");
++
++                return 2;
++            }
++        } break;
++
+         case 'T': {
+             opts.tone = 0;
+         } break;
+@@ -689,6 +821,17 @@
+         return 1;
+     }
+ 
++    /* fpvOS: the exposure cap, from the file when there is one. */
++    if (opts.cap_file) {
++        max_exposure_us = read_cap_file(opts.cap_file, max_exposure_us);
++    }
++    if (max_exposure_us || opts.cap_file) {
++        ae_set_cap(&opts, &tune, max_exposure_us);
++        if (opts.cap_ceil && opts.start_index > opts.cap_ceil) {
++            opts.start_index = opts.cap_ceil;
++        }
++    }
++
+     /*
+      * SA_RESTART so the statistics read is not torn by the reload signal; the
+      * loop polls often enough that the flag is picked up within a frame or two.
