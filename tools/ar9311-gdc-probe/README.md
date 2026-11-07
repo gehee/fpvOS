@@ -128,3 +128,27 @@ The next integration should cache premultiplied source planes per HUD revision,
 crop each visible region, rotate around the correct screen-space pivot using
 placement plus a local transform, and preserve the existing hardware video/UI
 composition. Measure the complete animated frame before enabling it by default.
+
+### 1080p follow-up
+
+Native 1920 by 1080 Canopy captures had visible wing bounds of 513 by 290
+and 513 by 300 pixels, fitting 576 by 384 rotation tiles. With the live 1080p
+receiver active, only 192 KiB of the 32 MiB CMA pool remained free and the
+prototype's 8 MiB contiguous allocation failed. The receiver was therefore
+stopped for this offscreen test, then restored to its previous 720p60 mode.
+
+A local harness ran two sequential four-channel transforms and packs per sample,
+reusing one cached source/output allocation. Each run used the same wing image
+and angle for both transforms, so these are optimistic processing measurements,
+not a full animated UI benchmark or two independently changing regions.
+
+| Two 576 by 384 transforms | Samples | Mean | p99 | Maximum | Above 16.67 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| +5 degrees, left-wing input | 200 | 21.68 ms | 22.34 ms | 23.74 ms | 200 |
+| -5 degrees, right-wing input | 200 | 21.59 ms | 21.78 ms | 23.55 ms | 200 |
+
+The processing ceiling is about 46 FPS, before final UI composition, source/map
+updates, or contention with live decoding. Identity was exact; alpha invariants
+and buffer canaries passed. This four-pass approach does not meet 1080p60 even
+in that favorable test. Integration also needs a smaller or differently allocated
+DMA working set to coexist with the 1080p display buffers.
