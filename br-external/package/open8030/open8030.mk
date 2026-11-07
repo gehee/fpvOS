@@ -6,19 +6,22 @@
 
 # Radio-chip firmware, independent of the Linux host SoC or application.
 # Board defconfigs select profile, transport, role and factory-data policy.
-OPEN8030_VERSION ?= 89d3c634c11d5665dcc17401c5d8b3172bbacf8b
+OPEN8030_VERSION ?= 2edb6c3ae1b647ed2e01744a1069ea402fa9ae14
 OPEN8030_SITE ?= https://github.com/gehee/Open8030.git
 OPEN8030_SITE_METHOD = git
 OPEN8030_CONFIG ?= $(call qstrip,$(BR2_PACKAGE_OPEN8030_CONFIG))
 
-# Bare filenames come from the published archive; absolute paths name private
-# inputs. Keep make-time directory overrides for profile/config development:
-# OPEN8030_PRIVATE_DIR (scripts/open8030-private.sh fills it with the profiles
-# and the ground radio config) overrides both, OPEN8030_CONFIG_DIR the config.
+# A bare profile filename is one of Open8030's own profiles/; a bare config
+# filename is the ground config gnd-config.py makes from the stock VRX Pro one
+# (vendor/rootfs, from the firmware extractor). Absolute paths name private
+# inputs. OPEN8030_PRIVATE_DIR overrides both directories at make time,
+# OPEN8030_CONFIG_DIR the config's alone.
+OPEN8030_STOCK_GND_CONFIG ?= $(BR2_EXTERNAL_FPVOS_PATH)/../vendor/rootfs/lib/firmware/bb_config_gnd_pro.json
 OPEN8030_CONFIG_DIR ?= $(OPEN8030_PRIVATE_DIR)
-OPEN8030_PROFILE_SOURCE = $(if $(OPEN8030_PRIVATE_DIR),$(OPEN8030_PRIVATE_DIR)/$(notdir $(OPEN8030_PROFILE)),$(if $(filter /%,$(OPEN8030_PROFILE)),$(OPEN8030_PROFILE),$(OPEN8030_PROFILES_DIR)/$(OPEN8030_PROFILE)))
-OPEN8030_CONFIG_SOURCE = $(if $(OPEN8030_CONFIG_DIR),$(OPEN8030_CONFIG_DIR)/$(notdir $(OPEN8030_CONFIG)),$(if $(filter /%,$(OPEN8030_CONFIG)),$(OPEN8030_CONFIG),$(OPEN8030_PROFILES_DIR)/$(OPEN8030_CONFIG)))
-OPEN8030_DEPENDENCIES = open8030-profiles
+OPEN8030_PROFILE_SOURCE = $(if $(OPEN8030_PRIVATE_DIR),$(OPEN8030_PRIVATE_DIR)/$(notdir $(OPEN8030_PROFILE)),$(if $(filter /%,$(OPEN8030_PROFILE)),$(OPEN8030_PROFILE),$(OPEN8030_DIR)/profiles/$(OPEN8030_PROFILE)))
+OPEN8030_CONFIG_SOURCE = $(if $(OPEN8030_CONFIG_DIR),$(OPEN8030_CONFIG_DIR)/$(notdir $(OPEN8030_CONFIG)),$(if $(filter /%,$(OPEN8030_CONFIG)),$(OPEN8030_CONFIG),$(OPEN8030_DIR)/$(OPEN8030_CONFIG)))
+OPEN8030_MAKE_CONFIG = $(if $(BR2_PACKAGE_OPEN8030_ROLE_AP)$(OPEN8030_CONFIG_DIR)$(filter /%,$(OPEN8030_CONFIG)),,y)
+OPEN8030_DEPENDENCIES =
 ifeq ($(BR2_PACKAGE_OPEN8030_PROFILE_P1_STOCK),y)
 OPEN8030_PROFILE = $(BUILD_DIR)/p1-air-vendor-$(P1_AIR_VENDOR_VERSION)/stock/p1-air.c
 OPEN8030_DEPENDENCIES += p1-air-vendor
@@ -68,6 +71,9 @@ OPEN8030_DEPENDENCIES += \
 define OPEN8030_BUILD_CMDS
 	test -n "$(OPEN8030_PROFILE)" && test -f "$(OPEN8030_PROFILE_SOURCE)" || \
 		{ echo "Missing Open8030 profile: $(OPEN8030_PROFILE_SOURCE); set BR2_PACKAGE_OPEN8030_PROFILE or OPEN8030_PRIVATE_DIR" >&2; exit 1; }
+	$(if $(OPEN8030_MAKE_CONFIG),\
+		$(HOST_DIR)/bin/python3 $(OPEN8030_PKGDIR)/gnd-config.py \
+			"$(OPEN8030_STOCK_GND_CONFIG)" "$(OPEN8030_CONFIG_SOURCE)")
 	$(if $(BR2_PACKAGE_OPEN8030_ROLE_AP),,test -f "$(OPEN8030_CONFIG_SOURCE)" || \
 		{ echo "Missing Open8030 radio config: $(OPEN8030_CONFIG_SOURCE); set BR2_PACKAGE_OPEN8030_CONFIG or OPEN8030_CONFIG_DIR" >&2; exit 1; })
 	cd $(@D) && $(HOST_MAKE_ENV) USER_CACHE_DIR=$(@D)/build/cache \

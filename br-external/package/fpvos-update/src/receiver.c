@@ -27,10 +27,29 @@
 #ifndef CLEAN_BOOT_MARKER
 #define CLEAN_BOOT_MARKER "/run/fpvos-clean-boot"
 #endif
+/* fpvos-usb (fpvOS_usb) keeps the USB mode here: normal or bridge. */
+#ifndef USB_MODE_FILE
+#define USB_MODE_FILE "/run/fpvos-usb/mode"
+#endif
+/* Board hooks, for a board whose host tools speak its vendor's dialect (the
+ * Ascent Lite's stock updater): absent, the receiver answers as fpvOS. */
+/* FIND_DEVICE's 300 bytes, DETAIL the mode text. */
+void fpvos_board_find_device(unsigned char out[300], const char *detail) __attribute__((weak));
+/* SENDFILE_START's 128-byte destination: 1 to accept it, *install 1 to install
+ * the file (0: verify only), *self_reboot 1 to reboot without a REBOOT after
+ * the install (the vendor's tools never send one). */
+int fpvos_board_destination(const unsigned char path[128], int *install, int *self_reboot)
+	__attribute__((weak));
+/* Commands 58 and 59, the vendor's USB network switch, after their reply:
+ * REBOOT 0 live, 1 with a reboot. */
+void fpvos_board_network(int reboot, int clean) __attribute__((weak));
+/* Set by a board's entry point when the unit runs its update system already. */
+int fpvos_receiver_clean_at_start;
+
 static unsigned char payload[CHUNK];
 static int port, file = -1, clean, prepared, state;
 static uint32_t total, received, last_seq, last_crc, last_len;
-static int have_last, install_requested;
+static int have_last, install_requested, self_reboot, end_done, rebooting;
 static pid_t worker;
 static unsigned install_progress;
 static volatile sig_atomic_t stopping;
@@ -89,7 +108,7 @@ static void reset_transfer(void)
 	file = -1;
 	unlink(staging);
 	received = total = 0;
-	have_last = 0;
+	have_last = end_done = 0;
 	expected_md5[0] = 0;
 }
 static int run_helper(const char *operation)
@@ -204,12 +223,73 @@ static int destination_matches(const unsigned char *name, const char *current, c
     return !memcmp(name, current, strlen(current) + 1) ||
            (legacy[0] && !memcmp(name, legacy, strlen(legacy) + 1));
 }
+/* A command 3 name: the 32-byte payload is NAME, zero padded. */
+static int named(uint32_t n, const char *name)
+{
+	size_t len = strlen(name);
+	if (n != 32 || memcmp(payload, name, len))
+		return 0;
+	for (size_t i = len; i < 32; i++)
+		if (payload[i])
+			return 0;
+	return 1;
+}
+static int bridge_mode(void)
+{
+	char mode[16] = {0};
+	FILE *f = fopen(USB_MODE_FILE, "r");
+	if (!f)
+		return 0;
+	int bridge = fgets(mode, sizeof(mode), f) && !strcmp(mode, "bridge\n");
+	fclose(f);
+	return bridge;
+}
+/* normal and bridge: fpvos-usb's USB modes, through the helper. Update mode
+ * is clean mode, under its protocol name. */
+static int usb_mode(const unsigned char *h, const char *name)
+{
+	if (file >= 0)
+		return ack(h, -1, "transfer active");
+	int bridge = !strcmp(name, "bridge");
+	if (clean) {
+		if (bridge)
+			return ack(h, -1, "bridge mode is not available in update mode; switch to normal first");
+		int result = ack(h, 0, "rebooting into normal mode");
+		if (!result)
+			reboot_after_ack();
+		return result;
+	}
+	/* Both start 1 s after the helper returns, so this reply gets out
+	 * first; normal: 10 when only a reboot gets there. */
+	int r = run_helper(name);
+	if (!bridge && r == 10) {
+		snprintf(detail, sizeof(detail), "rebooting into normal mode");
+		int result = ack(h, 0, detail);
+		if (!result)
+			reboot_after_ack();
+		return result;
+	}
+	if (r)
+		return ack(h, -1, bridge ? "bridge mode unsupported or failed to start"
+					 : "mode change failed");
+	if (bridge)
+		snprintf(detail, sizeof(detail), "bridge mode");
+	return ack(h, 0, "OK");
+}
 static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 {
 	uint32_t cmd = fpvos_get_le32(h + 12), seq = fpvos_get_le32(h + 24);
 	refresh_worker();
 	if (cmd == 0x3c && !n) {
 		unsigned char b[300] = {0};
+		/* The USB mode changes behind our back (fpvos-usb's way back from
+		 * bridge mode runs on its own): read it as it is now. */
+		if (!clean && !worker && state == 0)
+			snprintf(detail, sizeof(detail), "%s", bridge_mode() ? "bridge mode" : "normal mode");
+		if (fpvos_board_find_device) {
+			fpvos_board_find_device(b, detail);
+			return reply(h, b, sizeof(b));
+		}
 		fpvos_put_le32(b, CHUNK);
 		snprintf((char *)b + 4, 32, "development");
 		snprintf((char *)b + 36, 64, "fpvOS updater");
@@ -234,14 +314,20 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 			     : (state == 2 ? 90 : (total ? (uint64_t)received * 80 / total : 0)));
 		fpvos_put_le32(b + 4, (uint32_t)state);
 		snprintf((char *)b + 8, 64, "%s", detail);
-		return reply(h, b, sizeof(b));
+		int result = reply(h, b, sizeof(b));
+		/* The vendor's tools wait for the port to go away after 100 %. */
+		if (!result && state == 4 && self_reboot && !rebooting) {
+			rebooting = 1;
+			reboot_after_ack();
+		}
+		return result;
 	}
+	/* A FILE_END resent after it succeeded gets the same answer. */
+	if (cmd == 0x75 && !n && end_done)
+		return ack(h, 0, "OK");
 	if (worker)
 		return ack(h, -1, "Update operation active; query status");
-	if (cmd == 3 && n == 32 && !memcmp(payload, "reboot", 7)) {
-		for (unsigned i = 7; i < 32; i++)
-			if (payload[i])
-				return ack(h, -1, "invalid reboot request");
+	if (cmd == 3 && (named(n, "reboot") || named(n, ""))) {
 		if (file >= 0 || state == -2)
 			return ack(h, -1, "reboot blocked by update state");
 		int result = ack(h, 0, "rebooting");
@@ -251,6 +337,20 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 	}
 	if (state == -2)
 		return ack(h, -1, "restoration failed; retain backups and recover via console");
+	if ((cmd == 0x3a || cmd == 0x3b) && fpvos_board_network) {
+		if (file >= 0)
+			return ack(h, -1, "transfer active");
+		int result = ack(h, 0, cmd == 0x3b ? "successfully" : "OK");
+		if (!result)
+			fpvos_board_network(cmd == 0x3b, clean);
+		return result;
+	}
+	if (cmd == 3 && (named(n, "normal") || named(n, "bridge")))
+		return usb_mode(h, (const char *)payload);
+	if (cmd == 3 && named(n, "update")) {
+		memset(payload, 0, 32);
+		memcpy(payload, "clean", 5);
+	}
 	if (cmd == 3 && n == 32 && !memcmp(payload, "stock", 6)) {
 		for (unsigned i = 6; i < 32; i++)
 			if (payload[i]) return ack(h, -1, "invalid stock request");
@@ -287,6 +387,10 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		snprintf(detail, sizeof(detail), "clean RAM mode");
 		return ack(h, 0, "OK");
 	}
+	/* The PC tool's radio frequency page (119-122) edits stock's radio config,
+	 * which fpvOS does not use. */
+	if (cmd >= 0x77 && cmd <= 0x7a)
+		return ack(h, -1, "frequency settings: use the goggle menu on fpvOS");
 	if (!clean)
 		return ack(h, -1, "enter clean mode first");
 	if (cmd == 0x72 && !n) {
@@ -297,12 +401,26 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		snprintf(detail, sizeof(detail), "ready to receive");
 		return ack(h, 0, "OK");
 	}
+	for (unsigned i = 0; cmd == 0x73 && n == 328 && i < 32; i++)
+		if (payload[i] >= 'A' && payload[i] <= 'F')
+			payload[i] += 'a' - 'A';
+	/* FILE_START resent before any data: the same transfer, acknowledged again. */
+	if (cmd == 0x73 && n == 328 && file >= 0 && !received &&
+	    fpvos_get_le32(payload + 64) == total && !memcmp(payload, expected_md5, 32))
+		return ack(h, 0, "OK");
 	if (cmd == 0x73 && n == 328 && prepared && file < 0) {
 		uint32_t size = fpvos_get_le32(payload + 64);
-		install_requested = destination_matches(payload + 72, "/tmp/pc/fpvos.fwu",
-                                                    fpvos_board.legacy_install_destination);
-        int verify_only = destination_matches(payload + 72, "/tmp/pc/fpvos.verify",
-                                               fpvos_board.legacy_verify_destination);
+		int verify_only;
+		self_reboot = 0;
+		if (fpvos_board_destination) {
+			int accepted = fpvos_board_destination(payload + 72, &install_requested, &self_reboot);
+			verify_only = accepted && !install_requested;
+		} else {
+			install_requested = destination_matches(payload + 72, "/tmp/pc/fpvos.fwu",
+							       fpvos_board.legacy_install_destination);
+			verify_only = destination_matches(payload + 72, "/tmp/pc/fpvos.verify",
+							  fpvos_board.legacy_verify_destination);
+		}
 		uint32_t limit = 0;
 		for (unsigned kind = 0; kind < 2; kind++)
 			if (fpvos_board.counts[kind] && fpvos_board.bundle_limits[kind] > limit)
@@ -332,6 +450,12 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		if (have_last && seq == last_seq) {
 			if (crc != last_crc || n != last_len)
 				return ack(h, -1, "changed retransmission");
+			return ack(h, 0, "OK");
+		}
+		/* The vendor's PC tool resends an unanswered chunk under a new seq,
+		 * its retry count raised: the chunk already written. */
+		if (have_last && fpvos_get_le32(h + 28) && crc == last_crc && n == last_len) {
+			last_seq = seq;
 			return ack(h, 0, "OK");
 		}
 		if (have_last && (int32_t)(seq - last_seq) <= 0)
@@ -392,7 +516,8 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 			state = 2;
 			snprintf(detail, sizeof(detail), "verified only; not installed");
 		}
-		return ack(h, 0, "transfer verified; query status");
+		end_done = 1;
+		return ack(h, 0, "OK");
 	}
 	return ack(h, -1, "invalid command or state");
 }
@@ -441,7 +566,12 @@ int main(int argc, char **argv)
 	restore_status();
 	if (state >= 0)
 		reset_transfer();
-	if (state >= 0 && access(CLEAN_BOOT_MARKER, F_OK) == 0) {
+	if (state >= 0 && bridge_mode())
+		snprintf(detail, sizeof(detail), "bridge mode");
+	if (state >= 0 && fpvos_receiver_clean_at_start) {
+		clean = 1;
+		snprintf(detail, sizeof(detail), "clean RAM mode");
+	} else if (state >= 0 && access(CLEAN_BOOT_MARKER, F_OK) == 0) {
 		int clean_result = run_helper("clean");
 		if (clean_result) {
 			/* Keep info/status and a later clean retry available. Uploads

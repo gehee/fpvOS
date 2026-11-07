@@ -1,0 +1,9 @@
+config BR2_PACKAGE_ASCENT_LITE_FFS
+	bool "ascent-lite-ffs"
+	depends on BR2_LINUX_KERNEL
+	help
+	  FunctionFS (usb_f_fs.ko) for the Ascent Lite and Lite+, whose
+	  stock kernel has the USB gadget's configfs but not FunctionFS:
+	  the kernel's own f_fs.c, built as a module against the image's
+	  kernel tree (the stock kernel's version and vermagic). fpvOS_usb's
+	  bridge mode loads it.

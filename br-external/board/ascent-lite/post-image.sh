@@ -28,6 +28,31 @@ n=$(grep -n '^cd /usrdata/fpv/boot_ar8030' "$run" | head -n 1 | cut -d: -f1)
 { head -n $((n - 1)) "$run"; cat "$BOARD/fpv_run-hook.sh"; tail -n +"$n" "$run"; } > "$WORK/run.new"
 cat "$WORK/run.new" > "$run"
 
+# The unit's name on USB, in place of stock's "Vendor SerialGadget" and
+# "Vendor Ethernet": "Caddx Ascent Lite+" (or Lite) in normal mode, with
+# "(update)" in the clean system (which runs a copy from /tmp) and "(network)"
+# for RNDIS. The IDs and serial number stay stock's: the PC tool and the
+# flasher go by them, never by the name. fpvOS_usb names bridge mode the same
+# way (PRODUCT in its board settings).
+name='case $1 in 472) PRODUCT="Caddx Ascent Lite+" ;; 482) PRODUCT="Caddx Ascent Lite" ;; *) PRODUCT="Caddx Ascent" ;; esac'
+rename() { # script, sed program
+	grep -q 'MANUFACTURER="Vendor"' "$1" && grep -q "$2" "$1" ||
+		{ echo "$1: no stock USB name to replace" >&2; exit 1; }
+	sed -i 's/MANUFACTURER="Vendor"/MANUFACTURER="Caddx"/' "$1"
+}
+f=$WORK/fpv/fpv/config_serial.sh
+rename "$f" '^export PRODUCT="SerialGadget"$'
+sed -i "s|^export PRODUCT=\"SerialGadget\"\$|set -- \"\$board_type\"; $name\ncase \$0 in /tmp/*) PRODUCT=\"\$PRODUCT (update)\" ;; esac\nexport PRODUCT|" "$f"
+f=$WORK/fpv/fpv/config_ether.sh
+rename "$f" '^PRODUCT="Ethernet"$'
+sed -i "s|^PRODUCT=\"Ethernet\"\$|set -- \"\$(cat /usrdata/fpv/fpv_board_type /tmp/fpv_board_type 2>/dev/null \| head -n 1)\" \"\$@\"; $name\nshift\nPRODUCT=\"\$PRODUCT (network)\"|" "$f"
+
+# fpvOS's updater (fpvos-update) takes the stock one's path: the stock rootfs
+# starts whatever is there, in the normal and the clean system. Stock's stays
+# beside it for a hand recovery.
+if [ -f "$TARGET_DIR/usrdata/fpv/ar_fpvhs_upgrade" ]; then
+	mv "$WORK/fpv/fpv/ar_fpvhs_upgrade" "$WORK/fpv/fpv/ar_fpvhs_upgrade.stock"
+fi
 cp -a "$TARGET_DIR/usrdata/." "$WORK/fpv/"
 # The USB network: our address and a DHCP server, in place of stock's usb_ip.sh.
 install -m 0755 "$BOARD/usb_ip.sh" "$WORK/fpv/fpv/usb_ip.sh"

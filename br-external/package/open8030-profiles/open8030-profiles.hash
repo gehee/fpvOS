@@ -1,4 +1,0 @@
-# Locally computed: the archive as uploaded to the gist (each file in it is
-# checked against its SHA256SUMS)
-sha256  4c7bbab5a9945f6480083381b2a424750a6d892d928577d25d4b6c474081fe1d  open8030-profiles-20261022.tar.gz
-sha256  b4cd0a9320c482340bd98fe696adf465ac9c313f960551c0c30a9d7b474f5295  README

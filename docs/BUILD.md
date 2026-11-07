@@ -141,15 +141,13 @@ know, rather than patch it blind.
 Both images can carry [Open8030](https://github.com/gehee/Open8030), an
 open-source firmware for the AR8030 radio chip, next to stock's. It is built
 from source (Zephyr, with the Zephyr SDK's RISC-V compiler; Buildroot downloads
-both) with board profiles reverse engineered from the stock radio firmware,
-which the `open8030-profiles` package downloads (one archive, checked by its
-hash and each file by the archive's SHA256SUMS). To build with a local copy
-instead - new or changed profiles, from an Open8030 checkout's `.local/`:
-
-```sh
-scripts/open8030-private.sh ../Open8030   # -> vendor/open8030 (git-ignored)
-make OPEN8030_PRIVATE_DIR=$PWD/vendor/open8030 ...
-```
+both) with the board profiles in its own `profiles/`, reverse engineered from
+the stock radio firmware. The goggle's radio config is made at build time from
+the stock VRX Pro one (`vendor/rootfs/lib/firmware/bb_config_gnd_pro.json`,
+from the firmware extractor) with fpvOS's link tuning: automatic width on and
+its MCS table (`package/open8030/gnd-config.py`). To build with new or changed
+profiles, build Open8030 from a local checkout (`OPEN8030_OVERRIDE_SRCDIR` in
+`output/<board>/local.mk`).
 
 Board defconfigs select `BR2_PACKAGE_OPEN8030_PROFILE`, a transport choice,
 the optional `BR2_PACKAGE_OPEN8030_ROLE_AP` air role and factory-data policy.
@@ -161,13 +159,13 @@ The firmware recipe does not infer these from a host application or board name.
 | Ascent Lite/Lite+ | `ascent-lite-plus.c` | SDIO | Air/AP; factory data optional |
 | Ascent VRX | private `vendor/open8030/ascent-vrx.c` | SDIO | Ground/station |
 
-Bare profile filenames resolve in the published archive; absolute paths select
+Bare profile filenames resolve in Open8030's `profiles/`; absolute paths select
 private inputs. `OPEN8030_PRIVATE_DIR` overrides the profile directory using its
-basename, and the ground configuration's directory too (`open8030-private.sh`
-copies both). Ground configuration is selected with
-`BR2_PACKAGE_OPEN8030_CONFIG`: a published filename or absolute path; set
-`OPEN8030_CONFIG_DIR` to take it from another directory than
-`OPEN8030_PRIVATE_DIR`. SDIO keeps the pinned firmware's active-bus
+basename, and the ground configuration's directory too. Ground configuration is
+selected with `BR2_PACKAGE_OPEN8030_CONFIG`: a bare filename is the one made
+from the stock config (`OPEN8030_STOCK_GND_CONFIG` names another stock file),
+an absolute path is used as it is; set `OPEN8030_CONFIG_DIR` to take it from
+another directory than `OPEN8030_PRIVATE_DIR`. SDIO keeps the pinned firmware's active-bus
 detection; USB adds `AR_FORCE_USB`. The source pin and existing role flags stay
 the same for all three boards.
 

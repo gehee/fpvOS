@@ -42,8 +42,8 @@ retransmits. It ran Artosyn's firmware until beta3; fpvOS now loads
 [Open8030](https://github.com/gehee/Open8030), an open firmware for it, on the
 goggle and on the fpvOS air unit, with the stock firmware one menu row away
 (**RADIO › VRX Radio Firmware**). Its board profiles - the register defaults,
-pins and keys, reverse engineered from Caddx's firmware - are published as
-the `open8030-profiles` package's archive. The host driver and library that
+pins and keys, reverse engineered from Caddx's firmware - are in Open8030
+itself. The host driver and library that
 talk to the radio, and everything on either side of it, are open.
 
 ## Repository layout

@@ -10,10 +10,10 @@ test the boundary between single and multiple blocks.
 Upstream: not submitted
 
 diff --git a/src/rf_device.c b/src/rf_device.c
-index b4baa72..9a1473a 100644
+index 03c5ab8..7c13044 100644
 --- a/src/rf_device.c
 +++ b/src/rf_device.c
-@@ -1243,7 +1243,11 @@ int ar_rf_setup_pins(const uint8_t *records, size_t length)
+@@ -1772,7 +1772,11 @@ int ar_rf_setup_pins(const uint8_t *records, size_t length)
  	update(CLOCK + 0x200, 0, 1u << 25); /* Measured GPIO clock ID 21. */
  	/* Stock 0x24be84(bank, 0) after muxing banks 2 and 3: GPIO+0 bits 1
  	 * and 2 (their I/O domain select). */
@@ -88,7 +88,7 @@ index 68f36b8..ebe1026 100644
  	tx_count++;
  	if (tx_count > stats.tx_queue_high_water) { stats.tx_queue_high_water = tx_count; }
 diff --git a/tests/native.py b/tests/native.py
-index e1d36a8..1b47723 100644
+index 72258a5..c223aea 100644
 --- a/tests/native.py
 +++ b/tests/native.py
 @@ -38,6 +38,7 @@ TESTS = {
@@ -99,12 +99,12 @@ index e1d36a8..1b47723 100644
      'usb_device': ('usb_device transport_storage', ['AR_USB_SIMULATED'], []),
      'mac': ('mac', [], []),
      'dev': ('dev mac', [], []),
-@@ -78,6 +79,7 @@ TESTS = {
+@@ -79,6 +80,7 @@ TESTS = {
      'sfdp': ('sfdp', [], []),
      'factory_storage': ('flash flash_spi sfdp factory power_config power json', [], ['-lz']),
      'boot': ('boot config json power_config power dev_mcs factory flash_spi sfdp flash', [], []),
-+    'rf_io_domains': ('rf_device ap ap_hop dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED', 'AR_EXPLICIT_IO_DOMAINS'], []),
-     'rf_device': ('rf_device ap ap_hop dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED'], []),
++    'rf_io_domains': ('rf_device ap ap_hop pwr_auto dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED', 'AR_EXPLICIT_IO_DOMAINS'], []),
+     'rf_device': ('rf_device ap ap_hop pwr_auto dev_width frame_stamp mac dev binding dev_tx dev_mcs tx_mcs interleaver tx_irq fch_monitor channel_monitor power power_control ap_time command scan scan_scores tune phy_control phy_receive socket_rx', ['AR_RF_SIMULATED'], []),
      'bootstrap': ('', ['AR_BOOTSTRAP_SIMULATED'], []),
  }
 diff --git a/tests/p1_sdio_test.c b/tests/p1_sdio_test.c
@@ -158,10 +158,10 @@ index 0000000..3d886fb
 + puts("P1 SDIO framing and bounds passed");
 +}
 diff --git a/tests/rf_device_test.c b/tests/rf_device_test.c
-index 9523a57..74140a4 100644
+index b2a5e4b..bfa627b 100644
 --- a/tests/rf_device_test.c
 +++ b/tests/rf_device_test.c
-@@ -132,7 +132,7 @@ void ar_rf_test_write(uint32_t address, uint32_t value)
+@@ -134,7 +134,7 @@ void ar_rf_test_write(uint32_t address, uint32_t value)
  	assert((address >= 0x0a110000 && address < 0x0a111000) ||
  	       (address >= 0x0a104000 && address < 0x0a104204) ||
  	       address == 0x0a1060c8 ||
@@ -170,7 +170,7 @@ index 9523a57..74140a4 100644
  	       (address >= 0x00140000 && address < 0x00140300) ||
  	       address == 0xe0800008 || (address >= 0xe0801120 && address < 0xe0801180));
  	*reg(address) = value; writes++;
-@@ -541,7 +541,15 @@ int main(void)
+@@ -658,7 +658,15 @@ int main(void)
  
  	uint8_t pins[40] = {0};
  	for (unsigned i = 0; i < 10; i++) { pins[i * 4] = i / 5; pins[i * 4 + 1] = i % 5; pins[i * 4 + 2] = 3; }
