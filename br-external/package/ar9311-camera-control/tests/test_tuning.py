@@ -52,6 +52,32 @@ int main(void) {
                         str(cls.root / 'decision.c'), str(SOURCE / 'ml-aed-core.c'),
                         '-lm', '-o', str(cls.root / 'decision')], check=True)
 
+        # fpvOS 0003: the exposure cap keeps exposure x gain until the gain runs out.
+        (cls.root / 'cap.c').write_text('''#define main ml_aed_main
+#include "ml-aed.c"
+#undef main
+int main(void) {
+    uint32_t g = 512;
+    if (ae_cap_exposure(0, 675, &g) != 675 || g != 512) return 1;
+    if (ae_cap_exposure(270, 200, &g) != 200 || g != 512) return 2;
+    if (ae_cap_exposure(270, 675, &g) != 270 || g != 1280) return 3;
+    g = ae_gain_q8_max();
+    if (ae_cap_exposure(1, 1114, &g) != 1 || g != ae_gain_q8_max()) return 4;
+    FILE *f = fopen("cap.txt", "w");
+    fputs("2500\\n", f); fclose(f);
+    if (read_cap_file("cap.txt", 4000) != 2500) return 5;
+    if (read_cap_file("missing.txt", 4000) != 4000) return 6;
+    f = fopen("cap.txt", "w");
+    fputs("4 ms\\n", f); fclose(f);
+    if (read_cap_file("cap.txt", 4000) != 4000) return 7;
+    return 0;
+}
+''')
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-I', str(SOURCE),
+                        str(cls.root / 'cap.c'), str(SOURCE / 'ml-aed-core.c'),
+                        str(SOURCE / 'ml-aed-tuning.c'), '-lm', '-o', str(cls.root / 'cap')],
+                       check=True)
+
     @classmethod
     def tearDownClass(cls):
         cls.tmp.cleanup()
@@ -77,6 +103,9 @@ int main(void) {
         else:
             self.assertEqual(r.returncode, 0, r.stderr)
             self.assertEqual(int(r.stdout), expected)
+
+    def test_exposure_cap(self):
+        subprocess.run([str(self.root / 'cap')], check=True, cwd=self.root)
 
     def test_zero_luma_recovers(self):
         subprocess.run([str(self.root / 'decision')], check=True)

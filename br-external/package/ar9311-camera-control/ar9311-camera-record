@@ -93,7 +93,8 @@ until [ "$(cat /sys/kernel/debug/ar-cvisp/completions 2>/dev/null || echo 0)" -g
     sleep 0.02
 done
 echo "$((WB_RED * 65536 + WB_BLUE))" > /sys/kernel/debug/ar-isp/white_balance
-ar9311-aed --sensor-device "$sensor" --tuning "$TUNING" --stats 300 >&2 &
+ar9311-aed --sensor-device "$sensor" --tuning "$TUNING" --stats 300 \
+    ${MAX_EXPOSURE_US:+--max-exposure-us "$MAX_EXPOSURE_US"} >&2 &
 ae_pid=$!
 if [ "${WB_MODE:-fixed}" = auto ]; then
     ar9311-awbd "$WB_STATS_ORDER" "$WB_RED" "$WB_BLUE" >&2 &
