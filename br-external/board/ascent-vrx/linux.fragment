@@ -11,3 +11,12 @@ CONFIG_DRM_DISPLAY_CONNECTOR=y
 CONFIG_CMA=y
 CONFIG_DMA_CMA=y
 CONFIG_CMA_SIZE_MBYTES=32
+# Front-panel external ADC and userspace-owned beeper. LINK uses the
+# existing GPIO character interface (bank A offset 2, active-low).
+CONFIG_I2C_CHARDEV=y
+CONFIG_PWM=y
+CONFIG_PWM_ARTOSYN=y
+# Read-only compressed application/assets, shipped inside the initramfs.
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y

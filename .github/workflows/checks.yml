@@ -46,6 +46,7 @@ jobs:
           for f in $(git ls-files 'br-external/board/ascent-vrx/*' \
                      'br-external/board/common/ar9311/*' \
                      'br-external/package/ar9311-radio/src/*' \
+                     'br-external/package/kestrel-native/*' \
                      'br-external/package/fpvos-recovery/src/*' \
                      'br-external/package/fpvos-update/*'); do
             if head -1 "$f" | grep -q '^#!/bin/sh'; then
@@ -79,6 +80,7 @@ jobs:
         run: |
           sh -n br-external/package/ar9311-camera-control/ar9311-camera-record
           python3 br-external/package/ar9311-camera-control/tests/test_awb.py -v
+          python3 br-external/package/ar9311-camera-control/tests/test_control.py -v
           cc -Wall -Wextra -Werror br-external/package/ar9311-camera-control/awbd.c \
              br-external/package/ar9311-camera-control/awb.c -lm -o /tmp/ar9311-awbd
 

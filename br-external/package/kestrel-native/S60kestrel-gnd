@@ -1,0 +1,43 @@
+#!/bin/sh
+# Native receiver lifecycle; stop before unmounting storage.
+set -eu
+dir=/run/kestrel-gnd
+daemon=/usr/sbin/kestrel-gnd-supervise
+mkdir -p "$dir"
+chmod 700 "$dir"
+# Serialize service operations. Do not pass this lock to the daemon.
+exec 9>/run/kestrel-gnd-service.lock
+flock -x 9
+running() { start-stop-daemon -K -t -q -p "$dir/pid" -x "$daemon"; }
+start() {
+    running && return 0
+    if ! mountpoint -q /opt/kestrel; then
+        mkdir -p /opt/kestrel
+        mount -t squashfs -o loop,ro /usr/share/kestrel/runtime.squashfs /opt/kestrel
+    fi
+    [ -x /opt/kestrel/bin/kestrel-gnd ]
+    start-stop-daemon -S -b -q -x "$daemon" -- "$dir" /usr/bin/kestrel-gnd-run 9>&-
+    i=0
+    until running; do
+        i=$((i + 1))
+        [ "$i" -lt 20 ] || { echo 'Kestrel supervisor failed to start' >&2; return 1; }
+        sleep 0.1
+    done
+}
+stop() {
+    running || return 0
+    start-stop-daemon -K -q -p "$dir/pid" -x "$daemon"
+    i=0
+    while running; do
+        i=$((i + 1))
+        [ "$i" -lt 120 ] || { echo 'Kestrel shutdown timed out' >&2; return 1; }
+        sleep 0.1
+    done
+}
+case "${1:-}" in
+    start) start ;;
+    stop) stop ;;
+    restart) stop; start ;;
+    status) [ ! -r "$dir/status" ] || cat "$dir/status"; running ;;
+    *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
+esac

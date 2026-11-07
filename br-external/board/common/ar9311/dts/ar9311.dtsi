@@ -173,6 +173,24 @@
 			status = "disabled";
 		};
 
+		i2c3: i2c@1206000 {
+			compatible = "snps,designware-i2c";
+			reg = <0 0x01206000 0 0x2000>;
+			interrupts = <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		pwm0: pwm@1000000 {
+			compatible = "artosyn,ar9301-pwm";
+			reg = <0 0x01000000 0 0x2000>;
+			clocks = <&clk150m>;
+			#pwm-cells = <2>;
+			status = "disabled";
+		};
+
 		qspi_clock: clock-controller@a104034 {
 			compatible = "artosyn,ar9311-qspi-clock";
 			reg = <0 0x0a104034 0 2>;
