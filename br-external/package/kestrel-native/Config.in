@@ -1,0 +1,11 @@
+config BR2_PACKAGE_KESTREL_NATIVE
+	bool "Kestrel native Ascent boot runtime"
+	depends on BR2_FPVOS_BOARD_ASCENT_VRX
+	help
+	  Install a static, read-only Kestrel runtime and boot
+	  supervisor.
+	  First create the SquashFS image with kestrel-gnd's
+	  tools/package_ascent.py, then supply its absolute path as
+	  KESTREL_NATIVE_IMAGE when invoking make. The firmware
+	  package includes the runtime; no host or SD application
+	  install is needed.

@@ -1,0 +1,17 @@
+#!/bin/sh
+# All application bits are firmware-owned. Only data lives on removable storage.
+set -eu
+umask 077
+state=/var/lib/kestrel
+recordings=/run/kestrel-gnd/no-sd/recordings
+if [ -f "$state/persistent" ]; then
+    if mkdir -p /mnt/sd/fpvos/recordings; then
+        recordings=/mnt/sd/fpvos/recordings
+    else
+        echo 'Kestrel: recording directory unavailable; continuing without recording' >&2
+    fi
+fi
+exec /opt/kestrel/bin/kestrel-gnd --assets /opt/kestrel/ui \
+    --control /run/kestrel-gnd/control --preferences "$state/ui.conf" \
+    --settings "$state/receiver.conf" --pairing "$state/peer" \
+    --recordings "$recordings"
