@@ -19,7 +19,7 @@ KESTREL_AIR_BACKEND = ar9311
 
 define KESTREL_AIR_BUILD_SUPERVISOR
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror $(TARGET_LDFLAGS) \
-		$(KESTREL_AIR_PKGDIR)/supervise.c -o $(@D)/kestrel-air-supervise
+		$(KESTREL_AIR_PKGDIR)/../kestrel-common/supervise.c -o $(@D)/kestrel-air-supervise
 endef
 KESTREL_AIR_POST_BUILD_HOOKS += KESTREL_AIR_BUILD_SUPERVISOR
 else

@@ -50,7 +50,7 @@ class Supervision(unittest.TestCase):
         cls.binary = Path(cls.build.name)/'supervise'
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2',
                         '-DRETRY_MS=80', '-DMAX_RETRY_MS=200', '-DSTABLE_MS=1000', '-DSTOP_MS=200',
-                        '-DLOG_BYTES=4096', str(PACKAGE/'supervise.c'), '-o', str(cls.binary)], check=True)
+                        '-DLOG_BYTES=4096', str(PACKAGE.parent/'kestrel-common/supervise.c'), '-o', str(cls.binary)], check=True)
 
     @classmethod
     def tearDownClass(cls):

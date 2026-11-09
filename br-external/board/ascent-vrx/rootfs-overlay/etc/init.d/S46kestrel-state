@@ -1,0 +1,23 @@
+#!/bin/sh
+# SD is optional: no formatting, no writes to the preserved vendor partitions.
+set -eu
+[ "${1:-}" = start ] || exit 0
+umask 077
+state=/run/kestrel-state
+mkdir -p "$state" /var/lib
+if mountpoint -q /mnt/sd && [ ! -L /mnt/sd/fpvos/kestrel ]; then
+    if mkdir -p /mnt/sd/fpvos/kestrel && touch /mnt/sd/fpvos/kestrel/persistent; then
+        state=/mnt/sd/fpvos/kestrel
+    fi
+fi
+ln -sfn "$state" /var/lib/kestrel
+if [ "$state" = /run/kestrel-state ]; then
+    echo 'Kestrel: no writable SD; settings are temporary, recording unavailable'
+else
+    mkdir -p "$state/ssh"
+    # Preserve SSH identity across normal boots, without embedding device keys.
+    if [ -L /etc/dropbear ]; then
+        ln -sfn "$state/ssh" /etc/dropbear
+    fi
+    echo 'Kestrel: persistent SD settings available'
+fi
