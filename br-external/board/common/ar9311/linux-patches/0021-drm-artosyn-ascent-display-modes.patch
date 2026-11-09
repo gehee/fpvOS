@@ -1,0 +1,525 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] drm: artosyn: add native 720p60 output and I420 downscaling
+
+Add CEA-4 alongside CEA-16 for boards selecting ascent-60hz. Keep the
+validated lane clock and use a longer internal raster for 720p. Select
+the corresponding LT9611 PCR multiplier and AVI packet. Legacy board
+profiles remain 1080p-only.
+
+Allow native-size UI and primary buffers at either resolution, plus the
+fixed 1920x1080 I420 to 1280x720 hardware downscale. Reject other scaling
+and cropping. Program filter RAM before scanout starts, and scaler
+geometry only when format/scaling changes: rewriting those registers on
+every frame flip produces vertical artifacts during live 720p video.
+Require a modeset when changing the 720p primary source geometry or
+format, so scaler setup happens while the full output pipeline is stopped.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/artosyn_vo.c
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -1,9 +1,9 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * Artosyn AR9311 VO: RGB/YUV primary and ARGB UI overlay, fixed 1920x1080 at nominal 60 Hz.
++ * Artosyn AR9311 VO: RGB/YUV primary and ARGB UI overlay, 720p/1080p at nominal 60 Hz.
+  * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
+  * Register sequencing originates in that project's Artosyn display work;
+- * The explicit ascent-1080p60 profile retains the validated clock/timing setup.
++ * The ascent-60hz profile adds 720p; ascent-1080p60 retains its legacy restriction.
+  * The DC feeds the Artosyn DSI host and Lontium HDMI bridge.
+  */
+ 
+@@ -52,6 +52,7 @@
+ #define VO_MAIN_CTRL	0x1518
+ #define  VO_MAIN_LOCK		BIT(3)
+ #define  VO_MAIN_START		BIT(4)
++#define  VO_MAIN_SCALER		BIT(22)
+ #define VO_SCALE_CONFIG	0x1520
+ #define VO_PLANE2_BASE	0x1530
+ #define VO_PLANE3_BASE	0x1538
+@@ -62,6 +63,10 @@
+ #define VO_WIN_Y	0x1830
+ #define VO_LAYER_ALPHA	0x1a18
+ #define VO_SCALER_RATIO	0x1a20
++#define VO_H_FILTER_INDEX	0x1838
++#define VO_H_FILTER_DATA	0x1a00
++#define VO_V_FILTER_INDEX	0x1a08
++#define VO_V_FILTER_DATA	0x1a10
+ #define VO_QOS		0xff00
+ #define VO_DPI_CTRL	0x1f40
+ 
+@@ -91,6 +96,7 @@
+ 	void __iomem			*crg;
+ 	void __iomem			*pixreg;
+ 	u32				cur_cfg;
++	bool				mode_720_allowed;
+ };
+ 
+ #define to_ar_vo(d) container_of(d, struct ar_vo, drm)
+@@ -110,6 +116,25 @@
+ 	(-16 * 1192 + 128 * (218 + 546)) & 0x7fffff,
+ 	1192, 2163, 0, (-16 * 1192 - 128 * 2163) & 0x7fffff,
+ 	1, 0x00ff0000, 0x00ff0000, 0x00ff0000,
++};
++
++/* Fixed three-tap, 3:2 filter: 17 phases of nine signed Q14 slots.
++ * Unused taps and the rest of filter RAM are zero. Both axes use this ratio.
++ */
++static const u32 ar_vo_filter_3_2[128] = {
++	0x00000000, 0x20000000, 0x00002000, 0x00000000, 0x00000000, 0x00000000,
++	0x21921e69, 0x00000005, 0x00000000, 0x00000000, 0x1ccd0000, 0x0016231d,
++	0x00000000, 0x00000000, 0x00000000, 0x249c1b30, 0x00000034, 0x00000000,
++	0x00000000, 0x19900000, 0x0061260f, 0x00000000, 0x00000000, 0x00000000,
++	0x277117f2, 0x0000009d, 0x00000000, 0x00000000, 0x16560000, 0x00e928c1,
++	0x00000000, 0x00000000, 0x00000000, 0x29fc14bc, 0x00000148, 0x00000000,
++	0x00000000, 0x13290000, 0x01b92b1e, 0x00000000, 0x00000000, 0x00000000,
++	0x2c25119d, 0x0000023e, 0x00000000, 0x00000000, 0x101b0000, 0x02d72d0e,
++	0x00000000, 0x00000000, 0x00000000, 0x2dd80ea3, 0x00000385, 0x00000000,
++	0x00000000, 0x0d380000, 0x04482e80, 0x00000000, 0x00000000, 0x00000000,
++	0x2f050bda, 0x00000521, 0x00000000, 0x00000000, 0x0a8e0000, 0x060e2f64,
++	0x00000000, 0x00000000, 0x00000000, 0x2f9e0951, 0x00000711, 0x00000000,
++	0x00000000, 0x08270000, 0x08272fb2, 0x00000000, 0x00000000, 0x00000000,
+ };
+ 
+ static void ar_vo_set_ui(struct ar_vo *vo)
+@@ -129,8 +154,8 @@
+ 	writel(0, vo->regs + 0x18c0);
+ 	writel(0, vo->regs + 0x1900);
+ 	writel(0, vo->regs + VO_OVL_TL);
+-	writel(1920 | (1080 << 15), vo->regs + VO_OVL_BR);
+-	writel(1920 | (1080 << 15), vo->regs + VO_OVL_SIZE);
++	writel(s->crtc_w | (s->crtc_h << 15), vo->regs + VO_OVL_BR);
++	writel(s->crtc_w | (s->crtc_h << 15), vo->regs + VO_OVL_SIZE);
+ 	writel(0, vo->regs + 0x16c0);
+ 	writel(0, vo->regs + 0x1700);
+ 	writel(0, vo->regs + 0x1740);
+@@ -154,6 +179,10 @@
+ 	u32 cfg = ((yuv ? 15 : 5) << 26) | BIT(0) |
+ 		  (vo->cur_cfg & VO_MAIN_START) | (yuv ? BIT(14) : 0);
+ 	unsigned int i;
++	bool scaled = state->src_w != state->crtc_w << 16;
++
++	if (scaled)
++		cfg |= VO_MAIN_SCALER;
+ 
+ 	writel(cfg | VO_MAIN_LOCK, vo->regs + VO_MAIN_CTRL);
+ 	if (yuv && !(vo->cur_cfg & BIT(14)))
+@@ -163,8 +192,20 @@
+ 	writel(yuv ? fb->pitches[1] : 0, vo->regs + 0x1508);
+ 	writel(yuv ? fb->pitches[2] : 0, vo->regs + 0x1510);
+ 	writel(yuv ? 1 : 0, vo->regs + 0x1528);
+-	/* Stock YUV scaler configuration, with unity ratios. RGB bypasses it. */
+-	writel(yuv ? 0x33 : 0, vo->regs + VO_SCALE_CONFIG);
++	/* Rewriting scaler geometry during frame flips causes vertical artifacts.
++	 * Supported geometry changes also change format or the scaler-enable bit.
++	 */
++	if ((cfg ^ vo->cur_cfg) & (GENMASK(30, 26) | VO_MAIN_SCALER)) {
++		/* Three taps per axis; RGB and native-size YUV bypass filtering. */
++		writel(yuv ? 0x33 : 0, vo->regs + VO_SCALE_CONFIG);
++		writel((state->src_w >> 16) | ((state->src_h >> 16) << 15),
++		       vo->regs + VO_FB_SIZE);
++		writel(scaled ? (((state->src_w >> 16) - 1) << 16) / (state->crtc_w - 1) : 0,
++		       vo->regs + VO_WIN_X);
++		writel(scaled ? (((state->src_h >> 16) - 1) << 16) / (state->crtc_h - 1) : 0,
++		       vo->regs + VO_WIN_Y);
++	}
++
+ 	writel(y, vo->regs + VO_FB_BASE0);
+ 	writel(u, vo->regs + VO_PLANE2_BASE);
+ 	writel(v, vo->regs + VO_PLANE3_BASE);
+@@ -184,6 +225,7 @@
+ 	struct ar_vo *vo = to_ar_vo(pipe->crtc.dev);
+ 	const struct drm_display_mode *mode = &crtc_state->adjusted_mode;
+ 	u32 g;
++	unsigned int i;
+ 
+ 	/* MIPI_TX_PLL / 2 / 3 feeds the internal DC raster. */
+ 	writel((readl(vo->pixreg) & ~GENMASK(10, 0)) | BIT(12) | 0x702,
+@@ -207,11 +249,14 @@
+ 	writel(0, vo->regs + VO_MAIN_CTRL);
+ 	writel(readl(vo->regs + VO_GLOBAL) & ~VO_GLOBAL_AXI_EN, vo->regs + VO_GLOBAL);
+ 
+-	/* Internal raster is 2293 x 1125 at ~154.8 MHz. The DSI/PCR
+-	 * path converts this to the fixed HDMI mode; measured vblank ~60.009 Hz.
++	/* Keep the validated ~154.8 MHz internal pixel clock. At 720p,
++	 * 3440 x 750 internal pixels preserve ~60 Hz with longer blanking.
++	 * The DSI/PCR bridge emits standard CEA-4/16 HDMI timing.
+ 	 */
+-	writel(0x08f50780, vo->regs + VO_H_ACT_FP);
+-	writel(0x441807f5, vo->regs + VO_H_SA_BP);
++	writel(mode->hdisplay == 1280 ? (3440 << 16) | 1280 : 0x08f50780,
++	       vo->regs + VO_H_ACT_FP);
++	writel(mode->hdisplay == 1280 ? VO_SYNC_VALID | (3147 << 15) | 3094 : 0x441807f5,
++	       vo->regs + VO_H_SA_BP);
+ 	writel((mode->vtotal << 16) | mode->vdisplay, vo->regs + VO_V_ACT_FP);
+ 	writel(VO_SYNC_VALID | (mode->vsync_end << 15) | mode->vsync_start, vo->regs + VO_V_SA_BP);
+ 
+@@ -227,6 +272,16 @@
+ 	writel(VO_1080P60_PANEL_CTRL, vo->regs + VO_PANEL_CTRL);
+ 	writel(VO_1080P60_DPI_CTRL, vo->regs + VO_DPI_CTRL);
+ 	writel(0xff, vo->regs + VO_QOS);
++
++	/* Filter RAM is not shadowed: initialize only with scanout stopped. */
++	if (mode->hdisplay == 1280) {
++		writel(0, vo->regs + VO_H_FILTER_INDEX);
++		for (i = 0; i < ARRAY_SIZE(ar_vo_filter_3_2); ++i)
++			writel(ar_vo_filter_3_2[i], vo->regs + VO_H_FILTER_DATA);
++		writel(0, vo->regs + VO_V_FILTER_INDEX);
++		for (i = 0; i < ARRAY_SIZE(ar_vo_filter_3_2); ++i)
++			writel(ar_vo_filter_3_2[i], vo->regs + VO_V_FILTER_DATA);
++	}
+ 
+ 	vo->cur_cfg = (5 << 26) | BIT(0); /* opaque XRGB8888, not yet started */
+ 	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
+@@ -301,11 +356,17 @@
+ static enum drm_mode_status ar_vo_mode_valid(struct drm_simple_display_pipe *pipe,
+ 					  const struct drm_display_mode *m)
+ {
+-	if (m->clock != 148500 || m->hdisplay != 1920 || m->vdisplay != 1080 ||
+-	    m->hsync_start != 2008 || m->hsync_end != 2052 || m->htotal != 2200 ||
+-	    m->vsync_start != 1084 || m->vsync_end != 1089 || m->vtotal != 1125 ||
+-	    (m->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN |
+-			 DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC)))
++	struct ar_vo *vo = to_ar_vo(pipe->crtc.dev);
++	bool timing = (m->clock == 148500 && m->hdisplay == 1920 && m->vdisplay == 1080 &&
++		m->hsync_start == 2008 && m->hsync_end == 2052 && m->htotal == 2200 &&
++		m->vsync_start == 1084 && m->vsync_end == 1089 && m->vtotal == 1125) ||
++		(vo->mode_720_allowed && m->clock == 74250 && m->hdisplay == 1280 &&
++		 m->vdisplay == 720 &&
++		m->hsync_start == 1390 && m->hsync_end == 1430 && m->htotal == 1650 &&
++		m->vsync_start == 725 && m->vsync_end == 730 && m->vtotal == 750);
++
++	if (!timing || (m->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN |
++		DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC)))
+ 		return MODE_BAD;
+ 	return MODE_OK;
+ }
+@@ -319,18 +380,40 @@
+ 
+ 	if (!fb)
+ 		return 0;
+-	if (state->src_x || state->src_y)
++	if (state->src_w != fb->width << 16 || state->src_h != fb->height << 16 ||
++	    state->src_x || state->src_y || state->crtc_x || state->crtc_y ||
++	    state->crtc_w != crtc_state->adjusted_mode.hdisplay ||
++	    state->crtc_h != crtc_state->adjusted_mode.vdisplay)
+ 		return -EINVAL;
+ 	if (fb->format->format == DRM_FORMAT_YUV420) {
+-		if (fb->pitches[0] != 1920 || fb->pitches[1] != 960 ||
+-		    fb->pitches[2] != 960 || (fb->offsets[0] & 63) ||
++		if (fb->pitches[0] != fb->width || fb->pitches[1] != fb->width / 2 ||
++		    fb->pitches[2] != fb->width / 2 || (fb->offsets[0] & 63) ||
+ 		    (fb->offsets[1] & 63) || (fb->offsets[2] & 63))
+ 			return -EINVAL;
+-	} else if (fb->pitches[0] != 8192 || fb->offsets[0]) {
++	} else if (fb->pitches[0] != ALIGN(fb->width, 512) * 4 || fb->offsets[0]) {
+ 		return -EINVAL;
+ 	}
++	if (state->src_w != state->crtc_w << 16 || state->src_h != state->crtc_h << 16) {
++		if (fb->format->format != DRM_FORMAT_YUV420 || state->src_w != 1920 << 16 ||
++		    state->src_h != 1080 << 16 || state->crtc_w != 1280 || state->crtc_h != 720)
++			return -EINVAL;
++	}
+ 	return 0;
+ }
++
++static int ar_vo_primary_check(struct drm_plane *plane, struct drm_atomic_state *state)
++{
++	struct drm_plane_state *s = drm_atomic_get_new_plane_state(state, plane);
++	struct ar_vo *vo = to_ar_vo(plane->dev);
++	struct drm_crtc_state *cs = drm_atomic_get_new_crtc_state(state, &vo->pipe.crtc);
++	int ret = drm_atomic_helper_check_plane_state(s, cs, DRM_PLANE_NO_SCALING,
++		2 * DRM_PLANE_NO_SCALING, false, false);
++
++	if (ret || !s->visible)
++		return ret;
++	return ar_vo_pipe_check(&vo->pipe, s, cs);
++}
++static struct drm_plane_helper_funcs ar_vo_primary_helpers;
+ 
+ static const struct drm_simple_display_pipe_funcs ar_vo_pipe_funcs = {
+ 	.mode_valid	= ar_vo_mode_valid,
+@@ -350,13 +433,13 @@
+ 
+ 	if (!s->crtc || !s->fb)
+ 		return 0;
+-	/* Fixed full-screen surface: no guessed scaler/crop register support. */
+-	if (s->src_x || s->src_y || s->src_w != (1920 << 16) ||
+-	    s->src_h != (1080 << 16) || s->crtc_x || s->crtc_y ||
+-	    s->crtc_w != 1920 || s->crtc_h != 1080 ||
+-	    s->fb->pitches[0] != 8192 || s->fb->offsets[0])
++	cs = drm_atomic_get_new_crtc_state(state, s->crtc);
++	if (s->fb->width != s->crtc_w || s->fb->height != s->crtc_h ||
++	    s->src_x || s->src_y || s->src_w != cs->adjusted_mode.hdisplay << 16 ||
++	    s->src_h != cs->adjusted_mode.vdisplay << 16 || s->crtc_x || s->crtc_y ||
++	    s->crtc_w != cs->adjusted_mode.hdisplay || s->crtc_h != cs->adjusted_mode.vdisplay ||
++	    s->fb->pitches[0] != ALIGN(s->crtc_w, 512) * 4 || s->fb->offsets[0])
+ 		return -EINVAL;
+-	cs = drm_atomic_get_new_crtc_state(state, s->crtc);
+ 	return drm_atomic_helper_check_plane_state(s, cs, DRM_PLANE_NO_SCALING,
+ 						 DRM_PLANE_NO_SCALING, false, true);
+ }
+@@ -423,9 +506,28 @@
+ 	.minor			= 0,
+ };
+ 
++static int ar_vo_atomic_check(struct drm_device *dev, struct drm_atomic_state *state)
++{
++	struct ar_vo *vo = to_ar_vo(dev);
++	struct drm_plane_state *new = drm_atomic_get_new_plane_state(state, &vo->pipe.plane);
++	struct drm_plane_state *old = drm_atomic_get_old_plane_state(state, &vo->pipe.plane);
++	struct drm_crtc_state *cs;
++
++	/* Scaler geometry is not safe to change with the timing generator active. */
++	if (old && new && old->fb && new->fb && new->crtc && new->crtc_w == 1280 &&
++	    (old->src_w != new->src_w || old->src_h != new->src_h ||
++	     old->fb->format->format != new->fb->format->format)) {
++		cs = drm_atomic_get_crtc_state(state, new->crtc);
++		if (IS_ERR(cs))
++			return PTR_ERR(cs);
++		cs->mode_changed = true;
++	}
++	return drm_atomic_helper_check(dev, state);
++}
++
+ static const struct drm_mode_config_funcs ar_vo_mode_config_funcs = {
+ 	.fb_create	= drm_gem_fb_create,
+-	.atomic_check	= drm_atomic_helper_check,
++	.atomic_check	= ar_vo_atomic_check,
+ 	.atomic_commit	= drm_atomic_helper_commit,
+ };
+ 
+@@ -441,13 +543,14 @@
+ 
+ 	/* Reject absent/unknown profiles before mapping or programming hardware. */
+ 	if (of_property_read_string(dev->of_node, "artosyn,display-profile", &profile) ||
+-	    strcmp(profile, "ascent-1080p60"))
++	    (strcmp(profile, "ascent-1080p60") && strcmp(profile, "ascent-60hz")))
+ 		return dev_err_probe(dev, -EINVAL, "unsupported display profile\n");
+ 
+ 	vo = devm_drm_dev_alloc(dev, &ar_vo_drm_driver, struct ar_vo, drm);
+ 	if (IS_ERR(vo))
+ 		return PTR_ERR(vo);
+ 
++	vo->mode_720_allowed = !strcmp(profile, "ascent-60hz");
+ 	platform_set_drvdata(pdev, vo);
+ 
+ 	vo->regs = devm_platform_ioremap_resource(pdev, 0);
+@@ -499,6 +602,10 @@
+ 	if (ret)
+ 		return ret;
+ 
++	ar_vo_primary_helpers = *vo->pipe.plane.helper_private;
++	ar_vo_primary_helpers.atomic_check = ar_vo_primary_check;
++	drm_plane_helper_add(&vo->pipe.plane, &ar_vo_primary_helpers);
++
+ 	ret = drm_plane_create_color_properties(&vo->pipe.plane,
+ 			BIT(DRM_COLOR_YCBCR_BT709), BIT(DRM_COLOR_YCBCR_LIMITED_RANGE),
+ 			DRM_COLOR_YCBCR_BT709, DRM_COLOR_YCBCR_LIMITED_RANGE);
+diff --git a/drivers/gpu/drm/artosyn/artosyn_dsi.c b/drivers/gpu/drm/artosyn/artosyn_dsi.c
+--- a/drivers/gpu/drm/artosyn/artosyn_dsi.c
++++ b/drivers/gpu/drm/artosyn/artosyn_dsi.c
+@@ -2,8 +2,8 @@
+ /*
+  * AR9311 glue for the Synopsys DSI host and Artosyn custom D-PHY.
+  * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
+- * The ascent-1080p60 profile uses the validated Ascent vendor register table.
+- * Only four lanes, RGB888 and 1920x1080p60 sync-event video are supported.
++ * Ascent profiles use the validated vendor lane clock and D-PHY register table.
++ * Four-lane RGB888 sync-event video supports CEA-16 and optionally CEA-4.
+  * D-PHY timing and PLL are fixed (~928.8 Mbps/lane); generic non-burst host
+  * horizontal timings need overriding to match the selected profile's internal raster.
+  */
+@@ -29,9 +29,11 @@
+ 	struct dw_mipi_dsi	*dmd;
+ 	struct dw_mipi_dsi_plat_data pdata;
+ 	unsigned int		lanes;
+-};
+-
+-static const struct { u16 off; u32 val; } ar_dphy_1080p60[] = {
++	bool mode_720;
++	bool mode_720_allowed;
++};
++
++static const struct { u16 off; u32 val; } ar_dphy_ascent[] = {
+ 	{ 0x2c4, 0x0410b016 }, { 0x2c8, 0x002468ac }, { 0x2cc, 0x0000000a },
+ 	{ 0x2d0, 0x00003675 }, { 0x2d4, 0x00000064 }, { 0x2d8, 0x21080c00 },
+ 	{ 0x2dc, 0x120d210a }, { 0x2e0, 0x000a0000 }, { 0x2e4, 0x00000012 },
+@@ -50,7 +52,7 @@
+ 	{ 0x3a0, 0x00000200 }, { 0x3a4, 0x00008000 },
+ };
+ 
+-static const struct { u16 off; u32 val; } ar_dsi_vid_1080p60[] = {
++static const struct { u16 off; u32 val; } ar_dsi_vid_ascent[] = {
+ 	{ 0x08, 0x812 },
+ 	{ 0x48, 44 },
+ 	{ 0x4c, 148 },
+@@ -78,13 +80,18 @@
+ 
+ 	writel(AR_DSI_MIPI_PLL_DIV, dsi->base + 0x2c0);
+ 
+-	for (i = 0; i < ARRAY_SIZE(ar_dphy_1080p60); i++)
+-		writel(ar_dphy_1080p60[i].val, dsi->base + ar_dphy_1080p60[i].off);
++	for (i = 0; i < ARRAY_SIZE(ar_dphy_ascent); i++)
++		writel(ar_dphy_ascent[i].val, dsi->base + ar_dphy_ascent[i].off);
+ 
+ 	/* Called after dw-mipi-dsi programs the standard host registers. */
+-	for (i = 0; i < ARRAY_SIZE(ar_dsi_vid_1080p60); i++)
+-		writel(ar_dsi_vid_1080p60[i].val, dsi->base + ar_dsi_vid_1080p60[i].off);
+-
++	for (i = 0; i < ARRAY_SIZE(ar_dsi_vid_ascent); i++)
++		writel(ar_dsi_vid_ascent[i].val, dsi->base + ar_dsi_vid_ascent[i].off);
++
++	if (dsi->mode_720) {
++		writel(40, dsi->base + 0x48);
++		writel(220, dsi->base + 0x4c);
++		writel(2580, dsi->base + 0x50);
++	}
+ 	writel(dsi->lanes - 1, dsi->base + DSI_PHY_IF_CFG);
+ 	writel(0xd, dsi->base + DSI_PHY_RSTZ);
+ 	writel(0xf, dsi->base + DSI_PHY_RSTZ);
+@@ -96,9 +103,15 @@
+ 				unsigned long mode_flags, u32 lanes, u32 format,
+ 				unsigned int *lane_mbps)
+ {
++	struct ar_dsi *dsi = priv;
++	bool mode_720 = dsi->mode_720_allowed && mode->clock == 74250 &&
++		mode->hdisplay == 1280 && mode->vdisplay == 720;
++
+ 	if (lanes != 4 || format != MIPI_DSI_FMT_RGB888 ||
+-	    mode->clock != 148500 || mode->hdisplay != 1920 || mode->vdisplay != 1080)
++	    (!mode_720 && (mode->clock != 148500 || mode->hdisplay != 1920 ||
++			   mode->vdisplay != 1080)))
+ 		return -EINVAL;
++	dsi->mode_720 = mode_720;
+ 	*lane_mbps = 929;
+ 	return 0;
+ }
+@@ -129,13 +142,14 @@
+ 
+ 	/* Reject absent/unknown profiles before mapping or programming hardware. */
+ 	if (of_property_read_string(dev->of_node, "artosyn,display-profile", &profile) ||
+-	    strcmp(profile, "ascent-1080p60"))
++	    (strcmp(profile, "ascent-1080p60") && strcmp(profile, "ascent-60hz")))
+ 		return dev_err_probe(dev, -EINVAL, "unsupported display profile\n");
+ 
+ 	dsi = devm_kzalloc(dev, sizeof(*dsi), GFP_KERNEL);
+ 	if (!dsi)
+ 		return -ENOMEM;
+ 
++	dsi->mode_720_allowed = !strcmp(profile, "ascent-60hz");
+ 	dsi->dev = dev;
+ 	dsi->lanes = 4;
+ 	platform_set_drvdata(pdev, dsi);
+diff --git a/drivers/gpu/drm/bridge/lontium-lt9611.c b/drivers/gpu/drm/bridge/lontium-lt9611.c
+--- a/drivers/gpu/drm/bridge/lontium-lt9611.c
++++ b/drivers/gpu/drm/bridge/lontium-lt9611.c
+@@ -47,7 +47,8 @@
+ 	struct mipi_dsi_device *dsi1;
+ 
+ 	bool ac_mode;
+-	bool fixed_1080p60;
++	bool ascent_fixed_mode;
++	bool ascent_60hz;
+ 
+ 	struct gpio_desc *reset_gpio;
+ 	struct gpio_desc *enable_gpio;
+@@ -657,23 +658,24 @@
+ }
+ 
+ /*
+- * Opt-in 1080p60 sequence: calibrate at fixed M, then release clock recovery.
++ * Opt-in Ascent sequence: calibrate at fixed M, then release clock recovery.
+  * Reset PCR once more AFTER enabling TMDS; doing this only before output-enable
+  * leaves the first cold modeset black. Never select the internal test pattern.
+- * This sequence supports only RGB CEA-16 at 148.5 MHz (no DVI/audio).
++ * Supports RGB CEA-16 and, with ascent-60hz-quirk, CEA-4 (no DVI/audio).
+  */
+-static int lt9611_fixed_1080p60_enable(struct lt9611 *lt)
++static int lt9611_ascent_enable(struct lt9611 *lt, const struct drm_display_mode *mode)
+ {
+ 	unsigned int lock, cal, band;
+ 	int ret;
+-	static const struct reg_sequence init[] = {
++	const bool mode_720 = mode->hdisplay == 1280;
++	const struct reg_sequence init[] = {
+ 		{ 0x8130, 0x6a }, { 0x824f, 0x80 }, { 0x8250, 0x10 },
+-		/* Fixed RGB 16:9 VIC 16 AVI packet, also used without EDID. */
++		/* RGB 16:9 AVI packet for the selected CEA mode, also without EDID. */
+ 		{ 0x82d6, 0x8e }, { 0x82d7, 4 },
+-		{ 0x8443, 0x27 }, { 0x8444, 0x10 }, { 0x8445, 0x28 },
+-		{ 0x8446, 0 }, { 0x8447, 16 }, { 0x843d, 8 },
++		{ 0x8443, mode_720 ? 0x33 : 0x27 }, { 0x8444, 0x10 }, { 0x8445, 0x28 },
++		{ 0x8446, 0 }, { 0x8447, mode_720 ? 4 : 16 }, { 0x843d, 8 },
+ 		{ 0x8123, 0x40 }, { 0x8124, 0x62 }, { 0x8125, 0x80 },
+-		{ 0x832d, 0x40 }, { 0x8331, 8 }, { 0x8326, 0xb6 },
++		{ 0x832d, 0x40 }, { 0x8331, 8 }, { 0x8326, mode_720 ? 0x9b : 0xb6 },
+ 		{ 0x82de, 0x20 }, { 0x82de, 0xe0 },
+ 		{ 0x8011, 0x5a }, { 0x8011, 0xfa }, { 0x8016, 0xf2 },
+ 		{ 0x8018, 0xdc }, { 0x8018, 0xfc }, { 0x8016, 0xf3 },
+@@ -684,11 +686,11 @@
+ 	static const struct reg_sequence calibrate[] = {
+ 		{ 0x8016, 0xe3 }, { 0x8016, 0xf3, 100000 },
+ 	};
+-	static const struct reg_sequence enable[] = {
+-		{ 0x8326, 0x36 }, { 0x8011, 0x5a, 10000 },
++	const struct reg_sequence enable[] = {
++		{ 0x8326, mode_720 ? 0x1b : 0x36 }, { 0x8011, 0x5a, 10000 },
+ 		{ 0x8011, 0xfa, 100000 },
+ 		{ 0x8130, 0xea, 100000 },
+-		{ 0x8326, 0x36 }, { 0x8011, 0x5a, 10000 }, { 0x8011, 0xfa },
++		{ 0x8326, mode_720 ? 0x1b : 0x36 }, { 0x8011, 0x5a, 10000 }, { 0x8011, 0xfa },
+ 	};
+ 
+ 	ret = regmap_multi_reg_write(lt->regmap, init, ARRAY_SIZE(init));
+@@ -757,8 +759,8 @@
+ 
+ 	lt9611_video_check(lt9611);
+ 
+-	if (lt9611->fixed_1080p60) {
+-		int ret = lt9611_fixed_1080p60_enable(lt9611);
++	if (lt9611->ascent_fixed_mode) {
++		int ret = lt9611_ascent_enable(lt9611, mode);
+ 
+ 		if (ret) {
+ 			regmap_write(lt9611->regmap, 0x8130, 0x6a);
+@@ -810,7 +812,7 @@
+ 	dsi->lanes = 4;
+ 	dsi->format = MIPI_DSI_FMT_RGB888;
+ 	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_VIDEO_HSE;
+-	if (!lt9611->fixed_1080p60)
++	if (!lt9611->ascent_fixed_mode)
+ 		dsi->mode_flags |= MIPI_DSI_MODE_VIDEO_SYNC_PULSE;
+ 
+ 	ret = devm_mipi_dsi_attach(dev, dsi);
+@@ -838,9 +840,10 @@
+ {
+ 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
+ 
+-	/* The optional calibration and AVI sequence is specific to CEA-16. */
+-	if (lt9611->fixed_1080p60 &&
+-	    (mode->clock != 148500 || drm_match_cea_mode(mode) != 16))
++	/* Legacy quirk stays CEA-16 only; the Ascent profile also accepts CEA-4. */
++	if (lt9611->ascent_fixed_mode &&
++	    ((mode->clock != 148500 || drm_match_cea_mode(mode) != 16) &&
++	     (!lt9611->ascent_60hz || mode->clock != 74250 || drm_match_cea_mode(mode) != 4)))
+ 		return MODE_BAD;
+ 
+ 	if (mode->hdisplay > 3840)
+@@ -1167,8 +1170,10 @@
+ 		return PTR_ERR(lt9611);
+ 
+ 	lt9611->dev = dev;
+-	lt9611->fixed_1080p60 = of_property_read_bool(dev->of_node,
+-						    "lontium,fixed-1080p60-quirk");
++	lt9611->ascent_60hz = of_property_read_bool(dev->of_node,
++						"lontium,ascent-60hz-quirk");
++	lt9611->ascent_fixed_mode = lt9611->ascent_60hz ||
++		of_property_read_bool(dev->of_node, "lontium,fixed-1080p60-quirk");
+ 	lt9611->client = client;
+ 	lt9611->sleep = false;
+ 
