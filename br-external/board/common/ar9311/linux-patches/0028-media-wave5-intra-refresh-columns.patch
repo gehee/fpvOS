@@ -1,0 +1,113 @@
+From: fpvOS contributors
+Subject: [PATCH] media: wave5: intra refresh by CTU columns
+
+A private control, "Intra Refresh by Columns" (V4L2_CID_CODEC_BASE | 0x1f00):
+the INTRA_REFRESH_PERIOD band then sweeps CTU columns instead of rows. Each
+of kestrel-air's strips (an encoder a band of the picture's rows) refreshing
+by rows codes at least 2 of its CTU rows intra in every picture - 4 strips,
+half of each picture; by columns, the strips together code 2 columns of the
+whole height, whatever their number.
+
+Measured on WAVE521C revision 330638 (a still textured 1920x576 picture at a
+constant QP): rows (2-row band) 43.4 KB a picture, columns (2) 14.1 KB; a
+picture left out of a moving stream, the decode exact again 8 pictures later
+by rows, 39 by columns. The firmware's CTU step-size and CTU-count modes cost
+less still but never get exact again: errors leak back from CTUs not yet
+refreshed.
+
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
+@@ -1002,6 +1002,13 @@ static const struct v4l2_ioctl_ops wave5_vpu_enc_ioctl_ops = {
+ 	.vidioc_unsubscribe_event = v4l2_event_unsubscribe,
+ };
+ 
++/*
++ * fpvOS: intra refresh by CTU columns instead of rows (the period control's
++ * band then sweeps left to right). A private control, no standard one picks
++ * the direction.
++ */
++#define V4L2_CID_WAVE5_INTRA_REFRESH_COLUMNS (V4L2_CID_CODEC_BASE | 0x1f00)
++
+ static int wave5_vpu_enc_s_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct vpu_instance *inst = wave5_ctrl_to_vpu_inst(ctrl);
+@@ -1018,6 +1025,12 @@ static int wave5_vpu_enc_s_ctrl(struct v4l2_ctrl *ctrl)
+ 		inst->enc_param.intra_refresh_mode = ctrl->val ? REFRESH_MODE_CTU_ROWS : 0;
+ 		inst->enc_param.intra_refresh_arg = ctrl->val;
+ 		break;
++	case V4L2_CID_WAVE5_INTRA_REFRESH_COLUMNS:
++		/* Read at sequence initialization, with the period. */
++		if (inst->state != VPU_INST_STATE_NONE)
++			return -EBUSY;
++		inst->ir_columns = ctrl->val;
++		break;
+ 	case V4L2_CID_MPEG_VIDEO_AU_DELIMITER:
+ 		inst->encode_aud = ctrl->val;
+ 		break;
+@@ -1425,6 +1438,7 @@ static int wave5_set_enc_openparam(struct enc_open_param *open_param,
+ 	struct enc_wave_param input = inst->enc_param;
+ 	const struct v4l2_format_info *info;
+ 	u32 num_ctu_row = ALIGN(inst->dst_fmt.height, 64) / 64;
++	u32 num_ctu_col = ALIGN(inst->dst_fmt.width, 64) / 64;
+ 	u32 num_mb_row = ALIGN(inst->dst_fmt.height, 16) / 16;
+ 
+ 	info = v4l2_format_info(inst->src_fmt.pixelformat);
+@@ -1551,8 +1565,19 @@ static int wave5_set_enc_openparam(struct enc_open_param *open_param,
+ 		else
+ 			open_param->wave_param.intra_mb_refresh_arg = num_mb_row;
+ 	}
++	if (input.intra_refresh_mode == REFRESH_MODE_CTU_ROWS && inst->ir_columns)
++		input.intra_refresh_mode = REFRESH_MODE_CTU_COLUMNS;
+ 	open_param->wave_param.intra_refresh_mode = input.intra_refresh_mode;
+ 	if (input.intra_refresh_mode) {
++		/* By columns, the same band of 2 or more moving one column a
++		 * picture: a sweep is 30 pictures at 1920 wide, and a lost picture
++		 * is cleaned up after one, as by rows. The firmware's other modes
++		 * (CTU step size, CTU count) leave errors leaking back from parts
++		 * not yet refreshed.
++		 */
++		u32 units = input.intra_refresh_mode == REFRESH_MODE_CTU_COLUMNS ?
++			    num_ctu_col : num_ctu_row;
++
+ 		if (inst->std != W_HEVC_ENC)
+ 			return -EINVAL;
+ 		/* Firmware refreshes whole CTU rows. Round up so a sweep takes
+@@ -1566,8 +1591,8 @@ static int wave5_set_enc_openparam(struct enc_open_param *open_param,
+ 		 * or more where the picture has that many rows.
+ 		 */
+ 		open_param->wave_param.intra_refresh_arg =
+-			max_t(u32, min_t(u32, 2, num_ctu_row),
+-			      DIV_ROUND_UP(num_ctu_row, input.intra_refresh_arg));
++			max_t(u32, min_t(u32, 2, units),
++			      DIV_ROUND_UP(units, input.intra_refresh_arg));
+ 	}
+ 	open_param->wave_param.forced_idr_header_enable = input.forced_idr_header_enable;
+ 
+@@ -1991,6 +2016,17 @@ static int wave5_vpu_open_enc(struct file *filp)
+ 	v4l2_ctrl_new_std(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
+ 			  V4L2_CID_MPEG_VIDEO_INTRA_REFRESH_PERIOD,
+ 			  0, 2047, 1, 0);
++	{
++		static const struct v4l2_ctrl_config ir_columns = {
++			.ops = &wave5_vpu_enc_ctrl_ops,
++			.id = V4L2_CID_WAVE5_INTRA_REFRESH_COLUMNS,
++			.name = "Intra Refresh by Columns",
++			.type = V4L2_CTRL_TYPE_BOOLEAN,
++			.min = 0, .max = 1, .step = 1, .def = 0,
++		};
++
++		v4l2_ctrl_new_custom(v4l2_ctrl_hdl, &ir_columns, NULL);
++	}
+ 	v4l2_ctrl_new_std_menu(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
+ 			       V4L2_CID_MPEG_VIDEO_HEVC_PROFILE,
+ 			       V4L2_MPEG_VIDEO_HEVC_PROFILE_MAIN_10, 0,
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
+@@ -831,6 +831,7 @@ struct vpu_instance {
+ 	s32 active_enc_src_idx;
+ 	u32 enc_rate_change_pending;
+ 	bool enc_force_idr; /* FORCE_KEY_FRAME seen; armed on the next start_encode */
++	bool ir_columns; /* intra refresh sweeps CTU columns, not rows */
+ 	bool enc_idr_restore; /* the forced intra_period 1 is live and must be put back */
+ 	u32 enc_idr_saved_period; /* intra_period as configured, saved across a forced keyframe */
+ 	struct vpu_buf bitstream_vbuf;
