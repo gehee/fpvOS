@@ -160,9 +160,11 @@ the recorder, with Kestrel owning encoded frame packetization, bitrate control,
 receiver commands and AE/AWB lifecycle. No vendor media libraries are linked.
 The initial mode is HEVC at 1920x1080 and 60 fps, sent as 4 slices, with intra
 refresh: a band of CTU rows sweeps the picture every 17 frames, so keyframes
-come only when the receiver asks for one (Wave5 controls added by
-`0016-media-wave5-intra-refresh.patch`). Slice output, other camera modes and
-FC UART are not implemented yet.
+come only when the receiver asks for one (the Wave5 control of
+`0019-media-wave5-hevc-intra-refresh.patch`, its band kept at 2 rows or more by
+`0027-media-wave5-intra-refresh-band.patch`; strips refresh by columns,
+`0028-media-wave5-intra-refresh-columns.patch`). Other camera modes are not
+implemented yet.
 
 Until the backend is published and the package revision is updated, use a local
 Kestrel checkout containing the AR9311 backend. After configuring the source
