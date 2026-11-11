@@ -8,7 +8,8 @@ the luma row stays). Contrast stretches the gamma curve about mid-scale
 after the tuning blend, clamped to the 12-bit output, at configure and at
 every tone rebuild. Both are module parameters and debugfs files
 (saturation, contrast) that apply to a running ISP; a mutex serialises the
-contrast rebuild with the AE's tone writes.
+contrast rebuild with the AE's tone writes. Out of range, the module
+parameters are refused as the debugfs files are (0-200, contrast 50-200).
 
 Upstream: not submitted
 
@@ -159,7 +160,7 @@ Upstream: not submitted
  void ar_isp_tables_apply(struct ar_isp *isp);
 --- a/overlay/drivers/media/artosyn/ar-isp-tables.c
 +++ b/overlay/drivers/media/artosyn/ar-isp-tables.c
-@@ -157,6 +157,18 @@
+@@ -157,6 +157,52 @@
   */
  static int csc = AR_ISP_CSC_DEFAULT;
  module_param(csc, int, 0644);
@@ -170,15 +171,49 @@ Upstream: not submitted
 + * about mid-scale. debugfs saturation and contrast set them on a running ISP.
 + */
 +static int saturation = 100;
-+module_param(saturation, int, 0644);
-+MODULE_PARM_DESC(saturation, "chroma gain in percent, 0-200 (100: the matrix as is)");
 +static int contrast = 100;
-+module_param(contrast, int, 0644);
++/*
++ * Range-checked as the debugfs files are: an int out of range overflowed the
++ * contrast stretch or wrapped a negative saturation into garbage chroma.
++ */
++static int ar_isp_param_in(const char *val, const struct kernel_param *kp, int lo, int hi)
++{
++	int v, ret = kstrtoint(val, 0, &v);
++
++	if (ret)
++		return ret;
++	if (v < lo || v > hi)
++		return -ERANGE;
++	*(int *)kp->arg = v;
++	return 0;
++}
++
++static int ar_isp_saturation_param(const char *val, const struct kernel_param *kp)
++{
++	return ar_isp_param_in(val, kp, 0, 200);
++}
++
++static int ar_isp_contrast_param(const char *val, const struct kernel_param *kp)
++{
++	return ar_isp_param_in(val, kp, 50, 200);
++}
++
++static const struct kernel_param_ops ar_isp_saturation_ops = {
++	.set = ar_isp_saturation_param,
++	.get = param_get_int,
++};
++static const struct kernel_param_ops ar_isp_contrast_ops = {
++	.set = ar_isp_contrast_param,
++	.get = param_get_int,
++};
++module_param_cb(saturation, &ar_isp_saturation_ops, &saturation, 0644);
++MODULE_PARM_DESC(saturation, "chroma gain in percent, 0-200 (100: the matrix as is)");
++module_param_cb(contrast, &ar_isp_contrast_ops, &contrast, 0644);
 +MODULE_PARM_DESC(contrast, "gamma stretch about mid-scale in percent, 50-200 (100: the tuning's curve)");
  MODULE_PARM_DESC(csc,
  		 "colour-space matrix index: 0 bt601_full (the vendor's), 1 bt709_full, 2 bt601_limited, 3 bt709_limited; -1 leaves the replayed bank alone");
  
-@@ -915,6 +927,14 @@
+@@ -915,6 +961,14 @@
   * ones at 16 and 235, and that decision reaches everything downstream of the
   * ISP including the encoder and the DVR file.
   */
@@ -193,7 +228,7 @@ Upstream: not submitted
  void ar_isp_rgb2yuv_apply(struct ar_isp *isp)
  {
  	const struct ar_isp_csc *m;
-@@ -930,8 +950,50 @@
+@@ -930,8 +984,50 @@
  
  	m = &ar_isp_csc_matrices[csc];
  
@@ -246,7 +281,7 @@ Upstream: not submitted
  }
  
  /*
-@@ -1307,8 +1369,8 @@
+@@ -1307,8 +1403,8 @@
  	}
  
  	if (want_gamma) {
@@ -257,7 +292,7 @@ Upstream: not submitted
  		ar_isp_gamma_pack_page(isp->gamma + AR_ISP_GAMMA_PAGE,
  				       ar_isp_gamma_page1,
  				       AR_ISP_GAMMA_PAGE1_TAIL);
-@@ -1404,7 +1466,8 @@
+@@ -1404,7 +1500,8 @@
  		return;
  
  	page = isp->gamma;

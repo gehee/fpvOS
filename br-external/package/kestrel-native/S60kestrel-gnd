@@ -25,14 +25,17 @@ start() {
     done
 }
 stop() {
-    running || return 0
-    start-stop-daemon -K -q -p "$dir/pid" -x "$daemon"
-    i=0
-    while running; do
-        i=$((i + 1))
-        [ "$i" -lt 120 ] || { echo 'Kestrel shutdown timed out' >&2; return 1; }
-        sleep 0.1
-    done
+    if running; then
+        start-stop-daemon -K -q -p "$dir/pid" -x "$daemon"
+        i=0
+        while running; do
+            i=$((i + 1))
+            [ "$i" -lt 120 ] || { echo 'Kestrel shutdown timed out' >&2; return 1; }
+            sleep 0.1
+        done
+    fi
+    # The runtime goes with it: the updater's clean mode allows no other mount.
+    if mountpoint -q /opt/kestrel; then umount /opt/kestrel; fi
 }
 case "${1:-}" in
     start) start ;;

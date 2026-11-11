@@ -85,6 +85,20 @@ jobs:
           cc -Wall -Wextra -Werror br-external/package/ar9311-camera-control/awbd.c \
              br-external/package/ar9311-camera-control/awb.c -lm -o /tmp/ar9311-awbd
 
+      - name: Source camera exposure daemon (patched ml-aed) and its tests
+        run: |
+          # The package's pinned upstream, with fpvOS's patches, built as the
+          # package builds it; then the tuning/cap tests on that source.
+          pkg=br-external/package/ar9311-camera-control
+          ver=$(sed -n 's/^AR9311_CAMERA_CONTROL_VERSION = //p' $pkg/ar9311-camera-control.mk)
+          mkdir -p /tmp/ml-userspace
+          curl -fsSL "https://github.com/Missing-Lynk/ml-userspace/archive/$ver.tar.gz" |
+            tar xz -C /tmp/ml-userspace --strip-components=1
+          for p in $pkg/0*.patch; do patch -p1 -d /tmp/ml-userspace < "$p"; done
+          cc -Wall -Wextra -Werror -I$pkg -o /tmp/ar9311-aed /tmp/ml-userspace/ml-aed/ml-aed.c \
+             /tmp/ml-userspace/ml-aed/ml-aed-core.c /tmp/ml-userspace/ml-aed/ml-aed-tuning.c -lm
+          python3 $pkg/tests/test_tuning.py /tmp/ml-userspace -v
+
       - name: Radio calibration provisioning tests
         run: |
           sudo apt-get update -qq

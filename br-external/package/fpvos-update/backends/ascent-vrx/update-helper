@@ -33,8 +33,16 @@ case "${1:-}" in
             exit 10
         fi
         rm -f /run/fpvos-update/clean
-        # No ground application is packaged yet. Refuse active clients rather
-        # than racing an unknown application's automatic restart policy.
+        # The receiver (kestrel-native's S60kestrel-gnd, started at boot) goes
+        # first, its runtime's squashfs unmounted, as the P1's kestrel-air
+        # does: a RAM-booted first install runs it too. Then any client left is
+        # refused rather than raced (its own restart policy is not known).
+        if [ -x /etc/init.d/S60kestrel-gnd ]; then
+            /etc/init.d/S60kestrel-gnd stop
+        fi
+        if mountpoint -q /opt/kestrel 2>/dev/null; then
+            umount /opt/kestrel
+        fi
         for fd in /proc/[0-9]*/fd/*; do
             case "$(readlink "$fd" 2>/dev/null || :)" in
                 /dev/arlink*|/dev/video*|/dev/dri/*)

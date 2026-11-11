@@ -11,6 +11,8 @@ import tempfile
 import unittest
 
 SOURCE = pathlib.Path(sys.argv.pop(1)).resolve() / 'ml-aed'
+# The package's own headers (control.h), which the patched ml-aed.c includes.
+PACKAGE = pathlib.Path(__file__).resolve().parent.parent
 
 class Tuning(unittest.TestCase):
     @classmethod
@@ -73,7 +75,7 @@ int main(void) {
     return 0;
 }
 ''')
-        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-I', str(SOURCE),
+        subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-I', str(SOURCE), '-I', str(PACKAGE),
                         str(cls.root / 'cap.c'), str(SOURCE / 'ml-aed-core.c'),
                         str(SOURCE / 'ml-aed-tuning.c'), '-lm', '-o', str(cls.root / 'cap')],
                        check=True)
