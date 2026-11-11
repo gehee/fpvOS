@@ -5,7 +5,9 @@ The vendor table lengthens the exposure to 10 ms before it raises the gain,
 so indoors the sensor sits at 10 ms. --max-exposure-us N holds the exposure
 at N and raises the gain by the same factor (exposure x gain, what the index
 stands for, is kept) until the sensor is out of gain; the AE index stops
-there. The noise ladders take the gain the sensor really runs at.
+there. The noise ladders take the gain the sensor really runs at. The cap
+comes before the anti-flicker snap, which only shortens the exposure to
+whole mains half-periods and so stays within it.
 --max-exposure-file PATH reads it from PATH instead, again on SIGHUP (as
 the banding toggle), so a new cap applies live from the current index.
 
@@ -122,17 +124,22 @@ Upstream: not submitted
  
      int ret;
  
-@@ -179,6 +267,9 @@
-         fflush(stdout);
+@@ -163,6 +251,14 @@
      }
  
+     /*
++     * fpvOS: the exposure cap first, the anti-flicker snap after it. The snap only shortens the
++     * exposure to whole mains half-periods, so it stays within the cap; capping after it cut a
++     * snapped exposure back to the cap, which is no whole number of them (banding again).
++     */
 +    lines = ae_cap_exposure(opts->cap_lines, lines, &gain_q8);
 +    (void)ae_cap_exposure(opts->cap_lines, e->line_count, &ladder_q8);
 +
-     unsigned int ai=0, di=0;
-     while(ai+1<sizeof(analog)/sizeof(analog[0]) && analog[ai+1]<=gain_q8*4U) ai++;
-     unsigned int residual = (unsigned long long)gain_q8 * 4096 / analog[ai];
-@@ -197,21 +288,21 @@
++    /*
+      * Anti-flicker rewrites the sensor-bound pair only. The ladder abscissa below stays on the
+      * table's own gain, because that is what the vendor's ladders key on: its flicker routine
+      * reads the table entry for a rounding decision and never writes it.
+@@ -197,21 +293,21 @@
          return 0;
      }
  
@@ -159,7 +166,7 @@ Upstream: not submitted
      }
  
      if (!ret) {
-@@ -368,13 +459,28 @@
+@@ -368,13 +464,28 @@
           */
          if (g_reload_banding) {
              int hz = read_banding_file();
@@ -189,7 +196,7 @@ Upstream: not submitted
                  ret = ae_actuate(tune, opts, st.exp_index);
                  if (ret) {
                      fprintf(stderr, "ml-aed: actuate after SIGHUP: %s\n",
-@@ -456,6 +562,10 @@
+@@ -456,6 +567,10 @@
              st.exp_index = opts->ceil_index;
          }
  
@@ -200,7 +207,7 @@ Upstream: not submitted
          step = st.exp_index - prev;
          decided++;
  
-@@ -546,6 +656,10 @@
+@@ -546,6 +661,10 @@
          "                    gain to match; costs 0.74 stops at 50 Hz, and more than the\n"
          "                    sensor has at the bottom of the table\n"
          "  --line-ns N       sensor line time in ns for that snap (default 14815)\n"
@@ -211,7 +218,7 @@ Upstream: not submitted
          "  --tuning PATH     sensor tuning blob (default: the board's firmware path)\n"
          "  --stats N         every N decisions print the hold rate and the mean luma\n"
          "                    error against target, then reset the window (0 = off)\n"
-@@ -567,6 +681,8 @@
+@@ -567,6 +686,8 @@
          { "no-tone", no_argument, NULL, 'T' },
          { "banding", required_argument, NULL, 'B' },
          { "line-ns", required_argument, NULL, 'B' + 128 },
@@ -220,7 +227,7 @@ Upstream: not submitted
          { "tuning", required_argument, NULL, 'T' + 128 },
          { "stats", required_argument, NULL, 'S' },
          { "verbose", no_argument, NULL, 'v' },
-@@ -580,6 +696,7 @@
+@@ -580,6 +701,7 @@
          .tone = 1,
      };
      const char *tuning_path = ML_AED_TUNING_FALLBACK;
@@ -228,7 +235,7 @@ Upstream: not submitted
      struct ae_tuning tune;
      int c, ret;
  
-@@ -634,6 +751,21 @@
+@@ -634,6 +756,21 @@
              opts.no_ladders = 1;
          } break;
  
@@ -250,7 +257,7 @@ Upstream: not submitted
          case 'T': {
              opts.tone = 0;
          } break;
-@@ -689,6 +821,17 @@
+@@ -689,6 +826,17 @@
          return 1;
      }
  
