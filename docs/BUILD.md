@@ -157,7 +157,8 @@ The firmware recipe does not infer these from a host application or board name.
 | --- | --- | --- | --- |
 | VRX Pro | `ascent-vrx-pro.c` | USB | Ground/station |
 | Ascent Lite/Lite+ | `ascent-lite-plus.c` | SDIO | Air/AP; factory data optional |
-| Ascent VRX | private `vendor/open8030/ascent-vrx.c` | SDIO | Ground/station |
+| Ascent VRX | `ascent-vrx.c` | SDIO | Ground/station |
+| BETAFPV P1 Air | `betafpv-p1-air.c` | SDIO | Air/AP; factory data optional |
 
 Bare profile filenames resolve in Open8030's `profiles/`; absolute paths select
 private inputs. `OPEN8030_PRIVATE_DIR` overrides the profile directory using its
@@ -167,7 +168,9 @@ from the stock config (`OPEN8030_STOCK_GND_CONFIG` names another stock file),
 an absolute path is used as it is; set `OPEN8030_CONFIG_DIR` to take it from
 another directory than `OPEN8030_PRIVATE_DIR`. SDIO keeps the pinned firmware's active-bus
 detection; USB adds `AR_FORCE_USB`. The source pin and existing role flags stay
-the same for all three boards.
+the same for all four boards. `BR2_PACKAGE_OPEN8030_PROFILE_P1_STOCK` still
+generates the P1 profile from the stock image instead, to check it against
+Open8030's.
 
 The images then carry:
 
