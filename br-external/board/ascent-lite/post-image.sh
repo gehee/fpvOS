@@ -29,12 +29,12 @@ n=$(grep -n '^cd /usrdata/fpv/boot_ar8030' "$run" | head -n 1 | cut -d: -f1)
 cat "$WORK/run.new" > "$run"
 
 # The unit's name on USB, in place of stock's "Vendor SerialGadget" and
-# "Vendor Ethernet": "Caddx Ascent Lite+" (or Lite) in normal mode, with
-# "(update)" in the clean system (which runs a copy from /tmp) and "(network)"
-# for RNDIS. The IDs and serial number stay stock's: the PC tool and the
-# flasher go by them, never by the name. fpvOS_usb names bridge mode the same
-# way (PRODUCT in its board settings).
-name='case $1 in 472) PRODUCT="Caddx Ascent Lite+" ;; 482) PRODUCT="Caddx Ascent Lite" ;; *) PRODUCT="Caddx Ascent" ;; esac'
+# "Vendor Ethernet": "Ascent Lite+ Air Unit - fpvOS" (or Lite) by Caddx in
+# normal mode, with " [update]" in the clean system (which runs a copy from
+# /tmp) and " [network]" for RNDIS. The IDs and serial number stay stock's:
+# the PC tool and the flasher go by them, never by the name. fpvOS_usb names
+# bridge mode the same way, " [bridge]" (PRODUCT in its board settings).
+name='case $1 in 472) PRODUCT="Ascent Lite+ Air Unit - fpvOS" ;; 482) PRODUCT="Ascent Lite Air Unit - fpvOS" ;; *) PRODUCT="Ascent Air Unit - fpvOS" ;; esac'
 rename() { # script, sed program
 	grep -q 'MANUFACTURER="Vendor"' "$1" && grep -q "$2" "$1" ||
 		{ echo "$1: no stock USB name to replace" >&2; exit 1; }
@@ -42,10 +42,10 @@ rename() { # script, sed program
 }
 f=$WORK/fpv/fpv/config_serial.sh
 rename "$f" '^export PRODUCT="SerialGadget"$'
-sed -i "s|^export PRODUCT=\"SerialGadget\"\$|set -- \"\$board_type\"; $name\ncase \$0 in /tmp/*) PRODUCT=\"\$PRODUCT (update)\" ;; esac\nexport PRODUCT|" "$f"
+sed -i "s|^export PRODUCT=\"SerialGadget\"\$|set -- \"\$board_type\"; $name\ncase \$0 in /tmp/*) PRODUCT=\"\$PRODUCT [update]\" ;; esac\nexport PRODUCT|" "$f"
 f=$WORK/fpv/fpv/config_ether.sh
 rename "$f" '^PRODUCT="Ethernet"$'
-sed -i "s|^PRODUCT=\"Ethernet\"\$|set -- \"\$(cat /usrdata/fpv/fpv_board_type /tmp/fpv_board_type 2>/dev/null \| head -n 1)\" \"\$@\"; $name\nshift\nPRODUCT=\"\$PRODUCT (network)\"|" "$f"
+sed -i "s|^PRODUCT=\"Ethernet\"\$|set -- \"\$(cat /usrdata/fpv/fpv_board_type /tmp/fpv_board_type 2>/dev/null \| head -n 1)\" \"\$@\"; $name\nshift\nPRODUCT=\"\$PRODUCT [network]\"|" "$f"
 
 # fpvOS's updater (fpvos-update) takes the stock one's path: the stock rootfs
 # starts whatever is there, in the normal and the clean system. Stock's stays
