@@ -9,8 +9,8 @@ start(){
   echo 0x0100 > bcdDevice; echo 0x0200 > bcdUSB
   mkdir -p strings/0x409
   echo 2020 > strings/0x409/serialnumber
-  echo fpvOS > strings/0x409/manufacturer
-  echo "fpvOS VRX Pro (ECM+ACM)" > strings/0x409/product
+  echo Caddx > strings/0x409/manufacturer
+  echo "Ascent VRX Pro - fpvOS" > strings/0x409/product
   mkdir -p configs/c.1/strings/0x409
   echo "ECM+ACM" > configs/c.1/strings/0x409/configuration
   echo 500 > configs/c.1/MaxPower
