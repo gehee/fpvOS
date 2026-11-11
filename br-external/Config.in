@@ -34,3 +34,5 @@ source "$BR2_EXTERNAL_FPVOS_PATH/package/p1-air-camera-firmware/Config.in"
 source "$BR2_EXTERNAL_FPVOS_PATH/package/p1-air-radio-config/Config.in"
 
 source "$BR2_EXTERNAL_FPVOS_PATH/package/kestrel-native/Config.in"
+
+source "$BR2_EXTERNAL_FPVOS_PATH/package/ar9311-ge2d/Config.in"

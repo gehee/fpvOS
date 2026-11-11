@@ -20,3 +20,6 @@ CONFIG_PWM_ARTOSYN=y
 CONFIG_BLK_DEV_LOOP=y
 CONFIG_SQUASHFS=y
 CONFIG_SQUASHFS_XZ=y
+
+# Shared display/compositor clock register serialization.
+CONFIG_MFD_SYSCON=y

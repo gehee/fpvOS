@@ -24,6 +24,10 @@ if [ "$firmware" = "$sd_firmware" ]; then
     ln -sf "$firmware" "$bundled"
 fi
 modprobe wave5
+# Export is optional; a compositor failure must not prevent live reception.
+if ! modprobe ar9311_ge2d; then
+	echo "Media: HUD export compositor unavailable" >&2
+fi
 for node in /sys/class/video4linux/video*; do
 	case "$(readlink -f "$node")" in
 		*/a080000.video-codec/video4linux/*)
