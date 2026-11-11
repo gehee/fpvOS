@@ -1,0 +1,96 @@
+From: fpvOS contributors
+Subject: [PATCH] drm: artosyn: separate GE2D resources and share CRG locking
+
+Keep display and compositor register ownership disjoint. Preserve old
+device trees, and serialize updates to the shared DC clock register.
+
+---
+diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/artosyn_vo.c
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -11,6 +11,8 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/io.h>
+ #include <linux/module.h>
++#include <linux/mfd/syscon.h>
++#include <linux/regmap.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+ #include <linux/string.h>
+@@ -96,6 +98,8 @@
+ 
+ 	void __iomem			*regs;
+ 	void __iomem			*crg;
++	void __iomem			*qos;
++	struct regmap			*dc;
+ 	void __iomem			*pixreg;
+ 	u32				cur_cfg;
+ 	enum ar_display_profile		profile;
+@@ -220,6 +224,15 @@
+ #define VO_1080P60_PANEL_CTRL 0x111
+ #define VO_1080P60_DPI_CTRL 0x00120000
+ 
++/* Share the CRG register lock with the independent GE2D engine. */
++static void ar_vo_crg_update(struct ar_vo *vo, u32 mask, u32 value)
++{
++	if (vo->dc)
++		regmap_update_bits(vo->dc, 0, mask, value);
++	else
++		writel((readl(vo->crg) & ~mask) | value, vo->crg);
++}
++
+ static void ar_vo_pipe_enable(struct drm_simple_display_pipe *pipe,
+ 			      struct drm_crtc_state *crtc_state,
+ 			      struct drm_plane_state *plane_state)
+@@ -235,12 +248,12 @@
+ 	       vo->pixreg);
+ 
+ 	/* Enable DC fetch clocks, release reset, pulse bits 9/10. */
+-	writel(readl(vo->crg) | BIT(0),  vo->crg);
+-	writel(readl(vo->crg) | BIT(1),  vo->crg);
+-	writel(readl(vo->crg) & ~BIT(2), vo->crg);
+-	writel(readl(vo->crg) | BIT(12), vo->crg);
+-	writel(readl(vo->crg) & ~0x600,  vo->crg);
+-	writel(readl(vo->crg) | 0x600,   vo->crg);
++	ar_vo_crg_update(vo, BIT(0), BIT(0));
++	ar_vo_crg_update(vo, BIT(1), BIT(1));
++	ar_vo_crg_update(vo, BIT(2), 0);
++	ar_vo_crg_update(vo, BIT(12), BIT(12));
++	ar_vo_crg_update(vo, 0x600, 0);
++	ar_vo_crg_update(vo, 0x600, 0x600);
+ 
+ 	writel(readl(vo->regs + VO_CURSOR_CFG) & ~0x3, vo->regs + VO_CURSOR_CFG);
+ 
+@@ -270,7 +283,7 @@
+ 	writel(VO_1080P60_DPI_FORMAT, vo->regs + VO_DPI_FORMAT);
+ 	writel(VO_1080P60_PANEL_CTRL, vo->regs + VO_PANEL_CTRL);
+ 	writel(VO_1080P60_DPI_CTRL, vo->regs + VO_DPI_CTRL);
+-	writel(0xff, vo->regs + VO_QOS);
++	writel(0xff, vo->qos);
+ 
+ 	vo->cur_cfg = (5 << 26) | BIT(0); /* opaque XRGB8888, not yet started */
+ 	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
+@@ -557,6 +570,23 @@
+ 	if (!vo->crg)
+ 		return -ENOMEM;
+ 
++	if (of_find_property(dev->of_node, "artosyn,dc-syscon", NULL)) {
++		vo->dc = syscon_regmap_lookup_by_phandle(dev->of_node, "artosyn,dc-syscon");
++		if (IS_ERR(vo->dc))
++			return PTR_ERR(vo->dc);
++	}
++	if (platform_get_resource_byname(pdev, IORESOURCE_MEM, "qos")) {
++		vo->qos = devm_platform_ioremap_resource_byname(pdev, "qos");
++		if (IS_ERR(vo->qos))
++			return PTR_ERR(vo->qos);
++	} else {
++		/* Compatibility with the original unsplit display resource. */
++		r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
++		if (resource_size(r) < VO_QOS + 4)
++			return -EINVAL;
++		vo->qos = vo->regs + VO_QOS;
++	}
++
+ 	vo->pixreg = devm_platform_ioremap_resource(pdev, 1);
+ 	if (IS_ERR(vo->pixreg))
+ 		return PTR_ERR(vo->pixreg);
