@@ -34,6 +34,7 @@ struct ge_map {
 	struct sg_table *sgt;
 	dma_addr_t address;
 	u64 start, end;
+	u64 size; /* contiguous bytes at address */
 };
 struct ge_job {
 	struct ge_map maps[GE_MAPS];
@@ -51,6 +52,7 @@ struct ge_device {
 	dma_addr_t commands_dma;
 	u32 status, completed, sequence;
 	bool initialized, poisoned;
+	bool stale; /* set up again before the next job */
 	struct ge_job *retained;
 };
 
@@ -76,7 +78,7 @@ static int ge_initialize(struct ge_device *ge)
 {
 	u32 value;
 
-	if (ge->initialized)
+	if (ge->initialized && !ge->stale)
 		return 0;
 	if (regmap_read(ge->crg, 0, &value))
 		return -EIO;
@@ -104,6 +106,7 @@ static int ge_initialize(struct ge_device *ge)
 	writel(readl(ge->regs + 0x10) | 1, ge->regs + 0x10);
 	writel(readl(ge->regs + 0x18) | 9, ge->regs + 0x18);
 	writel(0xffff, ge->regs + 0x0c);
+	ge->stale = false;
 	WRITE_ONCE(ge->initialized, true);
 	writel(readl(ge->regs + 8) & 0xffff0000, ge->regs + 8);
 	return 0;
@@ -124,8 +127,8 @@ static void ge_unmap(struct ge_job *job)
 	}
 }
 
-static int ge_import(struct ge_device *ge, struct ge_job *job, int fd,
-		     u32 offset, u64 bytes, bool output, u32 *address)
+static int ge_import(struct ge_device *ge, struct ge_job *job, unsigned int first,
+		     int fd, u32 offset, u64 bytes, bool output, u32 *address)
 {
 	struct ge_map *m = &job->maps[job->used++];
 	struct scatterlist *sg;
@@ -146,6 +149,18 @@ static int ge_import(struct ge_device *ge, struct ge_job *job, int fd,
 		return -EINVAL;
 	m->start = offset;
 	m->end = offset + bytes;
+	/* Planes of one image usually share a buffer: wait, attach and map it
+	 * once, so cache maintenance runs once per buffer, not per plane.
+	 */
+	for (i = first; i + 1 < job->used; i++) {
+		const struct ge_map *o = &job->maps[i];
+
+		if (o->buf == m->buf && o->sgt) {
+			m->address = o->address;
+			m->size = o->size;
+			goto check;
+		}
+	}
 	waited = dma_resv_wait_timeout(m->buf->resv,
 		output ? DMA_RESV_USAGE_READ : DMA_RESV_USAGE_WRITE,
 		true, msecs_to_jiffies(500));
@@ -174,7 +189,9 @@ static int ge_import(struct ge_device *ge, struct ge_job *job, int fd,
 		total += sg_dma_len(sg);
 		next += sg_dma_len(sg);
 	}
-	if (m->end > total || (u64)m->address + m->end > (1ULL << 32))
+	m->size = total;
+check:
+	if (m->end > m->size || (u64)m->address + m->end > (1ULL << 32))
 		return -ERANGE;
 	*address = m->address + offset;
 	return 0;
@@ -208,7 +225,7 @@ static int ge_image(struct ge_device *ge, struct ge_job *job,
 		    image->stride[i] / unit > 1023 ||
 		    (i == 2 && image->stride[2] != image->stride[1]))
 			return -EINVAL;
-		ret = ge_import(ge, job, image->fd[i], image->offset[i],
+		ret = ge_import(ge, job, first, image->fd[i], image->offset[i],
 				(u64)image->stride[i] * rows, output, addresses + i);
 		if (ret)
 			return ret;
@@ -359,6 +376,13 @@ static int ge_open(struct inode *inode, struct file *file)
 	if (atomic_cmpxchg(&ge->opened, 0, 1))
 		return -EBUSY;
 	file->private_data = ge;
+	/* A display modeset pulses the shared DC reset (0x600), which can clear
+	 * this engine's setup: set it up again for every new user (one export).
+	 * The interrupt handler stays armed meanwhile.
+	 */
+	mutex_lock(&ge->lock);
+	ge->stale = true;
+	mutex_unlock(&ge->lock);
 	return 0;
 }
 static int ge_release(struct inode *inode, struct file *file)
