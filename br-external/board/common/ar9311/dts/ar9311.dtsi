@@ -89,12 +89,27 @@
 			status = "disabled";
 		};
 
+		dc_crg: syscon@a106018 {
+			compatible = "artosyn,ar9311-dc-crg", "syscon";
+			reg = <0 0x0a106018 0 4>;
+		};
+
+		ge2d: compositor@881f000 {
+			compatible = "artosyn,ar9311-ge2d";
+			reg = <0 0x0881f000 0 0x100>;
+			interrupts = <GIC_SPI 79 IRQ_TYPE_LEVEL_HIGH>;
+			artosyn,dc-syscon = <&dc_crg>;
+			status = "disabled";
+		};
+
 		vo: display@8810000 {
 			compatible = "artosyn,ar9311-vo";
-			reg = <0 0x08810000 0 0x10000>,
+			reg = <0 0x08810000 0 0xf000>,
 			      <0 0x0a10404c 0 4>,
-			      <0 0x0a106018 0 4>;
-			reg-names = "vo", "pixel-clock", "dc-crg";
+			      <0 0x0a106018 0 4>,
+			      <0 0x0881ff00 0 4>;
+			reg-names = "vo", "pixel-clock", "dc-crg", "qos";
+			artosyn,dc-syscon = <&dc_crg>;
 			interrupts = <GIC_SPI 70 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 		};

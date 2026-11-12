@@ -162,8 +162,13 @@
 	enable-method = "psci";
 };
 
+&ge2d {
+	status = "okay";
+};
+
 &vpu {
 	status = "okay";
+	artosyn,enable-encoder;
 	memory-region = <&codec_memory>;
 };
 

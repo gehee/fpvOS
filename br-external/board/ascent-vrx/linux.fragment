@@ -10,7 +10,9 @@ CONFIG_DRM_DISPLAY_CONNECTOR=y
 # CONFIG_DRM_FBDEV_EMULATION is not set
 CONFIG_CMA=y
 CONFIG_DMA_CMA=y
-CONFIG_CMA_SIZE_MBYTES=32
+# Three 1080p scanout surfaces plus offline HUD/composition DMA buffers.
+# Unused CMA pages remain available for movable system allocations.
+CONFIG_CMA_SIZE_MBYTES=64
 # Front-panel external ADC and userspace-owned beeper. LINK uses the
 # existing GPIO character interface (bank A offset 2, active-low).
 CONFIG_I2C_CHARDEV=y
@@ -20,3 +22,6 @@ CONFIG_PWM_ARTOSYN=y
 CONFIG_BLK_DEV_LOOP=y
 CONFIG_SQUASHFS=y
 CONFIG_SQUASHFS_XZ=y
+
+# Shared display/compositor clock register serialization.
+CONFIG_MFD_SYSCON=y
