@@ -1,0 +1,51 @@
+From: fpvOS contributors
+Subject: [PATCH] drm/artosyn: program the chroma line width per picture
+
+VO registers 0x1800/0x1808 carried the vendor's 1080p value 0x3c0 (960 =
+1920/2) in every mode. At 720p an I420 chroma line is 640 bytes; with 960
+the video layer shows random green and pink lines and orange shapes while
+the UI overlay stays clean. The decoded pictures are clean (checked from
+the scanout buffers) and setting 640 live removed the artefacts at 720p60.
+
+Write half the source width: the mode's width at enable, the source
+picture's width wherever the source geometry is programmed (the scaled
+1080p-on-720p case keeps 960).
+---
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -59,8 +59,13 @@
+ #define VO_PLANE2_BASE	0x1530
+ #define VO_PLANE3_BASE	0x1538
+ #define VO_FB_SIZE	0x1810
+-#define VO_FIFO_THRESH0	0x1800
+-#define VO_FIFO_THRESH1	0x1808
++/* Chroma line width of the source picture (half its width), one per chroma
++ * plane. The vendor's 1080p value 0x3c0 (960) left in place at 720p, where
++ * an I420 chroma line is 640, corrupts the video layer's colour: random
++ * green/pink lines and orange blobs on the video only, the UI is untouched.
++ */
++#define VO_CHROMA_W0	0x1800
++#define VO_CHROMA_W1	0x1808
+ #define VO_WIN_X	0x1828
+ #define VO_WIN_Y	0x1830
+ #define VO_LAYER_ALPHA	0x1a18
+@@ -202,6 +207,8 @@
+ 		writel(yuv ? 0x33 : 0, vo->regs + VO_SCALE_CONFIG);
+ 		writel((state->src_w >> 16) | ((state->src_h >> 16) << 15),
+ 		       vo->regs + VO_FB_SIZE);
++		writel((state->src_w >> 16) / 2, vo->regs + VO_CHROMA_W0);
++		writel((state->src_w >> 16) / 2, vo->regs + VO_CHROMA_W1);
+ 		writel(scaled ? (((state->src_w >> 16) - 1) << 16) / (state->crtc_w - 1) : 0,
+ 		       vo->regs + VO_WIN_X);
+ 		writel(scaled ? (((state->src_h >> 16) - 1) << 16) / (state->crtc_h - 1) : 0,
+@@ -262,8 +269,8 @@
+ 	writel((mode->vdisplay << 15) | mode->hdisplay, vo->regs + VO_FB_SIZE);
+ 	writel(0, vo->regs + VO_WIN_X);
+ 	writel(0, vo->regs + VO_WIN_Y);
+-	writel(0x3c0, vo->regs + VO_FIFO_THRESH0);
+-	writel(0x3c0, vo->regs + VO_FIFO_THRESH1);
++	writel(mode->hdisplay / 2, vo->regs + VO_CHROMA_W0);
++	writel(mode->hdisplay / 2, vo->regs + VO_CHROMA_W1);
+ 	writel(0xff000000, vo->regs + VO_LAYER_ALPHA);
+ 	writel(0x80008000, vo->regs + VO_SCALER_RATIO);
+ 

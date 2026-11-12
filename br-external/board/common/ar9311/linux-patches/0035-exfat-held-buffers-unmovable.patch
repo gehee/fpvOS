@@ -1,0 +1,81 @@
+From: fpvOS contributors
+Subject: [PATCH] exfat: the buffers held for the whole mount are not movable pages
+
+exFAT keeps its boot sector and its allocation bitmap in buffer heads for as
+long as the volume is mounted, read with sb_bread(), which takes movable
+pages. A held buffer pins its page, and a movable page can lie in a CMA
+area: every contiguous allocation over it then fails until the unmount.
+
+On the SteadyDigital the screen's plane buffers take almost the whole CMA
+area, so with an exFAT card mounted the receiver could fail to start
+("plane buffer allocation: Cannot allocate memory", on every retry),
+depending on where those pages happened to land at mount time. Reproduced
+by mounting the card while only CMA memory was free; unmounting cured it.
+
+Read the boot sector and the bitmap, and read the bitmap ahead, from
+unmovable memory (as ext4 does for its superblock and group descriptors),
+after dropping whatever the block device had cached before the mount.
+---
+--- a/fs/exfat/balloc.c
++++ b/fs/exfat/balloc.c
+@@ -70,6 +70,20 @@
+ 	return true;
+ }
+ 
++/* sb_breadahead() for buffers that are then held: not from movable memory
++ * (see exfat_read_boot_sector).
++ */
++static void exfat_bitmap_readahead(struct super_block *sb, sector_t block)
++{
++	struct buffer_head *bh = bdev_getblk(sb->s_bdev, block, sb->s_blocksize,
++					     GFP_NOWAIT);
++
++	if (likely(bh)) {
++		bh_readahead(bh, REQ_RAHEAD);
++		brelse(bh);
++	}
++}
++
+ static int exfat_allocate_bitmap(struct super_block *sb,
+ 		struct exfat_dentry *ep)
+ {
+@@ -109,11 +123,11 @@
+ 		if (max_ra_count && 0 == (i % max_ra_count)) {
+ 			blk_start_plug(&plug);
+ 			for (j = i; j < min(max_ra_count, sbi->map_sectors - i) + i; j++)
+-				sb_breadahead(sb, sector + j);
++				exfat_bitmap_readahead(sb, sector + j);
+ 			blk_finish_plug(&plug);
+ 		}
+ 
+-		sbi->vol_amap[i] = sb_bread(sb, sector + i);
++		sbi->vol_amap[i] = sb_bread_unmovable(sb, sector + i);
+ 		if (!sbi->vol_amap[i])
+ 			goto err_out;
+ 	}
+--- a/fs/exfat/super.c
++++ b/fs/exfat/super.c
+@@ -417,7 +417,7 @@
+ 				  logical_sect);
+ 			return -EIO;
+ 		}
+-		sbi->boot_bh = sb_bread(sb, 0);
++		sbi->boot_bh = sb_bread_unmovable(sb, 0);
+ 		if (!sbi->boot_bh) {
+ 			exfat_err(sb, "unable to read boot sector (logical sector size = %lu)",
+ 				  sb->s_blocksize);
+@@ -439,7 +439,13 @@
+ 	}
+ 
+ 	/* read boot sector */
+-	sbi->boot_bh = sb_bread(sb, 0);
++	/* Held for the whole mount, like the allocation bitmap: a page that
++	 * can be moved would be pinned where it lies, and one in a CMA area
++	 * then fails every contiguous allocation over it. Take them from
++	 * unmovable memory, and let nothing cached before the mount stand in.
++	 */
++	invalidate_bdev(sb->s_bdev);
++	sbi->boot_bh = sb_bread_unmovable(sb, 0);
+ 	if (!sbi->boot_bh) {
+ 		exfat_err(sb, "unable to read boot sector");
+ 		return -EIO;
