@@ -1,6 +1,6 @@
 config BR2_PACKAGE_KESTREL_NATIVE
 	bool "Kestrel native Ascent boot runtime"
-	depends on BR2_FPVOS_BOARD_ASCENT_VRX
+	depends on BR2_FPVOS_BOARD_ASCENT_VRX || BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
 	help
 	  Install a static, read-only Kestrel runtime and boot
 	  supervisor.

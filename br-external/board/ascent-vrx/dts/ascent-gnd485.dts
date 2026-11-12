@@ -166,6 +166,13 @@
 	status = "okay";
 };
 
+/* The SoC temperature, for the receiver's canopy (fpvOS ar9311_temp). The
+ * supply voltage is not given: which SAR ADC channel carries it here is not
+ * known. */
+&soc_temp {
+	status = "okay";
+};
+
 &vpu {
 	status = "okay";
 	artosyn,enable-encoder;

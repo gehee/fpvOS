@@ -23,3 +23,12 @@ config BR2_FPVOS_BOARD_P1_AIR
 	help
 	  P1 board storage and direct NAND recovery policy. Uses the
 	  verified 1.0.44 partition layout and preserves stock bank 1.
+
+config BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
+	bool "Skyzone SteadyDigital (AR9311)"
+	depends on BR2_aarch64
+	select BR2_FPVOS_SOC_AR9311
+	help
+	  SteadyDigital receiver wiring: SDIO radio, LT9611 HDMI
+	  bridge, polled GPIO keys. Uses the stock A/B flash layout
+	  read-only; bank A (stock) is never written.

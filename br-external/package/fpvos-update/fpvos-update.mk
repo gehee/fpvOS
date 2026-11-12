@@ -19,6 +19,10 @@ ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_AIR),y)
 FPVOS_UPDATE_BOARD = p1-air
 FPVOS_UPDATE_DEPENDENCIES += host-dtc
 endif
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_SKYZONE_STEADYDIGITAL),y)
+FPVOS_UPDATE_BOARD = skyzone-steadydigital
+FPVOS_UPDATE_DEPENDENCIES += host-dtc
+endif
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_LITE),y)
 FPVOS_UPDATE_BOARD = ascent-lite
 endif
@@ -83,6 +87,10 @@ endif
 
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_AIR),y)
 include $(FPVOS_UPDATE_SITE)/backends/p1-air/backend.mk
+endif
+
+ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_SKYZONE_STEADYDIGITAL),y)
+include $(FPVOS_UPDATE_SITE)/backends/skyzone-steadydigital/backend.mk
 endif
 
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_ASCENT_LITE),y)

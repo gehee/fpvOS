@@ -1,0 +1,29 @@
+{
+  "board_id": 21316,
+  "hardware": "SteadyDigital",
+  "usb_identity": [
+    "1d6b",
+    "0104",
+    "fpvos-steadydigital"
+  ],
+  "names": [
+    "kernel.img",
+    "skyzone-steadydigital.dtb",
+    "rootfs.cpio.gz"
+  ],
+  "limits": [
+    6291456,
+    65536,
+    16777216
+  ],
+  "counts": [
+    3,
+    0
+  ],
+  "bundle_limits": [
+    33554432,
+    512
+  ],
+  "restore_sources": [],
+  "bootstrap_resources": {}
+}

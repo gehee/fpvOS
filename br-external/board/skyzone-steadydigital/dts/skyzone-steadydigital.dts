@@ -1,0 +1,434 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/* Skyzone SteadyDigital receiver (AR9311 + AR8030 over SDIO).
+ * Wiring from the box's stock device tree and its startup scripts:
+ * radio reset GPIO23, SD power GPIO68 and I/O rail GPIO100, seven
+ * active-low keys on GPIO48-54, 5 V enable GPIO66, DSI to a Lontium
+ * LT9611 HDMI bridge on I2C0 0x3b (reset GPIO43).
+ * Same SPL, A/B flash layout and CPU handoff as the BETAFPV P1.
+ */
+/dts-v1/;
+#include "ar9311.dtsi"
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "Skyzone SteadyDigital (AR9311)";
+	compatible = "skyzone,steadydigital", "artosyn,proxima-9311";
+
+	aliases {
+		serial0 = &uart0;
+		i2c0 = &i2c0;
+		i2c4 = &i2c4;
+	};
+
+	chosen {
+		stdout-path = "serial0:1152000n8";
+		bootargs = "console=ttyS0,1152000 earlycon loglevel=7 rdinit=/init";
+	};
+
+	/* 256 MiB in total. Stock gives Linux 148 MiB (mem=148m) and the
+	 * media pool the rest; the reservations below keep that split.
+	 */
+	memory@20000000 {
+		device_type = "memory";
+		reg = <0 0x20000000 0 0x10000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		/* Retained across warm resets, not power loss. */
+		ramoops@29300000 {
+			compatible = "ramoops";
+			reg = <0 0x29300000 0 0x00100000>;
+			record-size = <0x20000>;
+			console-size = <0x40000>;
+			pmsg-size = <0x20000>;
+			no-map;
+		};
+
+		/* Stock's media region; only the decoder owns it here. */
+		codec_pool: dma-pool@29400000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x29400000 0 0x06b00000>;
+			no-map;
+		};
+
+		/* The U-Boot RAM loader parks the secondary CPU here (as on P1). */
+		loader@2ff00000 {
+			reg = <0 0x2ff00000 0 0x00100000>;
+			no-map;
+		};
+	};
+
+	/* The SPL reads this word at reset; bit 0 requests its USB loader. */
+	reboot-scratch@a106138 {
+		compatible = "syscon", "simple-mfd";
+		reg = <0 0x0a106138 0 4>;
+		reboot-mode {
+			compatible = "syscon-reboot-mode";
+			offset = <0>;
+			mode-normal = <2>;
+			mode-bootloader = <3>;
+		};
+	};
+
+	/* GPIO interrupts are not wired into Linux yet: poll. */
+	keys {
+		compatible = "gpio-keys-polled";
+		label = "steadydigital-keys";
+		poll-interval = <20>;
+		key-pair {
+			label = "pair";
+			gpios = <&gpio 48 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_WPS_BUTTON>;
+			debounce-interval = <50>;
+		};
+		key-back {
+			label = "back";
+			gpios = <&gpio 49 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_ESC>;
+			debounce-interval = <50>;
+		};
+		key-up {
+			label = "up";
+			gpios = <&gpio 50 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_UP>;
+			debounce-interval = <50>;
+		};
+		key-down {
+			label = "down";
+			gpios = <&gpio 51 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_DOWN>;
+			debounce-interval = <50>;
+		};
+		key-left {
+			label = "left";
+			gpios = <&gpio 52 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_LEFT>;
+			debounce-interval = <50>;
+		};
+		key-right {
+			label = "right";
+			gpios = <&gpio 53 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RIGHT>;
+			debounce-interval = <50>;
+		};
+		key-enter {
+			label = "enter";
+			gpios = <&gpio 54 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_ENTER>;
+			debounce-interval = <50>;
+		};
+	};
+
+	hdmi_connector {
+		compatible = "hdmi-connector";
+		type = "a";
+		port {
+			hdmi_in: endpoint {
+				remote-endpoint = <&bridge_out>;
+			};
+		};
+	};
+
+	bridge_vdd: regulator-bridge-vdd {
+		compatible = "regulator-fixed";
+		regulator-name = "bridge-vdd-always-on";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+
+	bridge_vcc: regulator-bridge-vcc {
+		compatible = "regulator-fixed";
+		regulator-name = "bridge-vcc-always-on";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+	};
+
+	/* Stock poweron.sh: "enable power 5v" on GPIO66 before anything else. */
+	vcc_5v: regulator-5v {
+		compatible = "regulator-fixed";
+		regulator-name = "vcc-5v";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		gpio = <&gpio 66 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	sd_vmmc: regulator-sd-vmmc {
+		compatible = "regulator-fixed";
+		regulator-name = "sd-3v3";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		gpio = <&gpio 68 GPIO_ACTIVE_HIGH>;
+		enable-active-high;
+		regulator-boot-on;
+		regulator-always-on;
+	};
+
+	sd_vqmmc: regulator-sd-vqmmc {
+		compatible = "regulator-gpio";
+		regulator-name = "sd-vqmmc";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		gpios = <&gpio 100 GPIO_ACTIVE_HIGH>;
+		gpios-states = <1>;
+		states = <3300000 1>;
+	};
+
+	/* Stock start_ar813x_gnd.sh resets the radio on GPIO23; its SDIO
+	 * host has no switched supply.
+	 */
+	radio_pwrseq: radio-pwrseq {
+		compatible = "artosyn,ar8030-pwrseq";
+		reset-gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+	};
+};
+
+&cpu0 {
+	enable-method = "ar-spin-table";
+};
+
+&cpu1 {
+	enable-method = "ar-spin-table";
+	cpu-release-addr = <0 0x00100000>;
+};
+
+&uart0 {
+	status = "okay";
+};
+
+&usb {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+
+&watchdog {
+	status = "okay";
+};
+
+&gpio {
+	status = "okay";
+
+	/* Levels stock's media stack leaves on lines 46 and 55 (function not
+	 * yet identified), held the same way here.
+	 */
+	stock-46-hog {
+		gpio-hog;
+		gpios = <46 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "stock-46";
+	};
+	stock-55-hog {
+		gpio-hog;
+		gpios = <55 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "stock-55";
+	};
+};
+
+&soc_temp {
+	status = "okay";
+};
+
+&vpu {
+	status = "okay";
+	memory-region = <&codec_pool>;
+};
+
+/* Stock enables I2C0 and I2C4 only. */
+&i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+	i2c-sda-hold-time-ns = <300>;
+	i2c-sda-falling-time-ns = <300>;
+	i2c-scl-falling-time-ns = <300>;
+
+	/* The HDMI bridge answers here with the LT9611 ID (17 02 e2), the same
+	 * part as the Ascent Gnd485's. Stock's 1080p60 attribute uses the
+	 * Ascent raster and 928.8 Mbps lanes, so the same quirks apply.
+	 * Reset: GPIO43 (the KAP reference DSI reset; stock leaves it high).
+	 */
+	bridge@3b {
+		compatible = "lontium,lt9611";
+		lontium,page-select-quirk;
+		lontium,ascent-hdmi-quirk;
+		reg = <0x3b>;
+		reset-gpios = <&gpio 43 GPIO_ACTIVE_HIGH>;
+		vdd-supply = <&bridge_vdd>;
+		vcc-supply = <&bridge_vcc>;
+		/* No bridge IRQ wired into Linux; the connector status is polled. */
+		ports {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			port@0 {
+				reg = <0>;
+				bridge_in: endpoint {
+					remote-endpoint = <&dsi_out>;
+				};
+			};
+			port@2 {
+				reg = <2>;
+				bridge_out: endpoint {
+					remote-endpoint = <&hdmi_in>;
+				};
+			};
+		};
+	};
+};
+
+&soc {
+	i2c4: i2c@1208000 {
+		compatible = "snps,designware-i2c";
+		reg = <0 0x01208000 0 0x2000>;
+		interrupts = <GIC_SPI 36 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&clk150m>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		clock-frequency = <400000>;
+		i2c-sda-hold-time-ns = <300>;
+		i2c-sda-falling-time-ns = <300>;
+		i2c-scl-falling-time-ns = <300>;
+	};
+};
+
+&i2c4 {
+	status = "okay";
+};
+
+&vo {
+	status = "okay";
+	artosyn,display-profile = "ascent-hdmi";
+	port {
+		vo_out: endpoint {
+			remote-endpoint = <&dsi_in>;
+		};
+	};
+};
+
+&dsi {
+	status = "okay";
+	artosyn,display-profile = "ascent-hdmi";
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		port@0 {
+			reg = <0>;
+			dsi_in: endpoint {
+				remote-endpoint = <&vo_out>;
+			};
+		};
+		port@1 {
+			reg = <1>;
+			dsi_out: endpoint {
+				remote-endpoint = <&bridge_in>;
+			};
+		};
+	};
+};
+
+&mmc_clocks {
+	status = "okay";
+	artosyn,clock-config = <0x87 2>, <0x80 0>;
+};
+
+&mmc0 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	broken-cd;
+	no-mmc;
+	no-sd;
+	no-1-8-v;
+	mmc-pwrseq = <&radio_pwrseq>;
+};
+
+&mmc1 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	card-detect-delay = <200>;
+	vmmc-supply = <&sd_vmmc>;
+	vqmmc-supply = <&sd_vqmmc>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	disable-wp;
+	no-1-8-v;
+	no-mmc;
+	no-sdio;
+};
+
+/* Stock A/B layout: bank A = kernel0/dtb0/userapp0 (stock, never written,
+ * read-only here), bank B = kernel1/dtb1/userapp1 (fpvOS). The updater writes
+ * bank B, flips the GPT at the start of boot-state (gpt0) and keeps
+ * settings/pairing in usr_data, so those are writable; factory stays
+ * read-only.
+ */
+&qspi_clock {
+	status = "okay";
+};
+
+&qspi {
+	status = "okay";
+	clocks = <&qspi_clock>;
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			partition@100000 {
+				label = "boot-state";
+				reg = <0x100000 0x80000>;
+			};
+			partition@200000 {
+				label = "factory";
+				reg = <0x200000 0x600000>;
+				read-only;
+			};
+			partition@a40000 {
+				label = "kernel0";
+				reg = <0xa40000 0x600000>;
+				read-only;
+			};
+			partition@1040000 {
+				label = "kernel1";
+				reg = <0x1040000 0x600000>;
+			};
+			partition@1640000 {
+				label = "dtb0";
+				reg = <0x1640000 0x60000>;
+				read-only;
+			};
+			partition@16a0000 {
+				label = "dtb1";
+				reg = <0x16a0000 0x60000>;
+			};
+			partition@1700000 {
+				label = "userapp0";
+				reg = <0x1700000 0x2d00000>;
+				read-only;
+			};
+			partition@4400000 {
+				label = "userapp1";
+				reg = <0x4400000 0x2d00000>;
+			};
+			partition@7100000 {
+				label = "usr_data";
+				reg = <0x7100000 0x600000>;
+			};
+		};
+	};
+};
