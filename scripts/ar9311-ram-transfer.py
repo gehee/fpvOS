@@ -17,10 +17,17 @@ import usb.util
 
 MAGIC = bytes.fromhex('ff55ffaa4152544f')
 CHUNK = 960
-WINDOWS = ((0x24400000, 0x24c00000), (0x22080000, 0x220e0000), (0x26000000, 0x26800000))
+# Staging windows per board: kernel, DTB, initramfs. Each ends below the
+# board's reserved memory (codec pool, ramoops, parked loader CPU).
+BOARD_WINDOWS = {
+    'ascent-vrx': ((0x24400000, 0x24c00000), (0x22080000, 0x220e0000), (0x26000000, 0x26800000)),
+    # 148 MiB Linux ends at 0x29300000 (ramoops, then the media pool).
+    'skyzone-steadydigital': ((0x24400000, 0x24c00000), (0x22080000, 0x220e0000), (0x26000000, 0x29000000)),
+}
+WINDOWS = BOARD_WINDOWS['ascent-vrx']
 
 def checked_range(address, length):
-    if not (0 < length <= 0x800000 and any(lo <= address and address + length <= hi for lo, hi in WINDOWS)):
+    if not (0 < length and any(lo <= address and address + length <= hi for lo, hi in WINDOWS)):
         raise ValueError('Transfer outside approved RAM staging windows')
 
 def frame(kind, body):
@@ -121,7 +128,10 @@ def main():
     parser.add_argument('file', type=Path)
     parser.add_argument('--length', type=lambda s: int(s, 0))
     parser.add_argument('--report', type=Path, required=True)
+    parser.add_argument('--board', choices=sorted(BOARD_WINDOWS), default='ascent-vrx')
     args = parser.parse_args()
+    global WINDOWS
+    WINDOWS = BOARD_WINDOWS[args.board]
     if args.report.exists():
         parser.error('Report already exists')
     if args.operation == 'read':

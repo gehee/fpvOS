@@ -9,6 +9,7 @@
 ::sysinit:/bin/mount -t tmpfs tmpfs /tmp
 ::sysinit:/bin/hostname -F /etc/hostname
 ::sysinit:/sbin/ip link set lo up
+::sysinit:/sbin/modprobe ar9311_temp
 ::sysinit:/etc/init.d/S40ar9311-usb start
 ::sysinit:/bin/sh -c '[ ! -x /etc/init.d/S44ar9311-radio ] || /etc/init.d/S44ar9311-radio start'
 ::sysinit:/etc/init.d/S45ar9311-sd start

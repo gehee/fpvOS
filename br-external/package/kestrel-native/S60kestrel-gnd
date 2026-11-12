@@ -40,7 +40,9 @@ stop() {
 case "${1:-}" in
     start) start ;;
     stop) stop ;;
-    restart) stop; start ;;
+    # A stop that could not finish (the runtime's mount busy) must not leave
+    # the receiver down: start takes it from wherever stop got to.
+    restart) stop || echo 'Kestrel: stop was incomplete; starting anyway' >&2; start ;;
     status) [ ! -r "$dir/status" ] || cat "$dir/status"; running ;;
     *) echo "Usage: $0 {start|stop|restart|status}" >&2; exit 2 ;;
 esac

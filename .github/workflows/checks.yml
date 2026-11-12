@@ -44,6 +44,7 @@ jobs:
       - name: AR9311 shell syntax
         run: |
           for f in $(git ls-files 'br-external/board/ascent-vrx/*' \
+                     'br-external/board/skyzone-steadydigital/*' \
                      'br-external/board/common/ar9311/*' \
                      'br-external/package/ar9311-radio/src/*' \
                      'br-external/package/kestrel-native/*' \

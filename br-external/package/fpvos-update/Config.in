@@ -41,5 +41,14 @@ config BR2_PACKAGE_FPVOS_UPDATE_P1_AIR
 	  Direct boot with an embedded fpvOS recovery system. Write and
 	  verify bank 0 before selecting it; preserve stock bank 1, factory
 	  calibration and user settings. Stock clean mode is only an installer.
+
+config BR2_PACKAGE_FPVOS_UPDATE_SKYZONE_STEADYDIGITAL
+	bool "Skyzone SteadyDigital NAND (AR9311)"
+	depends on BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
+	help
+	  Direct boot with an embedded fpvOS recovery system, as the P1,
+	  but mirrored for this board: write and verify bank B before
+	  selecting it; preserve stock bank A, factory calibration and user
+	  settings. The receiver is kestrel-gnd.
 endchoice
 endif

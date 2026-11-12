@@ -1,0 +1,67 @@
+#!/bin/sh
+# SteadyDigital: recovery-kernel + A/B NAND (bank B), kestrel-gnd receiver.
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+check_mounts() {
+    # Only RAM and virtual filesystems may be mounted; the preserved stock
+    # squashfs root may remain (when bootstrapped from stock).
+    mounts=/proc/mounts
+    [ ! -e /etc/fpvos-stock-bootstrap ] || mounts=/proc/1/mounts
+    awk '
+      $3 ~ /^(rootfs|tmpfs|devtmpfs|proc|sysfs|devpts|configfs|debugfs|pstore)$/ { next }
+      ($1 == "/dev/root" || $1 == "/dev/ubiblock0_0") && $2 == "/" && $3 == "squashfs" && $4 ~ /(^|,)ro(,|$)/ { next }
+      { bad=1 } END { exit bad }' "$mounts"
+}
+quiesce() {
+    # The receiver (kestrel-native's S60kestrel-gnd) first, its runtime squashfs
+    # unmounted; then SD, so nothing holds persistent storage.
+    [ ! -x /etc/init.d/S60kestrel-gnd ] || /etc/init.d/S60kestrel-gnd stop
+    if mountpoint -q /opt/kestrel 2>/dev/null; then umount /opt/kestrel; fi
+    for fd in /proc/[0-9]*/fd/*; do
+        case "$(readlink "$fd" 2>/dev/null || :)" in
+            /dev/arlink*|/dev/video*|/dev/dri/*)
+                echo "Active media/radio client: $fd" >&2; exit 1 ;;
+        esac
+    done
+    [ ! -x /etc/init.d/S46kestrel-state ] || /etc/init.d/S46kestrel-state stop
+    [ ! -x /etc/init.d/S45ar9311-sd ] || /etc/init.d/S45ar9311-sd stop
+    sync
+}
+case "${1:-}" in
+    clean)
+        if [ -f /etc/fpvos-installed-sha256 ] && [ ! -f /run/fpvos-clean-boot ]; then
+            quiesce
+            /usr/sbin/fpvos-update nand clean
+            exit 10
+        fi
+        quiesce
+        rm -f /run/fpvos-update/clean
+        check_mounts
+        /usr/sbin/fpvos-update nand preflight
+        mkdir -p /run/fpvos-update
+        : > /run/fpvos-update/clean
+        ;;
+    verify|install)
+        [ -f /run/fpvos-update/clean ]
+        check_mounts
+        if [ "$1" = install ]; then exec /usr/sbin/fpvos-update nand install "$2"; fi
+        work=$(mktemp -d /run/fpvos-update/verify.XXXXXX)
+        trap 'rm -rf "$work"' EXIT
+        trap 'exit 1' HUP INT TERM
+        /usr/libexec/fpvos-update-verify "$2" "$work"
+        gzip -t "$work/rootfs.cpio.gz"
+        ;;
+    stock)
+        quiesce
+        /usr/sbin/fpvos-update nand stock
+        ;;
+    normal)
+        # No bridge mode on this board yet: it is always in normal mode.
+        ;;
+    reboot)
+        sync
+        if [ -e /etc/fpvos-stock-bootstrap ]; then /bin/reboot -f; else /sbin/reboot; fi
+        ;;
+    *) echo 'Usage: update-helper {clean|verify|install|stock|normal|reboot} [PACKAGE]' >&2; exit 2 ;;
+esac

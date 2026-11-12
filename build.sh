@@ -8,6 +8,8 @@
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
 #   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
+#   ./build.sh skyzone-steadydigital [config|kernel|all] # Skyzone SteadyDigital (RAM)
+#   ./build.sh skyzone-steadydigital-flash [config|kernel|all] # Skyzone SteadyDigital flashable NAND image (.fwu)
 #   ./build.sh p1-air [config|all] # P1 stock-runtime development bundle
 #
 #   ./build.sh p1-air-source [config|all] # experimental source kernel, RAM rootfs
@@ -40,6 +42,8 @@ need_vendor() {
 ASCENT_VRX_PRO_OUT="$ROOT/output/ascent-vrx-pro"
 AIR_OUT="$ROOT/output/ascent-lite"
 ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
+STEADYDIGITAL_OUT="$ROOT/output/skyzone-steadydigital"
+STEADYDIGITAL_FLASH_OUT="$ROOT/output/skyzone-steadydigital-flash"
 P1_AIR_OUT="$ROOT/output/p1-air"
 P1_AIR_SOURCE_OUT="$ROOT/output/p1-air-source"
 
@@ -60,6 +64,26 @@ case "${1:-all}" in
       all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_OUT" p1air_defconfig
               make -C "$P1_AIR_OUT" ;;
       *) echo "usage: $0 p1-air [config|all]" >&2; exit 1 ;;
+    esac ;;
+  skyzone-steadydigital)
+    # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
+    case "${2:-all}" in
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig ;;
+      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig
+              make -C "$STEADYDIGITAL_OUT" linux-reconfigure ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig
+              make -C "$STEADYDIGITAL_OUT" ;;
+      *) echo "usage: $0 skyzone-steadydigital [config|kernel|all]" >&2; exit 1 ;;
+    esac ;;
+  skyzone-steadydigital-flash)
+    # Flashable NAND image: recovery kernel.img for bank B + packaged .fwu.
+    case "${2:-all}" in
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig ;;
+      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig
+              make -C "$STEADYDIGITAL_FLASH_OUT" linux-reconfigure ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig
+              make -C "$STEADYDIGITAL_FLASH_OUT" ;;
+      *) echo "usage: $0 skyzone-steadydigital-flash [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   ascent-vrx)
     # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
