@@ -26,7 +26,10 @@ CONFIG_DRM_DISPLAY_CONNECTOR=y
 # CONFIG_DRM_FBDEV_EMULATION is not set
 CONFIG_CMA=y
 CONFIG_DMA_CMA=y
-CONFIG_CMA_SIZE_MBYTES=32
+# The screen's plane buffers take about 30 MiB of it, each in one piece; the rest is
+# room to place them around a page that cannot be moved. Unused CMA pages
+# remain available for movable system allocations.
+CONFIG_CMA_SIZE_MBYTES=48
 
 # Front-panel keys on polled GPIOs (the SoC GPIO driver has no IRQs yet).
 CONFIG_INPUT=y

@@ -1,0 +1,287 @@
+From: fpvOS contributors
+Subject: [PATCH] drm/artosyn: scale any I420 picture to the screen, up or down
+
+The video plane scaled only 1920x1080 onto a 1280x720 screen, so 720p and
+864p video on a 1080p screen (and 864p on 720p) was refused and the
+receiver dropped every frame. The scaler takes a ratio per axis and the
+three-tap filter's 17 phases interpolate at any ratio: accept I420 up to
+2x smaller or larger on each axis and load the filter at every output
+size (it was loaded only at 720p).
+
+A new source size is not a modeset (that dropped HDMI and the screen went
+black while it resynced): its scaler registers must not change while a
+frame scans out, so that one flip is written from the next frame-start
+interrupt. Its event is kept with it, not armed on the vblank queue, and
+sent one interrupt later: it cannot go out before the flip is written,
+the old buffer is not handed back while it may still be scanned, and no
+other commit starts in between. A format change stays a modeset. The
+scaler is on when either axis differs from the screen, as the check
+accepts.
+---
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -107,6 +107,16 @@
+ 	struct regmap			*dc;
+ 	void __iomem			*pixreg;
+ 	u32				cur_cfg;
++	u32				cur_src;	/* programmed source size, w | h << 16 */
++	/* A flip to a new source size (holds a vblank reference while geom_held).
++	 * It is written at the next frame start (geom_pending until then) and its
++	 * event, kept here rather than armed, goes out at the frame start after
++	 * that one, once the new picture is the one scanned. No other commit can
++	 * start before the event is sent. Under the event lock.
++	 */
++	struct drm_plane_state		*geom_pending;
++	struct drm_pending_vblank_event	*geom_event;
++	bool				geom_held;
+ 	enum ar_display_profile		profile;
+ };
+ 
+@@ -129,8 +139,9 @@
+ 	1, 0x00ff0000, 0x00ff0000, 0x00ff0000,
+ };
+ 
+-/* Fixed three-tap, 3:2 filter: 17 phases of nine signed Q14 slots.
+- * Unused taps and the rest of filter RAM are zero. Both axes use this ratio.
++/* Three-tap polyphase filter: 17 phases of nine signed Q14 slots, first
++ * tuned for 3:2. The phases interpolate between source pixels, so any ratio
++ * uses it; both axes. Unused taps and the rest of filter RAM are zero.
+  */
+ static const u32 ar_vo_filter_3_2[128] = {
+ 	0x00000000, 0x20000000, 0x00002000, 0x00000000, 0x00000000, 0x00000000,
+@@ -177,6 +188,11 @@
+ 	writel((6 << 16) | (1 << 5) | VO_OVL_EMIT, vo->regs + VO_OVL_CONFIG);
+ }
+ 
++static u32 ar_vo_src(const struct drm_plane_state *s)
++{
++	return (s->src_w >> 16) | ((s->src_h >> 16) << 16);
++}
++
+ /* Keep a clean configuration word: readback includes hardware status bits.
+  * Shadow framebuffer addresses latch when config-lock (bit 3) is cleared.
+  */
+@@ -190,7 +206,8 @@
+ 	u32 cfg = ((yuv ? 15 : 5) << 26) | BIT(0) |
+ 		  (vo->cur_cfg & VO_MAIN_START) | (yuv ? BIT(14) : 0);
+ 	unsigned int i;
+-	bool scaled = state->src_w != state->crtc_w << 16;
++	bool scaled = state->src_w != state->crtc_w << 16 ||
++		      state->src_h != state->crtc_h << 16;
+ 
+ 	if (scaled)
+ 		cfg |= VO_MAIN_SCALER;
+@@ -203,10 +220,12 @@
+ 	writel(yuv ? fb->pitches[1] : 0, vo->regs + 0x1508);
+ 	writel(yuv ? fb->pitches[2] : 0, vo->regs + 0x1510);
+ 	writel(yuv ? 1 : 0, vo->regs + 0x1528);
+-	/* Rewriting scaler geometry during frame flips causes vertical artifacts.
+-	 * Supported geometry changes also change format or the scaler-enable bit.
++	/* Rewriting scaler geometry during frame flips causes vertical artifacts:
++	 * a new source size is written from the frame-start interrupt (see
++	 * ar_vo_commit_tail), a new format at enable.
+ 	 */
+-	if ((cfg ^ vo->cur_cfg) & (GENMASK(30, 26) | VO_MAIN_SCALER)) {
++	if (((cfg ^ vo->cur_cfg) & (GENMASK(30, 26) | VO_MAIN_SCALER)) ||
++	    ar_vo_src(state) != vo->cur_src) {
+ 		/* Three taps per axis; RGB and native-size YUV bypass filtering. */
+ 		writel(yuv ? 0x33 : 0, vo->regs + VO_SCALE_CONFIG);
+ 		writel((state->src_w >> 16) | ((state->src_h >> 16) << 15),
+@@ -219,6 +238,7 @@
+ 		       vo->regs + VO_WIN_Y);
+ 	}
+ 
++	vo->cur_src = ar_vo_src(state);
+ 	writel(y, vo->regs + VO_FB_BASE0);
+ 	writel(u, vo->regs + VO_PLANE2_BASE);
+ 	writel(v, vo->regs + VO_PLANE3_BASE);
+@@ -293,18 +313,19 @@
+ 	writel(0xff, vo->qos);
+ 
+ 	vo->cur_cfg = (5 << 26) | BIT(0); /* opaque XRGB8888, not yet started */
++	vo->cur_src = 0;
+ 	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
+ 	ar_vo_set_fb_addr(vo, plane_state);
+ 
+-	/* Filter RAM is not shadowed: initialize only with scanout stopped. */
+-	if (mode->hdisplay == 1280) {
+-		writel(0, vo->regs + VO_H_FILTER_INDEX);
+-		for (i = 0; i < ARRAY_SIZE(ar_vo_filter_3_2); ++i)
+-			writel(ar_vo_filter_3_2[i], vo->regs + VO_H_FILTER_DATA);
+-		writel(0, vo->regs + VO_V_FILTER_INDEX);
+-		for (i = 0; i < ARRAY_SIZE(ar_vo_filter_3_2); ++i)
+-			writel(ar_vo_filter_3_2[i], vo->regs + VO_V_FILTER_DATA);
+-	}
++	/* Filter RAM is not shadowed: initialize only with scanout stopped.
++	 * Every output size: a scaled source can come at 1080p too.
++	 */
++	writel(0, vo->regs + VO_H_FILTER_INDEX);
++	for (i = 0; i < ARRAY_SIZE(ar_vo_filter_3_2); ++i)
++		writel(ar_vo_filter_3_2[i], vo->regs + VO_H_FILTER_DATA);
++	writel(0, vo->regs + VO_V_FILTER_INDEX);
++	for (i = 0; i < ARRAY_SIZE(ar_vo_filter_3_2); ++i)
++		writel(ar_vo_filter_3_2[i], vo->regs + VO_V_FILTER_DATA);
+ 
+ 	vo->cur_cfg |= VO_MAIN_START;
+ 	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
+@@ -312,10 +333,32 @@
+ 	drm_crtc_vblank_on(&pipe->crtc);
+ }
+ 
++/* Ends a parked flip wherever it stands: nothing more is written for it and
++ * its event goes out now. True when its vblank reference is to be dropped
++ * (outside the lock). Event lock held.
++ */
++static bool ar_vo_geom_end(struct ar_vo *vo)
++{
++	bool held = vo->geom_held;
++
++	if (vo->geom_event)
++		drm_crtc_send_vblank_event(&vo->pipe.crtc, vo->geom_event);
++	vo->geom_event = NULL;
++	vo->geom_pending = NULL;
++	vo->geom_held = false;
++	return held;
++}
++
+ static void ar_vo_pipe_disable(struct drm_simple_display_pipe *pipe)
+ {
+ 	struct ar_vo *vo = to_ar_vo(pipe->crtc.dev);
++	bool put;
+ 
++	spin_lock_irq(&vo->drm.event_lock);
++	put = ar_vo_geom_end(vo);
++	spin_unlock_irq(&vo->drm.event_lock);
++	if (put)
++		drm_crtc_vblank_put(&pipe->crtc);
+ 	writel(0, vo->regs + VO_OVL_CONFIG);
+ 	drm_crtc_vblank_off(&pipe->crtc);
+ 	writel(0, vo->regs + VO_MAIN_CTRL);
+@@ -332,14 +375,36 @@
+ 	struct drm_device *dev = state->dev;
+ 	struct ar_vo *vo = to_ar_vo(dev);
+ 	struct drm_crtc *crtc = &vo->pipe.crtc;
++	bool put;
+ 
+ 	drm_atomic_helper_commit_modeset_disables(dev, state);
+ 	drm_atomic_helper_commit_planes(dev, state, 0);
+ 	drm_atomic_helper_commit_modeset_enables(dev, state);
+ 
+ 	spin_lock_irq(&dev->event_lock);
+-	if (crtc->state->active && vo->pipe.plane.state->fb)
+-		ar_vo_set_fb_addr(vo, vo->pipe.plane.state);
++	/* Only a commit that gave up waiting for a parked flip gets here with
++	 * one still open (its frame-start interrupt never came): superseded.
++	 */
++	put = ar_vo_geom_end(vo);
++	if (crtc->state->active && vo->pipe.plane.state->fb) {
++		struct drm_plane_state *s = vo->pipe.plane.state;
++
++		/* A new source size (720p, 864p, 1080p video) reprograms the scaler,
++		 * whose registers must not change while a frame scans out. Rather
++		 * than a modeset (HDMI drops and the screen resyncs), this flip
++		 * waits for the next frame-start interrupt and is written there;
++		 * its event is kept with it and goes out one interrupt later.
++		 */
++		if ((vo->cur_cfg & VO_MAIN_START) && ar_vo_src(s) != vo->cur_src &&
++		    crtc->state->event && drm_crtc_vblank_get(crtc) == 0) {
++			vo->geom_pending = s;
++			vo->geom_event = crtc->state->event;
++			vo->geom_held = true;
++			crtc->state->event = NULL;
++		} else {
++			ar_vo_set_fb_addr(vo, s);
++		}
++	}
+ 	if (crtc->state->event) {
+ 		if (crtc->state->active && drm_crtc_vblank_get(crtc) == 0)
+ 			drm_crtc_arm_vblank_event(crtc, crtc->state->event);
+@@ -348,6 +413,8 @@
+ 		crtc->state->event = NULL;
+ 	}
+ 	spin_unlock_irq(&dev->event_lock);
++	if (put)
++		drm_crtc_vblank_put(crtc);
+ 
+ 	drm_atomic_helper_commit_hw_done(state);
+ 	drm_atomic_helper_wait_for_vblanks(dev, state);
+@@ -405,9 +472,13 @@
+ 	} else if (fb->pitches[0] != ALIGN(fb->width, 512) * 4 || fb->offsets[0]) {
+ 		return -EINVAL;
+ 	}
++	/* The scaler takes I420 only, up to 2x smaller or larger on each axis
++	 * (720p or 864p video on a 1080p screen, 1080p or 864p on 720p).
++	 */
+ 	if (state->src_w != state->crtc_w << 16 || state->src_h != state->crtc_h << 16) {
+-		if (fb->format->format != DRM_FORMAT_YUV420 || state->src_w != 1920 << 16 ||
+-		    state->src_h != 1080 << 16 || state->crtc_w != 1280 || state->crtc_h != 720)
++		if (fb->format->format != DRM_FORMAT_YUV420 || (fb->width & 1) || (fb->height & 1) ||
++		    fb->width * 2 < state->crtc_w || fb->width > state->crtc_w * 2 ||
++		    fb->height * 2 < state->crtc_h || fb->height > state->crtc_h * 2)
+ 			return -EINVAL;
+ 	}
+ 	return 0;
+@@ -418,7 +489,7 @@
+ 	struct drm_plane_state *s = drm_atomic_get_new_plane_state(state, plane);
+ 	struct ar_vo *vo = to_ar_vo(plane->dev);
+ 	struct drm_crtc_state *cs = drm_atomic_get_new_crtc_state(state, &vo->pipe.crtc);
+-	int ret = drm_atomic_helper_check_plane_state(s, cs, DRM_PLANE_NO_SCALING,
++	int ret = drm_atomic_helper_check_plane_state(s, cs, DRM_PLANE_NO_SCALING / 2,
+ 		2 * DRM_PLANE_NO_SCALING, false, false);
+ 
+ 	if (ret || !s->visible)
+@@ -480,13 +551,38 @@
+ {
+ 	struct ar_vo *vo = data;
+ 	u32 status = readl(vo->regs + VO_INT_STATUS);
++	struct drm_pending_vblank_event *event = NULL;
++	bool done = false;
+ 
+ 	if (!(status & VO_INT_VSYNC))
+ 		return IRQ_NONE;
+ 
+ 	/* Write back to acknowledge the frame-start interrupt. */
+ 	writel(status, vo->regs + VO_INT_STATUS);
++	/* A parked flip: written at one frame start, done at the next. Its event
++	 * is held here, not on the vblank queue, so it cannot go out before the
++	 * flip is written, and nothing else is committed until it has.
++	 */
++	spin_lock(&vo->drm.event_lock);
++	if (vo->geom_pending) {
++		ar_vo_set_fb_addr(vo, vo->geom_pending);
++		vo->geom_pending = NULL;
++	} else if (vo->geom_held) {
++		event = vo->geom_event;
++		vo->geom_event = NULL;
++		vo->geom_held = false;
++		done = true;
++	}
++	spin_unlock(&vo->drm.event_lock);
+ 	drm_crtc_handle_vblank(&vo->pipe.crtc);
++	if (done) {
++		if (event) {
++			spin_lock(&vo->drm.event_lock);
++			drm_crtc_send_vblank_event(&vo->pipe.crtc, event);
++			spin_unlock(&vo->drm.event_lock);
++		}
++		drm_crtc_vblank_put(&vo->pipe.crtc);
++	}
+ 
+ 	return IRQ_HANDLED;
+ }
+@@ -525,10 +621,11 @@
+ 	struct drm_plane_state *old = drm_atomic_get_old_plane_state(state, &vo->pipe.plane);
+ 	struct drm_crtc_state *cs;
+ 
+-	/* Scaler geometry is not safe to change with the timing generator active. */
+-	if (old && new && old->fb && new->fb && new->crtc && new->crtc_w == 1280 &&
+-	    (old->src_w != new->src_w || old->src_h != new->src_h ||
+-	     old->fb->format->format != new->fb->format->format)) {
++	/* A new format (CSC, plane layout) is programmed at enable: a modeset.
++	 * A new source size is not; it is applied at frame start.
++	 */
++	if (old && new && old->fb && new->fb && new->crtc &&
++	    old->fb->format->format != new->fb->format->format) {
+ 		cs = drm_atomic_get_crtc_state(state, new->crtc);
+ 		if (IS_ERR(cs))
+ 			return PTR_ERR(cs);
