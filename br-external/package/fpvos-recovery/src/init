@@ -12,20 +12,47 @@ mkdir -m 700 /run/fpvos-update
 # Adopt the bootloader guard before verifying or unpacking the NAND bundle.
 [ ! -e /etc/fpvos-watchdog ] || watchdog -t 5 -T 60 /dev/watchdog
 
+# The main root at /newroot, and what is installed in its /etc.
+mount_root() {
+    if [ -b "$1" ]; then
+        # A squashfs root mounted where it lies in flash (the NAND helper made
+        # the block device and checked the bundle is the installed one), with
+        # a RAM overlay so the running system can still write anywhere. Both
+        # stay visible after switch_root at /rom and /overlay.
+        mkdir -p /lower /overlay &&
+        mount -t squashfs -o ro "$1" /lower &&
+        mount -t tmpfs -o mode=0755 tmpfs /overlay &&
+        mkdir /overlay/upper /overlay/work &&
+        mount -t overlay -o lowerdir=/lower,upperdir=/overlay/upper,workdir=/overlay/work overlay /newroot &&
+        mkdir -p /newroot/rom /newroot/overlay &&
+        mount --move /lower /newroot/rom &&
+        mount --move /overlay /newroot/overlay || return 1
+    else
+        # No separate gzip -t: the NAND helper checked each image's SHA-256, and
+        # pipefail makes a damaged root fail the unpack itself (one decompression
+        # instead of two on every boot).
+        mount -t tmpfs -o mode=0755 tmpfs /newroot &&
+        (set -o pipefail; cd /newroot && gzip -dc /run/rootfs.gz | cpio -idm) || return 1
+    fi
+    [ -x /newroot/sbin/init ] && [ -x /newroot/usr/sbin/fpvos-update-service ] || return 1
+    if [ -f /run/fpvos-root/installed-sha256 ]; then
+        cp /run/fpvos-root/installed-sha256 /newroot/etc/fpvos-installed-sha256
+    else
+        sha256sum /run/fpvos-update/boot.fwu | cut -d ' ' -f 1 > /newroot/etc/fpvos-installed-sha256
+    fi
+}
+
 # A missing, damaged or mismatched bundle leaves this independent recovery
 # root running. Only the explicit clean flag is consumed by the NAND helper.
 if /usr/sbin/ar9311-nandctl boot; then
     root_image=/run/fpvos-root/$(cat /etc/fpvos-recovery-root)
     case "$root_image" in
+        *.squashfs) ;;
         *.uboot) tail -c +65 "$root_image" > /run/rootfs.gz ;;
         *.gz) mv "$root_image" /run/rootfs.gz ;;
         *) exit 1 ;;
     esac
-    if gzip -t /run/rootfs.gz &&
-       mount -t tmpfs -o mode=0755 tmpfs /newroot &&
-       (cd /newroot && gzip -dc /run/rootfs.gz | cpio -idm) &&
-       [ -x /newroot/sbin/init ] && [ -x /newroot/usr/sbin/fpvos-update-service ]; then
-        sha256sum /run/fpvos-update/boot.fwu | cut -d ' ' -f 1 > /newroot/etc/fpvos-installed-sha256
+    if mount_root "$root_image"; then
         : > /newroot/etc/fpvos-nand-boot
         umount /sys
         umount /proc
@@ -38,7 +65,7 @@ if /usr/sbin/ar9311-nandctl boot; then
 else
     echo 'Clean request or invalid NAND root; entering USB recovery'
 fi
-umount /newroot 2>/dev/null || :
+umount /newroot/rom /newroot/overlay /newroot /lower /overlay 2>/dev/null || :
 rm -rf /run/fpvos-root /run/fpvos-update/boot.fwu /run/rootfs.gz
 : > /run/fpvos-clean-boot
 exec /sbin/init

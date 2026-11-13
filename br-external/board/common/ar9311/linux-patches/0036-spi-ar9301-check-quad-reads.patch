@@ -1,0 +1,149 @@
+From: fpvOS contributors
+Subject: [PATCH] spi: ar9301: check 4-line reads before using them
+
+A board whose device tree asks for 4-line reads (spi-rx-bus-width = <4>)
+may not wire IO2 and IO3 to the flash, and nothing in the device tree can
+prove it does. Wrong reads would leave a NAND-booted box unable to read its
+own flash, including the bank selection it needs to fall back to stock.
+
+So 4-line cache reads (0x6b) are checked first: each is also done on one line
+(0x0b, same address and dummy) and the 1-line data is what the caller gets.
+After 64 pages with real content (not all 0xff or 0x00, which floating lines
+can mimic) read the same both ways, 4-line reads are used alone; one
+difference turns them off for good and says so. Writes are unchanged.
+---
+--- a/drivers/spi/spi-ar9301.c
++++ b/drivers/spi/spi-ar9301.c
+@@ -86,11 +86,27 @@
+ #define AR9301_POLL_US		2
+ #define AR9301_POLL_TIMEOUT_US	100000
+ 
++/*
++ * 4-line reads are checked before they are used: whether a board wires IO2
++ * and IO3 to the flash is not something the device tree can prove. Until
++ * enough pages with real content have read the same on 4 lines as on one,
++ * every 4-line read is also done on one line and the 1-line data is what the
++ * caller gets; a single difference turns 4-line reads off for good. Pages that
++ * are all 0xff or all 0x00 do not count: floating lines read as one or the
++ * other.
++ */
++#define AR9301_QUAD_TRUST	64
++#define AR9301_SCRATCH		4352	/* a 4 KiB page and its OOB */
++enum { AR9301_QUAD_CHECKING, AR9301_QUAD_TRUSTED, AR9301_QUAD_OFF };
++
+ struct ar9301_qspi {
+ 	struct device		*dev;
+ 	void __iomem		*base;		/* qspi_base */
+ 	struct clk		*clk;		/* optional */
+ 	struct mutex		lock;		/* serialises exec_op */
++	int			quad;		/* AR9301_QUAD_* */
++	unsigned int		quad_matches;
++	u8			*scratch;	/* the 4-line copy while checking */
+ };
+ 
+ /* Map an spi-mem bus width to the controller's 2-bit lane code. */
+@@ -292,13 +308,10 @@
+ 	return 0;
+ }
+ 
+-static int ar9301_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
++static int ar9301_run_op(struct ar9301_qspi *qspi, const struct spi_mem_op *op)
+ {
+-	struct ar9301_qspi *qspi = spi_controller_get_devdata(mem->spi->controller);
+ 	int ret;
+ 
+-	mutex_lock(&qspi->lock);
+-
+ 	ret = ar9301_send_cmd(qspi, op);
+ 	if (ret)
+ 		goto out;
+@@ -324,11 +337,78 @@
+ 	/* Keep the DMA/IRQ machinery quiescent after each op. */
+ 	writel(0, qspi->base + AR9301_DMACTRL);
+ 	writel(0, qspi->base + AR9301_IRQ_EN);
+-	mutex_unlock(&qspi->lock);
+ 
+ 	return ret;
+ }
+ 
++/* A page read from the flash's cache on 4 data lines (READ FROM CACHE x4,
++ * 0x6b: command, address and dummy on one line), the one 4-line op spi-nand
++ * issues when only the receive side is 4 lines wide. */
++static bool ar9301_quad_cache_read(const struct spi_mem_op *op)
++{
++	return op->cmd.opcode == 0x6b && op->data.dir == SPI_MEM_DATA_IN &&
++	       op->data.buswidth == 4 && op->cmd.buswidth == 1 &&
++	       op->addr.buswidth == 1 && (!op->dummy.nbytes || op->dummy.buswidth == 1);
++}
++
++static bool ar9301_trivial(const u8 *buf, unsigned int len)
++{
++	unsigned int i;
++
++	if (buf[0] != 0xff && buf[0] != 0x00)
++		return false;
++	for (i = 1; i < len; i++)
++		if (buf[i] != buf[0])
++			return false;
++	return true;
++}
++
++static int ar9301_exec_op(struct spi_mem *mem, const struct spi_mem_op *op)
++{
++	struct ar9301_qspi *qspi = spi_controller_get_devdata(mem->spi->controller);
++	struct spi_mem_op single;
++	unsigned int len = op->data.nbytes, i;
++	int ret;
++
++	mutex_lock(&qspi->lock);
++	if (!ar9301_quad_cache_read(op) || qspi->quad == AR9301_QUAD_TRUSTED) {
++		ret = ar9301_run_op(qspi, op);
++		goto unlock;
++	}
++
++	/* The same page from the cache on one line (FAST READ FROM CACHE, 0x0b:
++	 * the same address and dummy bytes): what the caller gets. */
++	single = *op;
++	single.cmd.opcode = 0x0b;
++	single.data.buswidth = 1;
++	ret = ar9301_run_op(qspi, &single);
++	if (ret || qspi->quad == AR9301_QUAD_OFF || !qspi->scratch || len > AR9301_SCRATCH ||
++	    ar9301_trivial(op->data.buf.in, len))
++		goto unlock;
++
++	/* Reading the cache again does not disturb it: the page stays loaded. */
++	single = *op;
++	single.data.buf.in = qspi->scratch;
++	if (ar9301_run_op(qspi, &single))
++		goto unlock;
++	if (memcmp(qspi->scratch, op->data.buf.in, len)) {
++		for (i = 0; i < len && qspi->scratch[i] == ((u8 *)op->data.buf.in)[i]; i++)
++			;
++		qspi->quad = AR9301_QUAD_OFF;
++		dev_warn(qspi->dev,
++			 "4-line reads differ from 1-line ones (byte %u: %#04x, not %#04x): reading on one line\n",
++			 i, qspi->scratch[i], ((u8 *)op->data.buf.in)[i]);
++	} else if (++qspi->quad_matches >= AR9301_QUAD_TRUST) {
++		qspi->quad = AR9301_QUAD_TRUSTED;
++		dev_info(qspi->dev, "4-line reads match 1-line ones on %u pages: reading on four lines\n",
++			 qspi->quad_matches);
++	}
++
++unlock:
++	mutex_unlock(&qspi->lock);
++	return ret;
++}
++
+ static int ar9301_adjust_op_size(struct spi_mem *mem, struct spi_mem_op *op)
+ {
+ 	if (op->data.nbytes > AR9301_MAX_DATA_LEN)
+@@ -367,6 +447,9 @@
+ 	qspi = spi_controller_get_devdata(ctlr);
+ 	qspi->dev = dev;
+ 	mutex_init(&qspi->lock);
++	qspi->quad = AR9301_QUAD_CHECKING;
++	/* Without it every 4-line read is simply done on one line. */
++	qspi->scratch = devm_kmalloc(dev, AR9301_SCRATCH, GFP_KERNEL);
+ 
+ 	qspi->base = devm_platform_ioremap_resource_byname(pdev, "qspi_base");
+ 	if (IS_ERR(qspi->base))

@@ -9,12 +9,12 @@
   "names": [
     "kernel.img",
     "skyzone-steadydigital.dtb",
-    "rootfs.cpio.gz"
+    "rootfs.squashfs"
   ],
   "limits": [
     6291456,
     65536,
-    16777216
+    25165824
   ],
   "counts": [
     3,

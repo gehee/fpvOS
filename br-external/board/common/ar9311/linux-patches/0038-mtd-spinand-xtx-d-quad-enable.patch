@@ -1,0 +1,39 @@
+From: fpvOS contributors
+Subject: [PATCH] mtd: spinand: xtx: quad enable on the 1 Gbit D parts
+
+The XT26G01D, XT26G11D and XT26Q01D keep their Quad Enable bit where the
+other XTX parts do (feature register 0xb0, bit 0), but their table entries
+lack SPINAND_HAS_QE_BIT. spi-nand then clears the bit at probe even when it
+goes on to read from the cache on 4 lines (0x6b), and the chip answers
+those reads on IO1 only. With the flag the bit is set whenever a 4-line
+cache op was chosen, as for the A parts.
+---
+--- a/drivers/mtd/nand/spi/xtx.c
++++ b/drivers/mtd/nand/spi/xtx.c
+@@ -176,7 +176,7 @@
+ 		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
+ 					      &write_cache_variants,
+ 					      &update_cache_variants),
+-		     0,
++		     SPINAND_HAS_QE_BIT,
+ 		     SPINAND_ECCINFO(&xt26xxxd_ooblayout,
+ 				     xt26xxxd_ecc_get_status)),
+ 	SPINAND_INFO("XT26G11D",
+@@ -186,7 +186,7 @@
+ 		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
+ 					      &write_cache_variants,
+ 					      &update_cache_variants),
+-		     0,
++		     SPINAND_HAS_QE_BIT,
+ 		     SPINAND_ECCINFO(&xt26xxxd_ooblayout,
+ 				     xt26xxxd_ecc_get_status)),
+ 	SPINAND_INFO("XT26Q01D",
+@@ -196,7 +196,7 @@
+ 		     SPINAND_INFO_OP_VARIANTS(&read_cache_variants,
+ 					      &write_cache_variants,
+ 					      &update_cache_variants),
+-		     0,
++		     SPINAND_HAS_QE_BIT,
+ 		     SPINAND_ECCINFO(&xt26xxxd_ooblayout,
+ 				     xt26xxxd_ecc_get_status)),
+ 	SPINAND_INFO("XT26G02D",

@@ -2,6 +2,7 @@
 #ifndef FPVOS_P1_H
 #define FPVOS_P1_H
 #include <stddef.h>
+#include <stdint.h>
 #include "layout.h"
 #include <sys/types.h>
 #ifndef P1_WORK
@@ -16,6 +17,8 @@ int p1_state_unmount(void);
 int p1_bundle_read(const char *destination);
 int p1_bundle_write(const char *source);
 int p1_bundle_present(void);
+int p1_bundle_open(uint64_t *bytes, char node[64]);
+int p1_root_attach(int volume_fd, const char *node, uint64_t offset, uint64_t size, char device[64]);
 int p1_active_bank(unsigned *bank);
 int p1_hash(const char *path, char hash[65]);
 int p1_read(const char *path, char *text, size_t size);

@@ -7,6 +7,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <linux/loop.h>
 #include <mtd/mtd-user.h>
 #include <mtd/ubi-user.h>
 #include <stdio.h>
@@ -280,6 +281,62 @@ int p1_bundle_read(const char *destination)
     close(in);
     if (out >= 0) close(out);
     return rc;
+}
+
+/* The bundle volume, read-only, for a boot that mounts the root where it lies
+ * (*bytes: the volume's size; a dynamic volume does not record how much its
+ * last update wrote). */
+int p1_bundle_open(uint64_t *bytes, char node[64])
+{
+    int fd = volume(0,0,node);
+    if (fd < 0) return -1;
+    char path[128],text[64];
+    snprintf(path,sizeof(path),"/sys/class/ubi/%s/data_bytes",node+5);
+    if (p1_read(path,text,sizeof(text))) { close(fd); return -1; }
+    *bytes = strtoull(text,NULL,10);
+    return fd;
+}
+
+static int wait_open(const char *path, int flags)
+{
+    for (unsigned attempt = 0; attempt < 50; attempt++) {
+        int fd = open(path,flags|O_CLOEXEC|O_NOFOLLOW);
+        if (fd >= 0 || errno != ENOENT) return fd;
+        usleep(20000);
+    }
+    return -1;
+}
+
+/* A read-only block device over size bytes at offset in the bundle volume
+ * (opened by p1_bundle_open as node): UBI's own block layer (ubiblock) for
+ * the volume, a loop device for the root inside it. The volume cannot be
+ * updated while ubiblock holds it; installs run from the clean recovery,
+ * where this never ran. */
+int p1_root_attach(int volume_fd, const char *node, uint64_t offset, uint64_t size, char device[64])
+{
+    struct ubi_blkcreate_req request = {0};
+    char block[64];
+    if (strncmp(node,"/dev/ubi",8) || ioctl(volume_fd,UBI_IOCVOLCRBLK,&request)) return -1;
+    snprintf(block,sizeof(block),"/dev/ubiblock%s",node+8);
+    int in = wait_open(block,O_RDONLY), rc = -1;
+    if (in < 0) return -1;
+    int control = open("/dev/loop-control",O_RDWR|O_CLOEXEC);
+    int number = control < 0 ? -1 : ioctl(control,LOOP_CTL_GET_FREE);
+    if (control >= 0) close(control);
+    if (number >= 0) {
+        snprintf(device,64,"/dev/loop%d",number);
+        int loop = wait_open(device,O_RDONLY);
+        /* No autoclear: it would detach the device when this closes it,
+         * before the recovery mounts it. */
+        struct loop_config config = {.fd=(unsigned)in,
+            .info={.lo_offset=offset,.lo_sizelimit=size,.lo_flags=LO_FLAGS_READ_ONLY}};
+        if (loop >= 0) {
+            rc = ioctl(loop,LOOP_CONFIGURE,&config);
+            close(loop);
+        }
+    }
+    close(in);
+    return rc ? -1 : 0;
 }
 
 /* What bank B's bundle volume holds, asked before anything is selected or

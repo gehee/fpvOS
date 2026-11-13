@@ -2,6 +2,7 @@
 #include "board.h"
 #include "fpvos-bytes.h"
 #include "ar9311-image.h"
+#include "root.h"
 #include <libfdt.h>
 #include <string.h>
 int fpvos_board_image_valid(unsigned index, const unsigned char *data, size_t size, unsigned kind)
@@ -17,5 +18,5 @@ int fpvos_board_image_valid(unsigned index, const unsigned char *data, size_t si
                (size_t)fdt_totalsize(data) == size &&
                !fdt_node_check_compatible(data, 0, "skyzone,steadydigital");
     }
-    return size >= 18 && size <= 0x1000000 && data[0] == 0x1f && data[1] == 0x8b && data[2] == 8;
+    return size <= fpvos_board.limits[2] && sd_root_valid(data,size,size);
 }

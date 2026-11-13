@@ -9,7 +9,8 @@
 #include <stdarg.h>
 
 const struct fpvos_update_board fpvos_board = {
-    .names={"kernel.img","skyzone-steadydigital.dtb","rootfs.cpio.gz"},.counts={3,0},.bundle_limits={33554432,512}
+    .names={"kernel.img","skyzone-steadydigital.dtb","rootfs.squashfs"},.limits={6291456,65536,25165824},
+    .counts={3,0},.bundle_limits={33554432,512}
 };
 const struct fpvos_bootstrap_file fpvos_bootstrap_files[] = {
     {"root/usr/share/fpvos-update/boot.sh",(const unsigned char *)"boot",4,0600},
@@ -37,6 +38,24 @@ int p1_bundle_read(const char *destination) {
     if (!rc && !strcmp(fault,"corrupt")) { int fd=open(destination,O_WRONLY); assert(fd>=0); assert(write(fd,"!",1)==1); close(fd); }
     return rc;
 }
+/* A boot reads the volume where it lies: the test puts a real bundle there. */
+int p1_bundle_open(uint64_t *bytes, char node[64]) {
+    event("open");
+    /* Like UBI: the volume's whole size, not what the last update wrote. */
+    struct stat st; int fd=open("volume",O_RDONLY);
+    assert(fd>=0 && !fstat(fd,&st)); *bytes=(uint64_t)st.st_size+(!strcmp(fault,"boot-small") ? 0 : 1000000);
+    snprintf(node,64,"/dev/ubi1_0"); return fd;
+}
+int p1_root_attach(int fd, const char *node, uint64_t offset, uint64_t size, char device[64]) {
+    (void)fd;(void)node;
+    FILE *f=fopen("attached","w"); assert(f); fprintf(f,"%llu %llu\n",(unsigned long long)offset,(unsigned long long)size); fclose(f);
+    event("attach");
+    if (!strcmp(fault,"boot-attach")) return -1;
+    snprintf(device,64,"/dev/loop7"); return 0;
+}
+int fpvos_board_image_valid(unsigned index, const unsigned char *data, size_t size, unsigned kind) {
+    (void)data;(void)size;(void)kind; event(index==1 ? "dtb-valid" : "image-valid"); return 1;
+}
 /* What the unit boots and what bank B holds, as the mode names them:
  * "stock-b" is a unit whose own stock runs from bank B, "bad-volume" one
  * whose bundle volume cannot be used. Anything else: fpvOS already in B. */
@@ -59,7 +78,9 @@ int p1_select_bank(unsigned bank) { bank = !bank;
     return 0;
 }
 int p1_flash_image(unsigned index,const char *path,int writing) {
-    (void)path;assert(writing);assert(!access("selected-stock",F_OK));
+    (void)path;
+    if (!writing) { event(index ? "compare-dtb" : "compare-kernel"); return 0; }
+    assert(!access("selected-stock",F_OK));
     event(index ? "dtb" : "kernel");
     return !strcmp(fault,index ? "dtb" : "kernel") ? -1 : 0;
 }
@@ -75,11 +96,14 @@ int __wrap_execlp(const char *program,const char *arg,...) {
         for (int i=0;i<3;i++) { char path[1024];snprintf(path,sizeof(path),"%s/%s",b,fpvos_board.names[i]);int fd=open(path,O_CREAT|O_WRONLY,0600);assert(fd>=0);close(fd); }
         _exit(0);
     }
-    if (!strcmp(program,"gzip")) _exit(!strcmp(fault,"gzip"));
+    if (!strcmp(program,"gzip")) { event("gzip"); _exit(!strcmp(fault,"gzip")); }
     execl("/usr/bin/sha256sum","sha256sum",a,(char *)NULL);_exit(127);
 }
 int main(int argc,char **argv) {
     assert(argc==2);fault=argv[1];
+    if (!strncmp(fault,"boot",4)) {
+        int rc=boot(); return rc==10 ? 10 : rc ? 1 : 0;
+    }
     int rc=transaction("upload");
     return rc ? 1 : 0;
 }

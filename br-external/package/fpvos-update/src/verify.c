@@ -12,13 +12,7 @@
 
 #include "board.h"
 #include "fpvos-bytes.h"
-static int zeros(const unsigned char *p, size_t n)
-{
-	while (n--)
-		if (*p++)
-			return 0;
-	return 1;
-}
+#include "fpvos-bundle.h"
 static int hash_matches(const char *path, const unsigned char *expected)
 {
 	int fds[2], status;
@@ -79,35 +73,10 @@ int main(int argc, char **argv)
 	if (!in)
 		goto done;
 	fd = -1;
-	if (fread(h, 1, 512, in) != 512 || memcmp(h, "FPVOSUP1", 8) || fpvos_get_le32(h + 8) != 1 ||
-	    fpvos_get_le32(h + 12) != fpvos_board.board_id || fpvos_get_le32(h + 16) != (uint64_t)st.st_size)
+	/* The header alone: names, sizes, hashes and CRC (fpvos-bundle.h). */
+	if (fread(h, 1, 512, in) != 512 || !fpvos_bundle_header_valid(h, (uint64_t)st.st_size))
 		goto done;
 	unsigned kind = fpvos_get_le32(h + 88), count = fpvos_get_le32(h + 20);
-	if (kind > 1 || !fpvos_board.counts[kind] || count != fpvos_board.counts[kind] ||
-	    (uint64_t)st.st_size > fpvos_board.bundle_limits[kind] ||
-	    !zeros(h + 96 + 104 * count, 104 * (3 - count)))
-		goto done;
-	uint32_t expected = fpvos_get_le32(h + 508);
-	memset(h + 508, 0, 4);
-	if (~fpvos_crc32_update(~0U, h, 512) != expected || !memchr(h + 24, 0, 64) || !zeros(h + 92, 4) ||
-	    !zeros(h + 408, 100))
-		goto done;
-	uint64_t sum = 512;
-	for (unsigned i = 0; i < count; i++) {
-		unsigned char *entry = h + 96 + 104 * i;
-		size_t name_len = strlen(fpvos_board.names[i]);
-		uint32_t n = fpvos_get_le32(entry + 32);
-		if (memcmp(entry, fpvos_board.names[i], name_len) || !zeros(entry + name_len, 32 - name_len) ||
-		    !zeros(entry + 100, 4) || !n || n > fpvos_board.limits[i])
-			goto done;
-		for (unsigned j = 36; j < 100; j++)
-			if (!((entry[j] >= '0' && entry[j] <= '9') ||
-			      (entry[j] >= 'a' && entry[j] <= 'f')))
-				goto done;
-		sum += n;
-	}
-	if (sum != (uint64_t)st.st_size)
-		goto done;
 	for (unsigned i = 0; i < count; i++) {
 		unsigned char *entry = h + 96 + 104 * i;
 		uint32_t n = fpvos_get_le32(entry + 32);

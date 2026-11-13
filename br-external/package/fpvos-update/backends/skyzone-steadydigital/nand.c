@@ -3,6 +3,8 @@
 #include "p1.h"
 #include "board.h"
 #include "bootstrap.h"
+#include "fpvos-bundle.h"
+#include "root.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -14,6 +16,13 @@
 #include <sys/wait.h>
 #include <linux/magic.h>
 #include <unistd.h>
+
+/* Where a boot leaves the root for the recovery init: rootfs.squashfs, a link
+ * to the block device over the root in the bundle volume, and
+ * installed-sha256. A host test points it into its own directory. */
+#ifndef P1_ROOT
+#define P1_ROOT "/run/fpvos-root"
+#endif
 
 static int execute(const char *program, const char *a, const char *b)
 {
@@ -38,16 +47,22 @@ static void remove_images(const char *directory)
     rmdir(directory);
 }
 
+/* The bundle's header, each image's SHA-256 and the root's squashfs
+ * superblock (fpvos-update-verify). */
 static int verify(const char *package, const char *directory)
 {
-    if (mkdir(directory,0700) || execute("/usr/libexec/fpvos-update-verify",package,directory)) return -1;
-    char path[1024]; snprintf(path,sizeof(path),"%s/rootfs.cpio.gz",directory);
-    return execute("gzip","-t",path);
+    return mkdir(directory,0700) || execute("/usr/libexec/fpvos-update-verify",package,directory) ? -1 : 0;
 }
 
-static int clean_flag(int action)
+/* What the last install put in the bundle volume: the bundle's SHA-256 and its
+ * header's CRC, "<sha256> <crc32 hex>". A boot reads the header, not the
+ * whole bundle, and reports this hash as what is installed. */
+#define P1_INSTALLED P1_STATE "/fpvos-installed"
+
+/* The clean flag with the state volume already mounted: action 1 sets it, 0
+ * consumes it (10: it was set). */
+static int clean_flag_mounted(int action)
 {
-    if (p1_state_mount()) return -1;
     const char *path = P1_STATE "/fpvos-update-clean";
     char value[16]; int rc = 0;
     if (action == 1) rc = p1_atomic(path,"1\n",2,0600);
@@ -56,9 +71,38 @@ static int clean_flag(int action)
         else if (unlink(path)) rc = -1;
         else rc = 10;
     } else if (errno != ENOENT) rc = -1;
+    return rc;
+}
+
+static int clean_flag(int action)
+{
+    if (p1_state_mount()) return -1;
+    int rc = clean_flag_mounted(action);
     sync();
     if (p1_state_unmount()) rc = -1;
     return rc;
+}
+
+static int installed_write(const char *sha, unsigned crc)
+{
+    char text[80];
+    snprintf(text,sizeof(text),"%s %08x\n",sha,crc);
+    if (p1_state_mount()) return -1;
+    int rc = p1_atomic(P1_INSTALLED,text,strlen(text),0600);
+    sync();
+    if (p1_state_unmount()) rc = -1;
+    return rc;
+}
+
+static int installed_read_mounted(char sha[65], unsigned *crc)
+{
+    char text[128];
+    if (!regular(P1_INSTALLED) || p1_read(P1_INSTALLED,text,sizeof(text)) || strlen(text) != 73 ||
+        strspn(text,"0123456789abcdef") != 64 || text[64] != ' ' ||
+        strspn(text+65,"0123456789abcdef") != 8) return -1;
+    memcpy(sha,text,64); sha[64] = 0;
+    *crc = (unsigned)strtoul(text+65,NULL,16);
+    return 0;
 }
 
 static int remove_stock_hook(void)
@@ -121,12 +165,17 @@ static int bank_b_free(void)
 static int transaction(const char *source)
 {
     char directory[] = P1_WORK "/transaction.XXXXXX", package[512], images[512], readback[512], path[1024];
-    char before[65], after[65]; int rc = -1;
+    char before[65], after[65]; unsigned char header[512]; int rc = -1;
     if (!mkdtemp(directory)) return -1;
     snprintf(package,sizeof(package),"%s/package.fwu",directory);
     snprintf(images,sizeof(images),"%s/images",directory);
     snprintf(readback,sizeof(readback),"%s/readback.fwu",directory);
-    if (copy_package(source,package) || verify(package,images) || p1_hash(package,before)) goto done;
+    int fd = -1;
+    if (copy_package(source,package) || verify(package,images) || p1_hash(package,before) ||
+        (fd = open(package,O_RDONLY|O_CLOEXEC|O_NOFOLLOW)) < 0) goto done;
+    int got = p1_exact(fd,header,sizeof(header),0);
+    close(fd);
+    if (got) goto done;
     if (bank_b_free()) goto done;
     /* Select the untouched stock bank A (0) before modifying bank B (1). Power
      * loss during installation then boots stock; only verified images reactivate
@@ -137,7 +186,8 @@ static int transaction(const char *source)
         if (p1_flash_image(i,path,1)) goto done;
     }
     remove_images(images);
-    if (p1_bundle_write(package) || p1_bundle_read(readback) || p1_hash(readback,after) || strcmp(before,after)) goto done;
+    if (p1_bundle_write(package) || p1_bundle_read(readback) || p1_hash(readback,after) || strcmp(before,after) ||
+        installed_write(before,fpvos_get_le32(header+508))) goto done;
     int flag = clean_flag(0);
     if (flag < 0 || p1_select_bank(1)) goto done;
     puts("Verified kernel, DTB and UBI root; fpvOS bank B selected");
@@ -147,18 +197,81 @@ static int transaction(const char *source)
     return rc;
 }
 
+static int save(const char *path, const void *data, size_t size)
+{
+    int fd = open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW|O_CLOEXEC,0600), rc = fd < 0;
+    if (fd >= 0) {
+        const unsigned char *p = data;
+        while (size && !rc) {
+            ssize_t n = write(fd,p,size);
+            if (n < 0 && errno == EINTR) continue;
+            if (n <= 0) rc = 1; else { p += n; size -= n; }
+        }
+        if (close(fd)) rc = 1;
+    }
+    return rc ? -1 : 0;
+}
+
+/* The root is mounted where it lies in the bundle volume, so a boot reads
+ * only what proves the bundle is the installed one and fits this kernel: the
+ * header (CRC as recorded at install), the DTB (hash, and the same as dtb1),
+ * the kernel's first 4 KiB (its image headers, with the data CRC, the same as
+ * kernel1's) and the root's superblock. The whole bundle was hashed and read
+ * back from flash when it was installed; reading it again cost ~3.5 s of
+ * every boot, and unpacking the root into RAM another ~3 s and 20 MB. */
 static int boot(void)
 {
-    int rc = clean_flag(0);
-    if (rc) return rc;
-    const char *package = P1_WORK "/boot.fwu", *images = "/run/fpvos-root";
-    if (p1_bundle_read(package) || verify(package,images)) return -1;
-    for (unsigned i = 0; i < 2; i++) {
-        char path[512]; snprintf(path,sizeof(path),"%s/%s",images,fpvos_board.names[i]);
-        if (p1_flash_image(i,path,0)) return -1;
-        unlink(path);
+    char sha[65], hash[65], node[64], device[64], path[1024];
+    unsigned crc;
+    if (p1_state_mount()) return -1;
+    int rc = clean_flag_mounted(0);
+    if (!rc && installed_read_mounted(sha,&crc)) {
+        fprintf(stderr,"SteadyDigital: no install record\n");
+        rc = -1;
     }
-    return 0;
+    sync();
+    if (p1_state_unmount()) rc = -1;
+    if (rc) return rc;
+
+    uint64_t capacity;
+    unsigned char header[512], head[4096], superblock[SD_ROOT_SUPERBLOCK], *dtb = NULL;
+    int fd = p1_bundle_open(&capacity,node);
+    if (fd < 0) return -1;
+    rc = -1;
+    /* A dynamic volume keeps no length of its last update: the header says
+     * how long the bundle is, and it must fit. */
+    if (p1_exact(fd,header,sizeof(header),0) || fpvos_get_le32(header+16) > capacity ||
+        !fpvos_bundle_header_valid(header,fpvos_get_le32(header+16)) ||
+        fpvos_get_le32(header+88) || fpvos_get_le32(header+508) != crc) {
+        fprintf(stderr,"SteadyDigital: the bundle volume does not hold the installed bundle\n");
+        goto done;
+    }
+    uint32_t kernel = fpvos_get_le32(FPVOS_BUNDLE_ENTRY(header,0)+32),
+             tree = fpvos_get_le32(FPVOS_BUNDLE_ENTRY(header,1)+32),
+             root = fpvos_get_le32(FPVOS_BUNDLE_ENTRY(header,2)+32);
+    size_t first = kernel < sizeof(head) ? kernel : sizeof(head);
+    if (mkdir(P1_ROOT,0700) || !(dtb = malloc(tree))) goto done;
+    snprintf(path,sizeof(path),"%s/kernel-head",P1_ROOT);
+    if (p1_exact(fd,head,first,512) || save(path,head,first) || p1_flash_image(0,path,0)) goto done;
+    unlink(path);
+    snprintf(path,sizeof(path),"%s/%s",P1_ROOT,fpvos_board.names[1]);
+    if (p1_exact(fd,dtb,tree,512+(off_t)kernel) || !fpvos_board_image_valid(1,dtb,tree,0) ||
+        save(path,dtb,tree) || p1_hash(path,hash) || memcmp(hash,FPVOS_BUNDLE_ENTRY(header,1)+36,64) ||
+        p1_flash_image(1,path,0)) goto done;
+    unlink(path);
+    off_t offset = 512+(off_t)kernel+tree;
+    if (p1_exact(fd,superblock,sizeof(superblock),offset) || !sd_root_valid(superblock,sizeof(superblock),root) ||
+        p1_root_attach(fd,node,(uint64_t)offset,root,device)) goto done;
+    snprintf(path,sizeof(path),"%s/%s",P1_ROOT,fpvos_board.names[2]);
+    if (symlink(device,path)) goto done;
+    snprintf(path,sizeof(path),"%s/installed-sha256",P1_ROOT);
+    sha[64] = '\n';
+    if (save(path,sha,65)) goto done;
+    rc = 0;
+ done:
+    free(dtb);
+    close(fd);
+    return rc;
 }
 
 int fpvos_stock_runtime_valid(void) { return p1_stock() == 1; }
