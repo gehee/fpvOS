@@ -1,0 +1,63 @@
+#!/bin/sh
+# DVR > Format Card on the VRX Pro. It boots from its card, so only the
+# recordings partition is erased: p4, made by S35dvrpart, exFAT named dvr.
+# p1-p3 (boot, system, settings) are never touched.
+#
+#   check   what would be erased (exit 0), or why it cannot be (exit 1)
+#   start   do it in the background and return at once: kestrel-gnd asks,
+#           and is stopped and started again around the format (it keeps
+#           its logs on this partition)
+#
+# The outcome is the one line in /run/fpvos-format-dvr.status: "running",
+# "ok <what>" or "failed <why>"; kestrel-gnd shows it once it is back.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+status=/run/fpvos-format-dvr.status
+DEV=/dev/mmcblk1
+PART=${DEV}p4
+MNT=/media/dvr
+
+size_text() {
+	awk -v s="$(cat /sys/class/block/${PART##*/}/size)" 'BEGIN { printf "%.1f GB", s * 512 / 1e9 }'
+}
+
+check() {
+	[ -b "$PART" ] || { echo "No recordings partition"; return 1; }
+	# Only ever the recordings mount from p4, and never the root.
+	if awk -v p="$PART" '$1 == p && $2 != "/media/dvr" { bad = 1 } END { exit !bad }' /proc/mounts; then
+		echo "The partition is in use"; return 1
+	fi
+	command -v mkfs.exfat >/dev/null || { echo "Needs updated fpvOS firmware"; return 1; }
+	echo "Recordings partition, $(size_text)"
+}
+
+worker() {
+	echo running > "$status"
+	what="Recordings partition, $(size_text)"
+	fail() {
+		echo "failed $*" > "$status"
+		mountpoint -q "$MNT" || mount -t exfat -o noatime "$PART" "$MNT" 2>/dev/null
+		/etc/init.d/S70kestrel start >/dev/null 2>&1
+		exit 1
+	}
+	/etc/init.d/S70kestrel stop >/dev/null 2>&1 || fail "could not stop the receiver"
+	sync
+	if mountpoint -q "$MNT"; then umount "$MNT" || fail "the partition is still in use"; fi
+	! grep -q "^$PART " /proc/mounts || fail "the partition is still in use"
+	mkfs.exfat -L dvr "$PART" >/dev/null 2>&1 || fail "formatting failed"
+	sync
+	mount -t exfat -o noatime "$PART" "$MNT" || fail "the new partition did not mount"
+	echo "ok $what formatted" > "$status"
+	/etc/init.d/S70kestrel start >/dev/null 2>&1
+}
+
+case "${1:-}" in
+	check) check ;;
+	start)
+		why=$(check) || { echo "$why"; exit 1; }
+		echo running > "$status"
+		setsid "$0" worker </dev/null >/dev/null 2>&1 &
+		echo "Formatting $why"
+		;;
+	worker) worker ;;
+	*) echo "Usage: $0 {check|start}" >&2; exit 2 ;;
+esac

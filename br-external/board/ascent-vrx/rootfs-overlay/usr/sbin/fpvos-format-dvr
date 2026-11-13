@@ -1,0 +1,187 @@
+#!/bin/sh
+# DVR > Format Card on the AR9311 receivers (VRX, Gnd485, SteadyDigital).
+# They boot from NAND, so the removable card is never the system's: the whole
+# card is erased and made one exFAT partition named DVR, as the VRX Pro's own
+# recordings partition is (readable on Windows and macOS, no 4 GB file limit).
+#
+#   check   what would be erased (exit 0), or why it cannot be (exit 1)
+#   start   do it in the background and return at once: kestrel-gnd asks
+#
+# The receiver keeps running through the format when nothing of its own is on
+# the card: its settings live elsewhere (the SteadyDigital's usr_data) and it
+# already records to the card's folder, which comes back under the same name.
+# It reads the outcome itself. Otherwise it is stopped and started again
+# around the format, and start says so: a VRX's settings are on the card, and
+# a receiver started without a card records to RAM until it is started again.
+#
+# The outcome is the one line in /run/fpvos-format-dvr.status: "running",
+# "ok <what>" or "failed <why>"; kestrel-gnd shows it once it is back.
+# Kestrel's settings and pairing are carried across: on a VRX they live on
+# this card (S46kestrel-state). A copy is taken first and put back onto the
+# new card - or, when the format fails, into the RAM settings the receiver
+# then runs on, and kept for the next try: a failed format never loses them.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+status=/run/fpvos-format-dvr.status
+keep=/run/fpvos-format-keep
+
+# The SD controller's card, as S45ar9311-sd finds it.
+# Where the settings live now: the card, RAM (a VRX without one), or storage
+# of the board's own (the SteadyDigital's usr_data).
+state_in() { case "$(readlink -f /var/lib/kestrel)" in "$1"/*|"$1") return 0 ;; esac; return 1; }
+
+# The running receiver records to the card's own folder.
+records_to_card() {
+	for pid in $(pidof kestrel-gnd); do
+		tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -q -- '--recordings /mnt/sd/fpvos/recordings ' && return 0
+	done
+	return 1
+}
+
+# live: the receiver stays up. restart: it is stopped and started again.
+mode() {
+	if ! state_in /mnt/sd && ! state_in /run/kestrel-state && mountpoint -q /mnt/sd && records_to_card; then
+		echo live
+	else
+		echo restart
+	fi
+}
+
+find_card() {
+	for block in /sys/class/block/mmcblk*; do
+		[ -e "$block/partition" ] && continue
+		case "$(readlink -f "$block")" in
+			*/1c00000.mmc/mmc_host/*)
+				[ "$(cat "$block/device/type" 2>/dev/null)" = SD ] || continue
+				printf '%s\n' "${block##*/}"
+				;;
+		esac
+	done
+}
+
+size_text() {
+	awk -v s="$(cat "/sys/class/block/$1/size")" 'BEGIN { printf "%.1f GB", s * 512 / 1e9 }'
+}
+
+check() {
+	name=$(find_card)
+	[ -n "$name" ] || { echo "No SD card"; return 1; }
+	# Nothing may be mounted from it but the recordings mount.
+	if awk -v d="/dev/$name" 'index($1, d) == 1 && $2 != "/mnt/sd" { bad = 1 } END { exit !bad }' /proc/mounts; then
+		echo "The card is in use"; return 1
+	fi
+	command -v mkfs.exfat >/dev/null || { echo "Needs updated fpvOS firmware"; return 1; }
+	echo "SD card, $(size_text "$name")"
+}
+
+worker() {
+	echo running > "$status"
+	name=$(find_card)
+	what="SD card, $(size_text "$name")"
+	mode=${1:-restart}
+	# Started again when it was stopped; left alone when it kept running and
+	# its folder is back. A receiver that kept running but has lost its card
+	# is started again too, so it records to RAM as one booted without a card.
+	restart() {
+		[ -x /etc/init.d/S60kestrel-gnd ] || return 0
+		if [ "$mode" = live ] && ! mountpoint -q /mnt/sd; then
+			/etc/init.d/S60kestrel-gnd restart
+		else
+			/etc/init.d/S60kestrel-gnd start
+		fi
+	}
+	fail() {
+		echo "failed $*" > "$status"
+		/etc/init.d/S45ar9311-sd start >/dev/null 2>&1
+		/etc/init.d/S46kestrel-state start >/dev/null 2>&1
+		# The card's settings now run from RAM, so the receiver stays paired;
+		# the copy is kept for the next try. Not the marker that sends
+		# recordings to a card: there is none mounted.
+		if [ -d "$keep" ] && state_in /run/kestrel-state; then
+			cp -a "$keep/." /var/lib/kestrel/ 2>/dev/null
+			rm -f /var/lib/kestrel/persistent
+		fi
+		restart >/dev/null 2>&1
+		exit 1
+	}
+	[ -n "$name" ] || fail "no SD card"
+	if [ "$mode" != live ]; then
+		/etc/init.d/S60kestrel-gnd stop >/dev/null 2>&1 || fail "could not stop the receiver"
+	fi
+	# The settings as they are now, taken whole before the last copy is let
+	# go: the card's (a VRX), or the RAM ones a failed try left running.
+	saved=1
+	if state_in /mnt/sd || state_in /run/kestrel-state; then
+		rm -rf "$keep.new"; mkdir -p "$keep.new"
+		if cp -a /var/lib/kestrel/. "$keep.new/" 2>/dev/null; then
+			rm -rf "$keep"; mv "$keep.new" "$keep"
+		else
+			# An unreadable card is a reason to format it: go on, with
+			# whatever an earlier copy holds, and say so.
+			rm -rf "$keep.new"; saved=0
+		fi
+	fi
+	# A running receiver may be looking at its folder this instant (free
+	# space, the list of recordings): a busy unmount is tried again briefly.
+	i=0
+	while /etc/init.d/S45ar9311-sd stop >/dev/null 2>&1; grep -q "^/dev/$name" /proc/mounts; do
+		i=$((i + 1))
+		[ "$i" -lt 15 ] || fail "the card is still in use"
+		sleep 0.2
+	done
+	dev=/dev/$name
+	# Pulled since it was found: dd would make a plain file of that name.
+	[ -b "$dev" ] || fail "the card was removed"
+	sectors=$(cat "/sys/class/block/$name/size" 2>/dev/null)
+	[ "${sectors:-0}" -gt 16384 ] 2>/dev/null || fail "the card cannot be read"
+	# A previous GPT (both copies) would outlive a new MBR.
+	dd if=/dev/zero of="$dev" bs=512 count=34 2>/dev/null || fail "the card cannot be written"
+	dd if=/dev/zero of="$dev" bs=512 seek=$((sectors - 33)) count=33 2>/dev/null
+	# One partition from 4 MiB (SD erase blocks) to the end, type 7 (exFAT).
+	printf 'o\nn\np\n1\n8192\n\nt\n7\nw\n' | fdisk -u "$dev" >/dev/null 2>&1
+	# The kernel must be using the new table before p1 is formatted: mkfs on
+	# a stale p1 would put the filesystem where the old partition was.
+	partprobe "$dev" 2>/dev/null || blockdev --rereadpt "$dev" 2>/dev/null
+	i=0
+	while [ "$(cat "/sys/class/block/${name}p1/start" 2>/dev/null)" != 8192 ] && [ "$i" -lt 50 ]; do
+		sleep 0.1; i=$((i + 1))
+	done
+	[ -b "${dev}p1" ] && [ "$(cat "/sys/class/block/${name}p1/start" 2>/dev/null)" = 8192 ] &&
+		[ ! -e "/sys/class/block/${name}p2" ] || fail "partitioning failed"
+	mkfs.exfat -L DVR "${dev}p1" >/dev/null 2>&1 || fail "formatting failed"
+	sync
+	/etc/init.d/S45ar9311-sd start >/dev/null 2>&1
+	mountpoint -q /mnt/sd || fail "the new card did not mount"
+	/etc/init.d/S46kestrel-state start >/dev/null 2>&1
+	# The folder a receiver that kept running records to (one that starts
+	# makes its own).
+	mkdir -p /mnt/sd/fpvos/recordings 2>/dev/null
+	# Settings that lived on the card (a VRX's) go back onto the new one.
+	if [ -d "$keep" ] && state_in /mnt/sd; then
+		cp -a "$keep/." /var/lib/kestrel/ 2>/dev/null || saved=0
+	fi
+	rm -rf "$keep"
+	sync
+	if [ "$saved" = 1 ]; then
+		echo "ok $what formatted" > "$status"
+	else
+		echo "ok $what formatted; its settings could not be read and were not kept" > "$status"
+	fi
+	restart >/dev/null 2>&1
+}
+
+case "${1:-}" in
+	check) check ;;
+	start)
+		why=$(check) || { echo "$why"; exit 1; }
+		how=$(mode)
+		echo running > "$status"
+		setsid "$0" worker "$how" </dev/null >/dev/null 2>&1 &
+		if [ "$how" = live ]; then
+			echo "Formatting $why"
+		else
+			echo "Formatting $why; the receiver restarts when it is done"
+		fi
+		;;
+	worker) worker "${2:-restart}" ;;
+	*) echo "Usage: $0 {check|start}" >&2; exit 2 ;;
+esac

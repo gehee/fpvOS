@@ -29,6 +29,7 @@ jobs:
                    br-external/board/ascent-vrx-pro/post-build.sh \
                    $(git ls-files 'br-external/board/ascent-vrx-pro/rootfs-overlay/etc/init.d/*') \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-wifi \
+                   br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-format-dvr \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/root/bb-restart.sh \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/ar8030soc/bb_only.sh \
                    br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/start.sh; do
