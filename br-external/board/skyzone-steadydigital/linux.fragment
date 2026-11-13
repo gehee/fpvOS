@@ -10,6 +10,16 @@ CONFIG_MTD_OF_PARTS=y
 # CONFIG_MTD_PARTITIONED_MASTER is not set
 CONFIG_MTD_UBI=y
 # CONFIG_MTD_UBI_FASTMAP is not set
+# The main root is a squashfs inside the bundle volume: UBI's block layer
+# under a loop device, with a RAM overlay on top.
+CONFIG_MTD_UBI_BLOCK=y
+CONFIG_OVERLAY_FS=y
+# The overlay's RAM layer needs xattrs: without them replacing anything from
+# the root (rm then mkdir, as dropbear's start does with /etc/dropbear) fails
+# with EIO. And POSIX ACLs: without them overlayfs creates over a whiteout
+# with the umask ignored (/etc/dropbear came out 0777).
+CONFIG_TMPFS_XATTR=y
+CONFIG_TMPFS_POSIX_ACL=y
 CONFIG_UBIFS_FS=y
 CONFIG_UBIFS_FS_ADVANCED_COMPR=y
 CONFIG_UBIFS_FS_LZO=y
@@ -41,7 +51,7 @@ CONFIG_I2C_CHARDEV=y
 CONFIG_MFD_SYSCON=y
 CONFIG_SYSCON_REBOOT_MODE=y
 
-# Read-only compressed application/assets, shipped inside the initramfs.
+# Read-only compressed root and application/assets.
 CONFIG_BLK_DEV_LOOP=y
 CONFIG_SQUASHFS=y
 CONFIG_SQUASHFS_XZ=y

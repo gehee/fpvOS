@@ -2,7 +2,8 @@
 # Flashable SteadyDigital image: a recovery kernel.img for NAND bank B and a
 # packaged .fwu (kernel.img + board DTB + main root). The kernel's initramfs is
 # the fpvOS recovery (set by external.mk when fpvos-recovery is enabled); the
-# main root is rootfs.cpio.gz, written to userapp1 by the updater.
+# main root is rootfs.squashfs, written to userapp1 by the updater and mounted
+# from there by the recovery.
 set -eu
 
 board_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

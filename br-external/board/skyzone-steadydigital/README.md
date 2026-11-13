@@ -72,7 +72,7 @@ writable for the updater.
 Open8030 profile is not in the Open8030 repository) builds a NAND image instead
 of the RAM one: `kernel.img` is a recovery kernel (a small fpvOS recovery initramfs, from
 `package/fpvos-recovery`) and `fpvos-steadydigital.fwu` bundles it with the board
-DTB and the main root (`rootfs.cpio.gz`). The updater backend
+DTB and the main root (`rootfs.squashfs`). The updater backend
 (`package/fpvos-update/backends/skyzone-steadydigital`) writes **bank B**
 (kernel1/dtb1, and the bundle into the `userapp` UBI volume of userapp1) and
 selects stock **bank A** while writing, so a power cut during the install still
@@ -89,9 +89,22 @@ like the vendor's own flip, keeping the vendor table; `layout.h` accepts only
 this exact table with one whole bank selected. The power must stay on during
 that one block rewrite (there is no second record).
 
-The main root is loaded from `userapp1` into RAM by the recovery `init` and
-`switch_root`ed into; settings and pairing live in `usr_data` (shared), so a
-reinstall of the same bank keeps them. Installing from the running fpvOS
+The main root is mounted where it lies in `userapp1`: the recovery `init`
+puts UBI's block device (`ubiblock`) under the bundle volume and a loop device
+at the root's offset, mounts the squashfs read-only with a RAM overlay on top
+(both visible at `/rom` and `/overlay`) and `switch_root`s into it. A boot reads
+only the bundle header, the DTB, the kernel's first 4 KiB and the root's
+superblock: the header CRC must be the one the install recorded in `usr_data`
+(`fpvos-installed`, with the bundle's SHA-256 that the system reports), the DTB
+must hash right and match `dtb1`, the kernel head must match `kernel1`. The
+whole bundle was hashed and read back from flash when it was installed.
+Settings and pairing live in `usr_data` (shared), so a reinstall of the same
+bank keeps them.
+
+Units still on the earlier RAM-root bundle (`rootfs.cpio.gz`) install a squashfs
+bundle in two steps: their recovery accepts only gzip roots, so first a bridge
+bundle in the old format carrying the new kernel (whose recovery then stays in
+USB recovery: there is no install record yet), then the squashfs bundle. Installing from the running fpvOS
 recovery over USB is `fpvos-update`'s normal `clean` → `verify` → `install`
 flow; `ar9311-nandctl stock` flips the active bank back to A.
 

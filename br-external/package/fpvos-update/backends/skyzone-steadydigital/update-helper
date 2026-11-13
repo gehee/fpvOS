@@ -50,7 +50,6 @@ case "${1:-}" in
         trap 'rm -rf "$work"' EXIT
         trap 'exit 1' HUP INT TERM
         /usr/libexec/fpvos-update-verify "$2" "$work"
-        gzip -t "$work/rootfs.cpio.gz"
         ;;
     stock)
         quiesce
