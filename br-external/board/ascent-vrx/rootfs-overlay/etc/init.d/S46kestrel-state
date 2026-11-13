@@ -12,6 +12,13 @@ if mountpoint -q /mnt/sd && [ ! -L /mnt/sd/fpvos/kestrel ]; then
 fi
 ln -sfn "$state" /var/lib/kestrel
 if [ "$state" = /run/kestrel-state ]; then
+    # Started again without the card (a failed format): the SSH identity must
+    # not stay pointed at it, or dropbear cannot make its host key.
+    if [ -L /etc/dropbear ]; then
+        case "$(readlink /etc/dropbear)" in
+            /mnt/sd/*) mkdir -p "$state/ssh"; ln -sfn "$state/ssh" /etc/dropbear ;;
+        esac
+    fi
     echo 'Kestrel: no writable SD; settings are temporary, recording unavailable'
 else
     mkdir -p "$state/ssh"
