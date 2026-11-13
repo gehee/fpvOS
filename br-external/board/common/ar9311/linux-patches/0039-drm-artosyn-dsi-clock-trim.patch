@@ -1,0 +1,105 @@
+From: fpvOS contributors
+Subject: [PATCH] drm/artosyn: pixel clock trim for a screen that follows the camera
+
+The receiver keeps the screen in step with the camera, as the VRX Pro does,
+by trimming the pixel clock (the DSI PLL divider). Frames of another length
+are not an option here: the LT9611 behind the DSI recovers its HDMI clock
+from the stream (its PCR) and loses lock over them. A clock that moves about
+1 ppm a second it follows. clock_trim_ppb (parts per billion, positive =
+slower, +-3000 ppm) is applied to the running PLL at once and again at every
+DSI start, so a trim learnt before is in place before the bridge locks.
+---
+--- a/drivers/gpu/drm/artosyn/artosyn_dsi.c
++++ b/drivers/gpu/drm/artosyn/artosyn_dsi.c
+@@ -10,6 +10,9 @@
+ 
+ #include <linux/clk.h>
+ #include <linux/io.h>
++#include <linux/math64.h>
++#include <linux/moduleparam.h>
++#include <linux/spinlock.h>
+ #include <linux/module.h>
+ #include <linux/of.h>
+ #include <linux/platform_device.h>
+@@ -33,8 +36,51 @@
+ 	unsigned int		lanes;
+ 	enum ar_display_profile profile;
+ 	const struct ar_display_timing *timing;
++	u32			pll_div;	/* the mode's own divider, 0 before init */
+ };
+ 
++/*
++ * The screen follows the camera by trimming the pixel clock, as the VRX Pro
++ * does: the LT9611 recovers its HDMI clock from the DSI stream (its PCR) and
++ * follows a clock that moves slowly, where a frame of another length makes it
++ * lose lock. clock_trim_ppb (parts per billion, positive = slower, within
++ * +-3000 ppm) is applied to the running PLL at once and again at every DSI
++ * start, so a trim learnt before reaches the bridge before it locks.
++ */
++static DEFINE_SPINLOCK(ar_dsi_trim_lock);
++static struct ar_dsi *ar_dsi_live;
++static int clock_trim_ppb;
++
++static void ar_dsi_write_pll(struct ar_dsi *dsi)
++{
++	writel(dsi->pll_div + (u32)div_s64((s64)dsi->pll_div * clock_trim_ppb, 1000000000),
++	       dsi->base + 0x2c0);
++}
++
++static int ar_dsi_set_trim(const char *val, const struct kernel_param *kp)
++{
++	unsigned long flags;
++	int ppb, ret = kstrtoint(val, 0, &ppb);
++
++	if (ret)
++		return ret;
++	if (ppb < -3000000 || ppb > 3000000)
++		return -ERANGE;
++	spin_lock_irqsave(&ar_dsi_trim_lock, flags);
++	clock_trim_ppb = ppb;
++	if (ar_dsi_live && ar_dsi_live->pll_div)
++		ar_dsi_write_pll(ar_dsi_live);
++	spin_unlock_irqrestore(&ar_dsi_trim_lock, flags);
++	return 0;
++}
++
++static const struct kernel_param_ops ar_dsi_trim_ops = {
++	.set = ar_dsi_set_trim,
++	.get = param_get_int,
++};
++module_param_cb(clock_trim_ppb, &ar_dsi_trim_ops, &clock_trim_ppb, 0644);
++MODULE_PARM_DESC(clock_trim_ppb, "pixel clock trim in parts per billion, positive = slower (+-3000000)");
++
+ static const struct { u16 off; u32 val; } ar_dphy_ascent[] = {
+ 	{ 0x2c4, 0x0410b016 }, { 0x2c8, 0x002468ac }, { 0x2cc, 0x0000000a },
+ 	{ 0x2d0, 0x00003675 }, { 0x2d4, 0x00000064 }, { 0x2d8, 0x21080c00 },
+@@ -104,10 +150,14 @@
+ static int ar_dsi_phy_init(void *priv)
+ {
+ 	struct ar_dsi *dsi = priv;
++	unsigned long flags;
+ 	unsigned int i;
+ 
+-	writel(dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV,
+-	       dsi->base + 0x2c0);
++	spin_lock_irqsave(&ar_dsi_trim_lock, flags);
++	dsi->pll_div = dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV;
++	ar_dsi_live = dsi;
++	ar_dsi_write_pll(dsi);
++	spin_unlock_irqrestore(&ar_dsi_trim_lock, flags);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(ar_dphy_ascent); i++)
+ 		writel(ar_dphy_ascent[i].val, dsi->base + ar_dphy_ascent[i].off);
+@@ -209,7 +259,12 @@
+ static void ar_dsi_remove(struct platform_device *pdev)
+ {
+ 	struct ar_dsi *dsi = platform_get_drvdata(pdev);
++	unsigned long flags;
+ 
++	spin_lock_irqsave(&ar_dsi_trim_lock, flags);
++	if (ar_dsi_live == dsi)
++		ar_dsi_live = NULL;
++	spin_unlock_irqrestore(&ar_dsi_trim_lock, flags);
+ 	dw_mipi_dsi_remove(dsi->dmd);
+ }
+ 

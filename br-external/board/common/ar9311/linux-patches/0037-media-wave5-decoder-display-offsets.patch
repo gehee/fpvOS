@@ -1,0 +1,189 @@
+From: fpvOS contributors
+Subject: [PATCH] media: wave5: decoder display planes at offsets of the caller's
+
+Strips: an air unit can code each picture as strips, each its own stream,
+decoded by a decoder instance of its own. Joining the decoded strips by a
+copy costs more than the strips save (16 ms a strip on the CPU, 7.4 ms in
+the GE2D, which also goes through RGB and is not exact). Instead each
+instance writes its strip's rows straight into one whole-picture buffer
+that all of them share.
+
+Three private controls give where the linear (display) output's Y, Cb and
+Cr planes go in each capture buffer, in bytes, set before the capture
+stream starts (the frame buffers are registered with the firmware then).
+0 for the Cb offset: the planes packed from the start, as before. A plane
+that would end past the buffer is refused.
+
+With the offsets set, one queued capture buffer is enough to decode: the
+references stay in the compressed buffers, the capture buffers are display
+copies only. The firmware picks among the free display buffers by its own
+order (round robin by index, not the queue's), so a caller that queues
+exactly one buffer before each picture decides where every picture goes -
+all strips of a picture in the same buffer, whatever any one decoder lost.
+
+Two fixes for a caller that takes its capture buffers back (STREAMOFF) and
+streams on again in the same sequence:
+ - the frame buffer information was reset at the first such STREAMOFF
+   (needs_reallocation stayed set after the registration it asked for), and
+   as nothing registers them again, the pictures after it were written to
+   buffers the firmware no longer had - garbage, with no error;
+ - each buffer taken back is marked out of display by its own index: the
+   driver marked indexes 0 to the count queued, which are those buffers only
+   when every buffer was queued, and one held elsewhere (a strip picture on
+   the screen) stayed free to the firmware.
+
+Two 1920x592 instances wrote 1080p I420 pictures bit-exact against a
+software decode, 147 pictures a second together; one instance not given a
+picture cost that picture only.
+---
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
+@@ -828,6 +828,12 @@
+ 	bool nv21;
+ 	bool eos;
+ 	bool keep_dma_bufs;
++	/* Decoder: where its linear (display) output's Y, Cb and Cr planes go,
++	 * in bytes from the start of each capture buffer, when disp_off[1] is
++	 * set - several decoders writing one picture's rows each (strips).
++	 * 0 in disp_off[1]: the planes packed from the start, as usual.
++	 */
++	u32 disp_off[3];
+ 	s32 active_enc_src_idx;
+ 	u32 enc_rate_change_pending;
+ 	bool enc_force_idr; /* FORCE_KEY_FRAME seen; armed on the next start_encode */
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-dec.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-dec.c
+@@ -897,6 +897,33 @@
+ 	return ret;
+ }
+ 
++/* The display planes' offsets in each capture buffer (see disp_off). */
++#define V4L2_CID_WAVE5_DISP_OFFSET_Y	(V4L2_CID_CODEC_BASE | 0x1f01)
++#define V4L2_CID_WAVE5_DISP_OFFSET_CB	(V4L2_CID_CODEC_BASE | 0x1f02)
++#define V4L2_CID_WAVE5_DISP_OFFSET_CR	(V4L2_CID_CODEC_BASE | 0x1f03)
++
++static int wave5_vpu_dec_s_ctrl(struct v4l2_ctrl *ctrl)
++{
++	struct vpu_instance *inst = container_of(ctrl->handler, struct vpu_instance, v4l2_ctrl_hdl);
++
++	switch (ctrl->id) {
++	case V4L2_CID_WAVE5_DISP_OFFSET_Y:
++		inst->disp_off[0] = ctrl->val;
++		return 0;
++	case V4L2_CID_WAVE5_DISP_OFFSET_CB:
++		inst->disp_off[1] = ctrl->val;
++		return 0;
++	case V4L2_CID_WAVE5_DISP_OFFSET_CR:
++		inst->disp_off[2] = ctrl->val;
++		return 0;
++	}
++	return -EINVAL;
++}
++
++static const struct v4l2_ctrl_ops wave5_vpu_dec_ctrl_ops = {
++	.s_ctrl = wave5_vpu_dec_s_ctrl,
++};
++
+ static const struct v4l2_ioctl_ops wave5_vpu_dec_ioctl_ops = {
+ 	.vidioc_querycap = wave5_vpu_dec_querycap,
+ 	.vidioc_enum_framesizes = wave5_vpu_dec_enum_framesizes,
+@@ -1052,7 +1079,27 @@
+ 		else
+ 			chroma_size = fb_stride * inst->dst_fmt.height / 4;
+ 
+-		if (inst->dst_fmt.num_planes == 1) {
++		if (inst->dst_fmt.num_planes == 1 && inst->disp_off[1]) {
++			/* Each plane where the caller put it in the buffer: its
++			 * rows of a larger picture of the same stride (strips).
++			 */
++			const dma_addr_t base = vb2_dma_contig_plane_dma_addr(vb, 0);
++			const u64 size = vb2_plane_size(vb, 0);
++
++			if ((u64)inst->disp_off[0] + luma_size > size ||
++			    (u64)inst->disp_off[1] + chroma_size > size ||
++			    (u64)inst->disp_off[2] + chroma_size > size) {
++				dev_err(inst->dev->dev,
++					"%s: display planes at %u/%u/%u past the %llu-byte buffer\n",
++					__func__, inst->disp_off[0], inst->disp_off[1],
++					inst->disp_off[2], size);
++				return -EINVAL;
++			}
++			buf_size = size;
++			buf_addr_y = base + inst->disp_off[0];
++			buf_addr_cb = base + inst->disp_off[1];
++			buf_addr_cr = base + inst->disp_off[2];
++		} else if (inst->dst_fmt.num_planes == 1) {
+ 			buf_size = vb2_plane_size(vb, 0);
+ 			buf_addr_y = vb2_dma_contig_plane_dma_addr(vb, 0);
+ 			buf_addr_cb = buf_addr_y + luma_size;
+@@ -1455,6 +1502,12 @@
+ 
+ 		dev_dbg(inst->dev->dev, "%s: buf type %4u | index %4u\n",
+ 			__func__, buf->vb2_buf.type, buf->vb2_buf.index);
++		/* Out of the firmware's reach by its own index: the loop above
++		 * marks indexes 0 to the count queued, which are these buffers
++		 * only when every buffer was queued. A caller that keeps some
++		 * (strips: on the screen) would have one of them written next.
++		 */
++		wave5_vpu_dec_set_disp_flag(inst, buf->vb2_buf.index);
+ 
+ 		for (plane = 0; plane < inst->dst_fmt.num_planes; plane++)
+ 			vb2_set_plane_payload(&buf->vb2_buf, plane, 0);
+@@ -1649,6 +1702,13 @@
+ 			switch_state(inst, VPU_INST_STATE_STOP);
+ 			break;
+ 		}
++		/* Registered for this sequence: a capture STREAMOFF from now on
++		 * (a caller taking its buffers back) must not reset the frame
++		 * buffer information - nothing registers them again, and the
++		 * pictures after it would be written to buffers the firmware no
++		 * longer has.
++		 */
++		inst->needs_reallocation = false;
+ 
+ 		if (q_status.instance_queue_count) {
+ 			dev_dbg(inst->dev->dev, "%s: leave with active job", __func__);
+@@ -1721,7 +1781,13 @@
+ 		if (!m2m_ctx->cap_q_ctx.q.streaming) {
+ 			dev_dbg(inst->dev->dev, "CAPTURE queue must be streaming to queue jobs!\n");
+ 			break;
+-		} else if (v4l2_m2m_num_dst_bufs_ready(m2m_ctx) < (inst->fbc_buf_count - 1)) {
++		} else if (v4l2_m2m_num_dst_bufs_ready(m2m_ctx) <
++			   (inst->disp_off[1] ? 1 : inst->fbc_buf_count - 1)) {
++			/* With display offsets (strips) the capture buffers are
++			 * display copies of the caller's choosing, one queued for
++			 * each picture to decode; the references stay in the
++			 * compressed buffers.
++			 */
+ 			dev_dbg(inst->dev->dev,
+ 				"No capture buffer ready to decode!\n");
+ 			break;
+@@ -1807,6 +1873,28 @@
+ 	v4l2_ctrl_handler_init(&inst->v4l2_ctrl_hdl, 10);
+ 	v4l2_ctrl_new_std(&inst->v4l2_ctrl_hdl, NULL,
+ 			  V4L2_CID_MIN_BUFFERS_FOR_CAPTURE, 1, 32, 1, 1);
++	{
++		static const char * const names[3] = {
++			"Display Y Offset", "Display Cb Offset", "Display Cr Offset" };
++		static const u32 ids[3] = { V4L2_CID_WAVE5_DISP_OFFSET_Y,
++			V4L2_CID_WAVE5_DISP_OFFSET_CB, V4L2_CID_WAVE5_DISP_OFFSET_CR };
++		unsigned int i;
++
++		/* Set before the capture stream starts; the frame buffers are
++		 * registered with the firmware then. Multiples of 32 bytes.
++		 */
++		for (i = 0; i < 3; i++) {
++			struct v4l2_ctrl_config c = {
++				.ops = &wave5_vpu_dec_ctrl_ops,
++				.id = ids[i],
++				.name = names[i],
++				.type = V4L2_CTRL_TYPE_INTEGER,
++				.min = 0, .max = 0x7fffffe0, .step = 32, .def = 0,
++			};
++
++			v4l2_ctrl_new_custom(&inst->v4l2_ctrl_hdl, &c, NULL);
++		}
++	}
+ 
+ 	if (inst->v4l2_ctrl_hdl.error) {
+ 		ret = -ENODEV;

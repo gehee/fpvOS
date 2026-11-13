@@ -1,0 +1,59 @@
+From: fpvOS contributors
+Subject: [PATCH] drm/bridge: lt9611: registers readable while running
+
+fpvos_regs (sysfs, read-only) dumps pages 0x81-0x84 through the regmap, so
+whether the MIPI input, the PCR and the HDMI side are locked can be checked
+while the receiver runs, without touching the page selector the regmap
+caches on Ascent boards.
+---
+--- a/drivers/gpu/drm/bridge/lontium-lt9611.c
++++ b/drivers/gpu/drm/bridge/lontium-lt9611.c
+@@ -1165,6 +1165,31 @@
+ 	return ret;
+ }
+ 
++/* Pages 0x81-0x84 as the chip holds them now, read through the regmap (its
++ * cached page selector stays right): whether the MIPI input, the PCR and the
++ * HDMI side are locked can be seen while the receiver runs. Page 0x85 is left
++ * out: reading its DDC FIFO would pop it. */
++static ssize_t fpvos_regs_show(struct device *dev, struct device_attribute *attr, char *buf)
++{
++	struct lt9611 *lt9611 = dev_get_drvdata(dev);
++	unsigned int page, reg, val;
++	int n = 0;
++
++	for (page = 0x81; page <= 0x84; page++)
++		for (reg = 0; reg < 0x100; reg++) {
++			if (!(reg % 32))
++				n += sysfs_emit_at(buf, n, "%02x%02x:", page, reg);
++			if (regmap_read(lt9611->regmap, page << 8 | reg, &val))
++				n += sysfs_emit_at(buf, n, " --");
++			else
++				n += sysfs_emit_at(buf, n, " %02x", val);
++			if (reg % 32 == 31)
++				n += sysfs_emit_at(buf, n, "\n");
++		}
++	return n;
++}
++static DEVICE_ATTR_RO(fpvos_regs);
++
+ static int lt9611_probe(struct i2c_client *client)
+ {
+ 	struct regmap_config regmap_config = lt9611_regmap_config;
+@@ -1281,6 +1306,8 @@
+ 	if (client->irq > 0)
+ 		lt9611_enable_hpd_interrupts(lt9611);
+ 
++	if (device_create_file(dev, &dev_attr_fpvos_regs))
++		dev_warn(dev, "no fpvos_regs attribute\n");
+ 	return 0;
+ 
+ err_remove_bridge:
+@@ -1300,6 +1327,7 @@
+ {
+ 	struct lt9611 *lt9611 = i2c_get_clientdata(client);
+ 
++	device_remove_file(&client->dev, &dev_attr_fpvos_regs);
+ 	if (client->irq > 0)
+ 		disable_irq(client->irq);
+ 	drm_bridge_remove(&lt9611->bridge);
