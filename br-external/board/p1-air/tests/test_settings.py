@@ -69,6 +69,15 @@ fi
         self.assertEqual((self.root/'persist/fpvos/kestrel-air').stat().st_mode & 0o777, 0o700)
         self.assertNotIn('ubiattach', calls)
 
+    def test_underscore_volume_name_and_mixed_duplicates(self):
+        self.put('sys/class/ubi/ubi2_0/name', 'usr_data')
+        r, calls = self.run_start()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn('mount --bind ', calls)
+        self.put('sys/class/ubi/ubi2_1/name', 'usrdata')
+        r, calls = self.run_start()
+        self.assertNotEqual(r.returncode, 0)
+
     def test_geometry_and_readonly_mtd_rejected_before_attach(self):
         for name, value in [('offset','0'), ('size','1'), ('erasesize','4096'),
                             ('writesize','4096'), ('flags','0')]:

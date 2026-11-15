@@ -46,11 +46,11 @@ start)
         find_ubi
     fi
     [ -n "$ubi" ] || fail 'attached UBI not found'
-    # Stock creates the volume as usrdata, without the partition's underscore.
+    # P1 units use either spelling; never accept two matching volumes.
     vol=
     for p in /sys/class/ubi/"${ubi}"_*; do
         [ -f "$p/name" ] || continue
-        [ "$(cat "$p/name")" = usrdata ] || continue
+        case "$(cat "$p/name")" in usrdata|usr_data) ;; *) continue ;; esac
         [ -z "$vol" ] || fail 'ambiguous usrdata volumes'
         vol=${p##*/}
     done
