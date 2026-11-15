@@ -10,6 +10,8 @@ struct fpvos_update_board {
     uint32_t board_id;
     const char *hardware, *usb_serial;
     const char *legacy_install_destination, *legacy_verify_destination;
+    /* where SET_LOCATION's fields are kept (a goggle's); "": not kept */
+    const char *location_file;
     const char *names[3];
     uint32_t limits[3], counts[2], bundle_limits[2];
 };
