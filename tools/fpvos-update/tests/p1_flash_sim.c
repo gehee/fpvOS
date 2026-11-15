@@ -13,16 +13,16 @@ int __wrap_open(const char *path,int flags,...) {
     mode_t mode=0;
     if (flags&O_CREAT) { va_list ap;va_start(ap,flags);mode=va_arg(ap,int);va_end(ap); }
     if (!strcmp(path,"/dev/mtd0")) path="boot-state";
-    else if (!strcmp(path,"/dev/mtd1")) path="kernel0";
-    else if (!strcmp(path,"/dev/mtd2")) path="dtb0";
+    else if (!strcmp(path,"/dev/mtd1")) path=P1_KERNEL_PART;
+    else if (!strcmp(path,"/dev/mtd2")) path=P1_DTB_PART;
     else assert(strncmp(path,"/dev/mtd",8));
     return __real_open(path,flags,mode);
 }
 int p1_stock(void) { return 0; }
 int p1_mtd(const char *name,unsigned offset,unsigned size,unsigned *number) {
     if (!strcmp(name,"boot-state")) { assert(offset==0x100000 && size==0x80000);*number=0; }
-    else if (!strcmp(name,"kernel0")) { assert(offset==0xa40000 && size==0x600000);*number=1; }
-    else if (!strcmp(name,"dtb0")) { assert(offset==0x1640000 && size==0x60000);*number=2; }
+    else if (!strcmp(name,P1_KERNEL_PART)) { assert(offset==P1_KERNEL_OFFSET && size==0x600000);*number=1; }
+    else if (!strcmp(name,P1_DTB_PART)) { assert(offset==P1_DTB_OFFSET && size==0x60000);*number=2; }
     else assert(0);
     return open(name,O_RDONLY);
 }

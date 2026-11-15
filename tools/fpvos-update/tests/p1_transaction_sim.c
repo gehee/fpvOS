@@ -7,7 +7,7 @@
 #include <stdarg.h>
 
 const struct fpvos_update_board fpvos_board = {
-    .names={"kernel.img","betafpv-p1-air.dtb","rootfs.cpio.gz"},.counts={3,0}
+    .names={"kernel.img","betafpv-p1-air.dtb","rootfs.cpio.gz"},.counts={3,0},.bundle_limits={P1_ROOT_LIMIT+0x800000,512}
 };
 const struct fpvos_bootstrap_file fpvos_bootstrap_files[] = {
     {"root/usr/share/fpvos-update/boot.sh",(const unsigned char *)"boot",4,0600},
@@ -36,9 +36,9 @@ int p1_bundle_read(const char *destination) {
     return rc;
 }
 int p1_select_bank(unsigned bank) {
-    event(bank ? "select-stock" : "activate");
-    if ((bank && !strcmp(fault,"select-stock")) || (!bank && !strcmp(fault,"activate"))) return -1;
-    if (bank) { int fd=open("selected-stock",O_CREAT|O_WRONLY,0600); assert(fd>=0); close(fd); }
+    event(bank == P1_STOCK_BANK ? "select-stock" : "activate");
+    if ((bank == P1_STOCK_BANK && !strcmp(fault,"select-stock")) || (bank == P1_FPVOS_BANK && !strcmp(fault,"activate"))) return -1;
+    if (bank == P1_STOCK_BANK) { int fd=open("selected-stock",O_CREAT|O_WRONLY,0600); assert(fd>=0); close(fd); }
     else { assert(!access("selected-stock",F_OK)); unlink("selected-stock"); }
     return 0;
 }

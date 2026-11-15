@@ -113,7 +113,7 @@ int p1_flash_image(unsigned index, const char *path, int writing)
 {
     if (index > 1) return -1;
     unsigned number, size = index ? 0x60000 : 0x600000;
-    int ro = p1_mtd(index ? "dtb0" : "kernel0",index ? 0x1640000 : 0xa40000,size,&number);
+    int ro = p1_mtd(index ? P1_DTB_PART : P1_KERNEL_PART,index ? P1_DTB_OFFSET : P1_KERNEL_OFFSET,size,&number);
     if (ro < 0) return -1;
     int fd = writing ? writable(ro,number) : ro;
     if (writing) close(ro);

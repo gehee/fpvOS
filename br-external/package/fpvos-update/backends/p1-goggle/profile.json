@@ -1,0 +1,29 @@
+{
+  "board_id": 1345406791,
+  "hardware": "P1_GND",
+  "usb_identity": [
+    "1d6b",
+    "0104",
+    "fpvos-p1-goggle"
+  ],
+  "names": [
+    "kernel.img",
+    "betafpv-p1-goggle.dtb",
+    "rootfs.cpio.gz"
+  ],
+  "limits": [
+    6291456,
+    65536,
+    16777216
+  ],
+  "counts": [
+    3,
+    0
+  ],
+  "bundle_limits": [
+    25165824,
+    512
+  ],
+  "restore_sources": [],
+  "bootstrap_resources": {}
+}

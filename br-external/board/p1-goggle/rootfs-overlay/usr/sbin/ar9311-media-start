@@ -1,0 +1,26 @@
+#!/bin/sh
+# Verify the package-extracted goggles decoder before loading the driver.
+set -eu
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+firmware=/lib/firmware/artosyn/p1-goggle-chagall.bin
+expected=308b96351168cc7dbbe936de1490f9ab553aa9ae7e1679d8e9a8c4ab8cd5bf86
+if [ ! -f "$firmware" ] || [ -L "$firmware" ]; then
+    echo "Media: missing packaged P1 goggles decoder at $firmware" >&2
+    exit 1
+fi
+actual=$(sha256sum "$firmware")
+if [ "${actual%% *}" != "$expected" ]; then
+    echo "Media: P1 goggles decoder firmware hash mismatch" >&2
+    exit 1
+fi
+modprobe wave5
+for node in /sys/class/video4linux/video*; do
+    case "$(readlink -f "$node")" in
+        */a080000.video-codec/video4linux/*)
+            echo "Media: P1 goggles decoder ready at /dev/${node##*/}"
+            exit 0
+            ;;
+    esac
+done
+echo "Media: decoder probe failed; inspect dmesg" >&2
+exit 1

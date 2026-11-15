@@ -1,0 +1,810 @@
+{
+ "system": {},
+ "baseband": {
+  "basic": {
+   "role": "dev",
+   "ap": {
+    "mac": "66000000",
+    "clock": "200MHz",
+    "init_mcs": -1,
+    "sq_report": false,
+    "ant_num": 2,
+    "user_mode": {
+     "mode": "1V1",
+     "slot_bmp": "0x01",
+     "slot_mode": "fixed",
+     "compact_br": true
+    },
+    "candidate": {
+     "slot": [
+      "aabbccdd"
+     ],
+     "help": "user name: slot0..slot7 and slot match all"
+    },
+    "mcs": {
+     "slot": {
+      "enable": true,
+      "init": "auto",
+      "mode": "force",
+      "hold_time": 50,
+      "max_wait_time": 200,
+      "bw_auto": {
+       "enable": false,
+       "range": {
+        "low": "5",
+        "high": "20"
+       },
+       "threshold": {
+        "low": 3,
+        "high": 5
+       }
+      },
+      "mcs_tab": [
+       {
+        "mcs": -1,
+        "snr_up": 58,
+        "snr_dw": 37,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 2,
+        "up_keep_time": 2000,
+        "dw_keep_time": 0
+       },
+       {
+        "mcs": 0,
+        "snr_up": 88,
+        "snr_dw": 70,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 2,
+        "up_keep_time": 2000,
+        "dw_keep_time": 0
+       },
+       {
+        "mcs": 3,
+        "snr_up": 146,
+        "snr_dw": 116,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 2,
+        "up_keep_time": 2000,
+        "dw_keep_time": 0
+       },
+       {
+        "mcs": 6,
+        "snr_up": 545,
+        "snr_dw": 433,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 2,
+        "up_keep_time": 2000,
+        "dw_keep_time": 0
+       },
+       {
+        "mcs": 8,
+        "snr_up": 1087,
+        "snr_dw": 864,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 2,
+        "up_keep_time": 2000,
+        "dw_keep_time": 0
+       },
+       {
+        "mcs": 10,
+        "snr_up": 1846,
+        "snr_dw": 1467,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 2,
+        "up_keep_time": 2000,
+        "dw_keep_time": 0
+       }
+      ]
+     }
+    }
+   },
+   "dev": {
+    "mac": "66000001",
+    "clock": "200MHz",
+    "ap_mac": "66000000",
+    "init_mcs": 0,
+    "ant_num": 1,
+    "mcs": {
+     "slot": {
+      "enable": true,
+      "init": -1,
+      "mode": "auto",
+      "hold_time": 100,
+      "max_wait_time": 5000,
+      "bw_auto": {
+       "enable": false,
+       "range": {
+        "low": "5",
+        "high": "20"
+       },
+       "threshold": {
+        "low": 0,
+        "high": 0
+       }
+      },
+      "mcs_tab": [
+       {
+        "mcs": -1,
+        "snr_up": 36,
+        "snr_dw": 29,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 4,
+        "ldpc_dw_conti_num": 2,
+        "up_keep_time": 1000,
+        "dw_keep_time": 15
+       },
+       {
+        "mcs": 0,
+        "snr_up": 92,
+        "snr_dw": 65,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 4,
+        "ldpc_dw_conti_num": 2,
+        "up_keep_time": 1500,
+        "dw_keep_time": 15
+       },
+       {
+        "mcs": 3,
+        "snr_up": 168,
+        "snr_dw": 119,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 4,
+        "ldpc_dw_conti_num": 2,
+        "up_keep_time": 1500,
+        "dw_keep_time": 15
+       },
+       {
+        "mcs": 5,
+        "snr_up": 479,
+        "snr_dw": 302,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 4,
+        "ldpc_dw_conti_num": 2,
+        "up_keep_time": 700,
+        "dw_keep_time": 15
+       },
+       {
+        "mcs": 6,
+        "snr_up": 946,
+        "snr_dw": 597,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 4,
+        "ldpc_dw_conti_num": 2,
+        "up_keep_time": 800,
+        "dw_keep_time": 15
+       },
+       {
+        "mcs": 8,
+        "snr_up": 1888,
+        "snr_dw": 1191,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 4,
+        "ldpc_dw_conti_num": 2,
+        "up_keep_time": 1000,
+        "dw_keep_time": 15
+       },
+       {
+        "mcs": 10,
+        "snr_up": 3682,
+        "snr_dw": 2323,
+        "ldpc_up_num": 0,
+        "ldpc_dw_num": 4,
+        "ldpc_dw_conti_num": 2,
+        "up_keep_time": 1000,
+        "dw_keep_time": 15
+       }
+      ]
+     }
+    }
+   },
+   "power": {
+    "mode": "closeloop",
+    "auto_init": 14,
+    "auto_reset": 14,
+    "manu_init": 14,
+    "manu_reset": 14,
+    "pwr_auto": "manu",
+    "link_auto": "manu",
+    "pwr_range": [
+     9,
+     23
+    ],
+    "pwr_offset": [
+     0,
+     0,
+     0,
+     0
+    ],
+    "pwr_init": 14
+   },
+   "lna": {
+    "inner": {
+     "mode": "manu",
+     "manu": "on",
+     "auto": {
+      "on_thred": 90,
+      "off_thred": 87,
+      "keep": 60
+     }
+    },
+    "fem": {
+     "mode": "manu",
+     "manu": "on",
+     "auto": {
+      "on_must_thred": 87,
+      "on_thred": 70,
+      "off_thred": 62,
+      "on_fs_thred": -85,
+      "off_fs_thred": -75,
+      "keep": 60
+     },
+     "offset": 23
+    }
+   },
+   "para": {
+    "br": {
+     "tx": {
+      "payload": true,
+      "bandwidth": "5",
+      "enable_tintlv": true,
+      "tintlv_num": 2,
+      "tintlv_len": 12,
+      "fch_info_len": 96,
+      "tx_mode": "2TX",
+      "retx_count": 100,
+      "pre_encode": "0@6"
+     },
+     "rx": {
+      "payload": true,
+      "bandwidth": "5",
+      "enable_tintlv": true,
+      "tintlv_num": 2,
+      "tintlv_len": 12,
+      "fch_info_len": 96,
+      "rx_mode": "2T2R_STBC"
+     }
+    },
+    "slot": {
+     "tx": {
+      "payload": true,
+      "bandwidth": "2.5",
+      "enable_tintlv": true,
+      "tintlv_num": 1,
+      "tintlv_len": 12,
+      "fch_info_len": 96,
+      "tx_mode": "2TX_STBC",
+      "retx_count": 6
+     },
+     "rx": {
+      "payload": true,
+      "bandwidth": "2.5",
+      "enable_tintlv": true,
+      "tintlv_num": 1,
+      "tintlv_len": 12,
+      "fch_info_len": 96,
+      "rx_mode": "2T2R_STBC"
+     }
+    },
+    "help": "user name: br, slot0..slot7"
+   },
+   "channel": {
+    "compliance_mode": false,
+    "band_mode": "band_single",
+    "init_chan": -1,
+    "init_band": "5G",
+    "mode": "manu",
+    "band_hop": "manu",
+    "fs_bw": "5",
+    "freq": [
+     4915000,
+     4945000,
+     4975000,
+     5005000,
+     5035000,
+     5065000,
+     5120000,
+     5160000,
+     5200000,
+     5240000,
+     5275000,
+     5320000,
+     5360000,
+     5400000,
+     5440000,
+     5839000,
+     5475000,
+     5510000,
+     5545000,
+     5580000,
+     5620000,
+     5660000,
+     5695000,
+     5740000,
+     5770000,
+     5805000,
+     5878000,
+     5914000,
+     5955000,
+     5985000,
+     6015000,
+     6045000,
+     6075000,
+     6110000,
+     6145000,
+     6180000,
+     6220000,
+     6255000,
+     6290000,
+     6325000,
+     6360000,
+     6395000
+    ],
+    "subchan": {
+     "enable": true,
+     "main_bw": "20",
+     "sub_bw": "2.5",
+     "chan_num": 4,
+     "offset": 0
+    },
+    "hop_para": [
+     {
+      "retx_cnt": 3,
+      "power_diff": 20
+     },
+     {
+      "retx_cnt": 6,
+      "power_diff": 10
+     },
+     {
+      "retx_cnt": 9,
+      "power_diff": 5
+     },
+     {
+      "retx_cnt": 16,
+      "power_diff": 1
+     }
+    ],
+    "auto_band": {
+     "snr_thred": 3880,
+     "scan_count": 3,
+     "scan_inr": 0,
+     "round_inr": 0,
+     "gain_thred": 150,
+     "down": {
+      "snr_diff": 910,
+      "rssi_diff": 12
+     },
+     "up": {
+      "snr_diff": 1024,
+      "rssi_diff": 11
+     }
+    },
+    "br_hop": {
+     "policy": "hop_on_idle",
+     "hop_on_idle": {
+      "hop_duration": 100,
+      "direction": "both",
+      "policy": "fs"
+     },
+     "help": "support fixed/follow_up_chan/hop_on_idle, detail in doxygen"
+    },
+    "rc_hop": {
+     "enable": false,
+     "rc_rx": "ap",
+     "max_freq_num": 4,
+     "stat_period": 5,
+     "remove_percent": 15,
+     "help": "if rc hop enable, it will overwrite the commopn hop poilicy"
+    },
+    "multi_mode": {
+     "enable": false,
+     "hop_para": {
+      "retx_cnt": 30,
+      "chan_inr": 1,
+      "power_diff": 20
+     }
+    },
+    "help": "band_mode support 'band_single' 'band_1g_2g 'band_1g_5g' 'band_2g_5g'"
+   },
+   "dist_calc": {
+    "enable": true,
+    "window": 3,
+    "timeout": 63,
+    "offset": 76
+   },
+   "power_save": {
+    "master": "ap",
+    "mode": "manu",
+    "manu": {
+     "period_fix": 1
+    },
+    "auto": {
+     "up_thred": 75,
+     "dw_thred": 25,
+     "keep": 6,
+     "period_max": 10
+    }
+   },
+   "rf_2tx": {
+    "mode": "manu",
+    "manu": "on",
+    "auto": {
+     "on_snr": 100,
+     "off_snr": 200,
+     "on_keep": 1000,
+     "off_keep": 2000
+    }
+   },
+   "pwr_auto2": {
+    "step": 1,
+    "policys": [
+     {
+      "up_interval": 30,
+      "down_interval": 1000,
+      "factors": [
+       {
+        "max": 20,
+        "min": 0
+       },
+       {
+        "max": 10,
+        "min": 0
+       },
+       {
+        "max": 248,
+        "min": 122
+       },
+       {
+        "max": 85,
+        "min": 70
+       }
+      ]
+     }
+    ]
+   }
+  },
+  "power_calibration": {
+   "default": {
+    "openloop": {
+     "5dbm": [
+      "2C",
+      "2C"
+     ],
+     "6dbm": [
+      "2C",
+      "2C"
+     ],
+     "7dbm": [
+      "2B",
+      "2B"
+     ],
+     "8dbm": [
+      "2A",
+      "2A"
+     ],
+     "9dbm": [
+      "29",
+      "29"
+     ],
+     "10dbm": [
+      "28",
+      "28"
+     ],
+     "11dbm": [
+      "28",
+      "28"
+     ],
+     "12dbm": [
+      "27",
+      "27"
+     ],
+     "13dbm": [
+      "26",
+      "26"
+     ],
+     "14dbm": [
+      "25",
+      "25"
+     ],
+     "15dbm": [
+      "25",
+      "25"
+     ],
+     "16dbm": [
+      "24",
+      "24"
+     ],
+     "17dbm": [
+      "23",
+      "23"
+     ],
+     "18dbm": [
+      "22",
+      "22"
+     ],
+     "19dbm": [
+      "21",
+      "21"
+     ],
+     "20dbm": [
+      "20",
+      "20"
+     ],
+     "21dbm": [
+      "1F",
+      "1F"
+     ],
+     "22dbm": [
+      "1D",
+      "1D"
+     ],
+     "23dbm": [
+      "1C",
+      "1C"
+     ],
+     "24dbm": [
+      "1A",
+      "1A"
+     ],
+     "25dbm": [
+      "18",
+      "18"
+     ],
+     "26dbm": [
+      "15",
+      "15"
+     ],
+     "27dbm": [
+      "15",
+      "15"
+     ],
+     "28dbm": [
+      "15",
+      "15"
+     ],
+     "29dbm": [
+      "15",
+      "15"
+     ],
+     "30dbm": [
+      "15",
+      "15"
+     ],
+     "31dbm": [
+      "15",
+      "15"
+     ],
+     "32dbm": [
+      "15",
+      "15"
+     ]
+    },
+    "closeloop": {
+     "5dbm": [
+      "2C",
+      "29",
+      "2C",
+      "29"
+     ],
+     "6dbm": [
+      "2C",
+      "29",
+      "2C",
+      "29"
+     ],
+     "7dbm": [
+      "2B",
+      "2B",
+      "2B",
+      "2B"
+     ],
+     "8dbm": [
+      "2A",
+      "2C",
+      "2A",
+      "2C"
+     ],
+     "9dbm": [
+      "29",
+      "2D",
+      "29",
+      "2D"
+     ],
+     "10dbm": [
+      "28",
+      "2F",
+      "28",
+      "2F"
+     ],
+     "11dbm": [
+      "28",
+      "30",
+      "28",
+      "30"
+     ],
+     "12dbm": [
+      "27",
+      "32",
+      "27",
+      "32"
+     ],
+     "13dbm": [
+      "26",
+      "35",
+      "26",
+      "35"
+     ],
+     "14dbm": [
+      "25",
+      "38",
+      "25",
+      "38"
+     ],
+     "15dbm": [
+      "25",
+      "3A",
+      "25",
+      "3A"
+     ],
+     "16dbm": [
+      "24",
+      "3C",
+      "24",
+      "3C"
+     ],
+     "17dbm": [
+      "23",
+      "40",
+      "23",
+      "40"
+     ],
+     "18dbm": [
+      "22",
+      "43",
+      "22",
+      "43"
+     ],
+     "19dbm": [
+      "21",
+      "49",
+      "21",
+      "49"
+     ],
+     "20dbm": [
+      "20",
+      "4D",
+      "20",
+      "4D"
+     ],
+     "21dbm": [
+      "1F",
+      "52",
+      "1F",
+      "52"
+     ],
+     "22dbm": [
+      "1D",
+      "5A",
+      "1D",
+      "5A"
+     ],
+     "23dbm": [
+      "1C",
+      "62",
+      "1C",
+      "62"
+     ],
+     "24dbm": [
+      "1A",
+      "70",
+      "1A",
+      "70"
+     ],
+     "25dbm": [
+      "18",
+      "7A",
+      "18",
+      "7A"
+     ],
+     "26dbm": [
+      "15",
+      "86",
+      "15",
+      "86"
+     ],
+     "27dbm": [
+      "15",
+      "86",
+      "15",
+      "86"
+     ],
+     "28dbm": [
+      "15",
+      "86",
+      "15",
+      "86"
+     ],
+     "29dbm": [
+      "15",
+      "86",
+      "15",
+      "86"
+     ],
+     "30dbm": [
+      "15",
+      "86",
+      "15",
+      "86"
+     ],
+     "31dbm": [
+      "15",
+      "86",
+      "15",
+      "86"
+     ],
+     "32dbm": [
+      "15",
+      "86",
+      "15",
+      "86"
+     ]
+    }
+   }
+  }
+ },
+ "uart1_config": {
+  "baudrate": 115200,
+  "data_bit": 8,
+  "parity": 0,
+  "stop_bit": 1,
+  "bypass_en": 0,
+  "bb_port_cfg": 1,
+  "at_mode": 0,
+  "user_id": 0
+ },
+ "uart2_config": {
+  "baudrate": 115200,
+  "data_bit": 8,
+  "parity": 0,
+  "stop_bit": 1,
+  "bypass_en": 0,
+  "bb_port_cfg": 1,
+  "at_mode": 1,
+  "user_id": 0
+ },
+ "uart3_config": {
+  "baudrate": 115200,
+  "data_bit": 8,
+  "parity": 0,
+  "stop_bit": 1,
+  "bypass_en": 0,
+  "bb_port_cfg": 0,
+  "at_mode": 0,
+  "user_id": 0
+ },
+ "work_mode_config": {
+  "//mode": "0:mode0;1:mode1;2:mode2;3:p401-d",
+  "mode": 3
+ },
+ "eth_config": {
+  "bypass_en": 0,
+  "bb_port_cfg": 3,
+  "total_bd_num": 64,
+  "rx_bd_num": 32,
+  "sock_tx_size": 40,
+  "sock_rx_size": 30
+ },
+ "sync_config": {
+  "//group": "0:GPIO_A;1:GPIO_B;2:GPIO_C;3:GPIO_D",
+  "group": 0,
+  "num": 1,
+  "delay": 2,
+  "high_time": 2,
+  "enable": 1
+ },
+ "repeater_config": {
+  "sync_en": 0,
+  "sync_slot": 0,
+  "sync_port": 2
+ }
+}

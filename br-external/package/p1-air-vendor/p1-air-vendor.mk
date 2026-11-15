@@ -21,8 +21,10 @@ P1_AIR_VENDOR_DOWNLOAD_DEPENDENCIES = host-python3
 define P1_AIR_VENDOR_FETCH
 	mkdir -p $(P1_AIR_VENDOR_DL_DIR)
 	flock $(P1_AIR_VENDOR_DL_DIR)/.p1-fetch.lock \
-		$(HOST_DIR)/bin/python3 $(P1_AIR_VENDOR_PKGDIR)/fetch.py \
+		$(HOST_DIR)/bin/python3 $(BR2_EXTERNAL_FPVOS_PATH)/package/ar9311-firmware/fetch.py \
 		$(P1_AIR_VENDOR_DL_DIR)/$(P1_AIR_VENDOR_SOURCE) \
+		--url 'https://drive.usercontent.google.com/download?id=1xFnvQBfdlsUSR0zZc9IH_TJEP-gQCOJG&export=download&confirm=t' \
+		--sha256 4595ce951d79b7d6ddd31818d158928cd0bbbd982aa3e75245baa23aa821255c \
 		--wget '$(call qstrip,$(BR2_WGET))'
 endef
 P1_AIR_VENDOR_PRE_DOWNLOAD_HOOKS += P1_AIR_VENDOR_FETCH

@@ -38,7 +38,7 @@ class P1Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();cls.build=Path(cls.temp.name)
-        common=['cc','-O2','-Wall','-Wextra','-Werror','-ffunction-sections','-fdata-sections','-I'+str(SRC),'-DP1_WORK="work"']
+        common=['cc','-O2','-Wall','-Wextra','-Werror','-ffunction-sections','-fdata-sections','-I'+str(SRC),'-DP1_WORK="work"']+getattr(cls,'config_flags',[])
         renames=['p1_preflight','p1_stock','p1_state_mount','p1_state_unmount','p1_bundle_read','p1_bundle_write','p1_mtd','p1_gpt_read']
         subprocess.run(common+['-D'+s+'=unused_'+s for s in renames]+['-c',str(BACKEND/'storage.c'),'-o',str(cls.build/'storage.o')],check=True)
         subprocess.run(common+[str(Path(__file__).with_name('p1_transaction_sim.c')),str(cls.build/'storage.o'),str(SRC/'bootstrap-common.c'),'-Wl,--gc-sections','-Wl,--wrap=execlp','-Wl,--wrap=lstat','-o',str(cls.build/'transaction')],check=True)
@@ -98,7 +98,7 @@ class P1Tests(unittest.TestCase):
     def volume(self,kind,data='usrdata',app='userapp'):
         with tempfile.TemporaryDirectory() as t:
             d=Path(t)
-            for n,(mtd,offset,size,name,ebs) in enumerate((('usr_data',0x7100000,0x600000,data,40),('userapp0',0x1700000,0x2d00000,app,353))):
+            for n,(mtd,offset,size,name,ebs) in enumerate((('usr_data',0x7100000,0x600000,data,40),(*getattr(self,'app_partition',('userapp0',0x1700000)),0x2d00000,app,353))):
                 for path,text in {f'sys/class/mtd/mtd{n}/name':mtd,f'sys/class/mtd/mtd{n}/offset':str(offset),
                                   f'sys/class/ubi/ubi{n}/mtd_num':str(n),f'sys/class/ubi/ubi{n}/ro_mode':'0',
                                   f'sys/class/ubi/ubi{n}_0/name':name,f'sys/class/ubi/ubi{n}_0/type':'dynamic',
