@@ -66,7 +66,7 @@ jobs:
 
       - name: P1 stock-runtime package checks
         run: |
-          sh -n br-external/board/p1-air/source-rootfs-overlay/etc/init.d/S43factory
+          sh -n br-external/package/ar9311-radio/src/S43factory
           python3 br-external/board/p1-air/tests/test_factory.py -v
           sh -n br-external/board/p1-air/source-rootfs-overlay/etc/init.d/S45settings
           sh -n br-external/package/kestrel-air/ar9311-run

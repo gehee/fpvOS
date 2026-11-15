@@ -282,7 +282,8 @@ the firmware updater preserves factory and stock bank 1.
 ### Persistent application settings
 
 `S45settings` validates the stock `usr_data` partition geometry and discovers its
-existing UBI volume by name: stock creates it as `usrdata`, without the underscore. It mounts UBIFS at `/persist`, creates only
+existing UBI volume by name: units name it `usrdata` or `usr_data` (two matching
+volumes are refused). It mounts UBIFS at `/persist`, creates only
 `/persist/fpvos/kestrel-air`, and bind-mounts that directory at
 `/var/lib/kestrel-air`. Vendor files under `lowdelay` are left intact. The existing
 filesystem is reused without formatting, resizing, repartitioning or changing
