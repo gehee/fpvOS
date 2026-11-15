@@ -21,8 +21,11 @@ unmount. The shared supervisor is also used by Kestrel Air; its tests remain in
 files. Missing HDMI and application crashes retry without reloading SDIO.
 
 Recording uses a writable mount at `/mnt/sd` independently of the settings
-migration marker. Its `fpvos/recordings` path must be a real directory.
+migration marker. `fpvos` and `fpvos/recordings` may be links, but only to a
+directory on the card itself; one pointing elsewhere (or dangling) disables
+recording rather than writing to the RAM root.
 No writable SD means temporary settings/pairing and no recording. The full UI
 still boots from internal flash. Card hotplug needs a storage/service restart.
-Existing recordings can be migrated by moving their folder to
-`/mnt/sd/fpvos/recordings`; preserve all thumbnail/telemetry sidecars.
+Existing recordings can be migrated by moving their folder or linking it at
+`/mnt/sd/fpvos/recordings` (the target on the same card); preserve all
+thumbnail/telemetry sidecars.

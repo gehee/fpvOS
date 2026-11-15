@@ -21,8 +21,16 @@ define AR9311_RADIO_BUILD_CALIBRATION
 endef
 
 define AR9311_RADIO_INSTALL_CALIBRATION
-	$(INSTALL) -D -m 0755 $(@D)/S43factory $(TARGET_DIR)/etc/init.d/S43factory
 	$(INSTALL) -D -m 0755 $(@D)/radio-calibrate $(TARGET_DIR)/usr/libexec/radio-calibrate
+endef
+endif
+
+# The P1 inittabs and update helpers run S43factory unconditionally: install it
+# on those boards with the radio itself, not only with calibration (it mounts
+# the factory volume read-only and is harmless without radio-calibrate).
+ifneq ($(BR2_FPVOS_BOARD_P1_AIR)$(BR2_FPVOS_BOARD_P1_GOGGLE),)
+define AR9311_RADIO_INSTALL_FACTORY
+	$(INSTALL) -D -m 0755 $(@D)/S43factory $(TARGET_DIR)/etc/init.d/S43factory
 endef
 endif
 
@@ -35,6 +43,7 @@ define AR9311_RADIO_BUILD_CMDS
 endef
 
 define AR9311_RADIO_INSTALL_TARGET_CMDS
+	$(AR9311_RADIO_INSTALL_FACTORY)
 	$(AR9311_RADIO_INSTALL_CALIBRATION)
 	$(INSTALL) -D -m 0755 $(@D)/ar9311-radio $(TARGET_DIR)/usr/bin/ar9311-radio
 	$(INSTALL) -D -m 0755 $(@D)/S44ar9311-radio $(TARGET_DIR)/etc/init.d/S44ar9311-radio

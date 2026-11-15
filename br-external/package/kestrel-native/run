@@ -17,9 +17,16 @@ fi
 recordings=/run/kestrel-gnd/no-sd/recordings
 # Recording storage is independent of whether settings have been migrated.
 # Never fall back to recording into the RAM rootfs when the card is absent.
+# Links are fine while they resolve to a directory on the card itself; one
+# pointing off the card, or dangling, is refused before mkdir follows it.
+on_card() {
+    if [ ! -e "$1" ] && [ ! -L "$1" ]; then return 0; fi
+    case "$(readlink -f "$1")" in /mnt/sd/?*) return 0 ;; esac
+    return 1
+}
 if awk '$2 == "/mnt/sd" && $4 ~ /(^|,)rw(,|$)/ { found=1 } END { exit !found }' /proc/mounts; then
-    if [ ! -L /mnt/sd/fpvos ] && [ ! -L /mnt/sd/fpvos/recordings ] &&
-       mkdir -p /mnt/sd/fpvos/recordings; then
+    if on_card /mnt/sd/fpvos && on_card /mnt/sd/fpvos/recordings &&
+       mkdir -p /mnt/sd/fpvos/recordings && on_card /mnt/sd/fpvos/recordings; then
         recordings=/mnt/sd/fpvos/recordings
     else
         echo 'Kestrel: recording directory unavailable; continuing without recording' >&2
