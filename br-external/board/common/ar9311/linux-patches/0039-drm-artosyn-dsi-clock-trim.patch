@@ -8,6 +8,7 @@ from the stream (its PCR) and loses lock over them. A clock that moves about
 1 ppm a second it follows. clock_trim_ppb (parts per billion, positive =
 slower, +-3000 ppm) is applied to the running PLL at once and again at every
 DSI start, so a trim learnt before is in place before the bridge locks.
+Preserve the P1 panel's own PLL divider when applying the shared trim.
 ---
 --- a/drivers/gpu/drm/artosyn/artosyn_dsi.c
 +++ b/drivers/gpu/drm/artosyn/artosyn_dsi.c
@@ -21,13 +22,14 @@ DSI start, so a trim learnt before is in place before the bridge locks.
  #include <linux/module.h>
  #include <linux/of.h>
  #include <linux/platform_device.h>
-@@ -33,8 +36,51 @@
+@@ -33,7 +36,50 @@
  	unsigned int		lanes;
  	enum ar_display_profile profile;
  	const struct ar_display_timing *timing;
+-};
 +	u32			pll_div;	/* the mode's own divider, 0 before init */
- };
- 
++};
++
 +/*
 + * The screen follows the camera by trimming the pixel clock, as the VRX Pro
 + * does: the LT9611 recovers its HDMI clock from the DSI stream (its PCR) and
@@ -69,33 +71,44 @@ DSI start, so a trim learnt before is in place before the bridge locks.
 +};
 +module_param_cb(clock_trim_ppb, &ar_dsi_trim_ops, &clock_trim_ppb, 0644);
 +MODULE_PARM_DESC(clock_trim_ppb, "pixel clock trim in parts per billion, positive = slower (+-3000000)");
-+
+ 
  static const struct { u16 off; u32 val; } ar_dphy_ascent[] = {
  	{ 0x2c4, 0x0410b016 }, { 0x2c8, 0x002468ac }, { 0x2cc, 0x0000000a },
- 	{ 0x2d0, 0x00003675 }, { 0x2d4, 0x00000064 }, { 0x2d8, 0x21080c00 },
-@@ -104,10 +150,14 @@
+@@ -142,10 +188,17 @@
  static int ar_dsi_phy_init(void *priv)
  {
  	struct ar_dsi *dsi = priv;
 +	unsigned long flags;
  	unsigned int i;
  
--	writel(dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV,
--	       dsi->base + 0x2c0);
 +	spin_lock_irqsave(&ar_dsi_trim_lock, flags);
-+	dsi->pll_div = dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV;
++	dsi->pll_div = dsi->profile == AR_DISPLAY_P1_GOGGLE ? 0x04a54972 :
++		(dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV);
 +	ar_dsi_live = dsi;
 +	ar_dsi_write_pll(dsi);
 +	spin_unlock_irqrestore(&ar_dsi_trim_lock, flags);
++
+ 	if (dsi->profile == AR_DISPLAY_P1_GOGGLE) {
+-		writel(0x04a54972, dsi->base + 0x2c0);
+ 		for (i = 0; i < ARRAY_SIZE(ar_dphy_p1); i++)
+ 			writel(ar_dphy_p1[i].val, dsi->base + ar_dphy_p1[i].off);
+ 		for (i = 0; i < ARRAY_SIZE(ar_dsi_vid_p1); i++)
+@@ -153,8 +206,6 @@
+ 		goto enable_phy;
+ 	}
+ 
+-	writel(dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV,
+-	       dsi->base + 0x2c0);
  
  	for (i = 0; i < ARRAY_SIZE(ar_dphy_ascent); i++)
  		writel(ar_dphy_ascent[i].val, dsi->base + ar_dphy_ascent[i].off);
-@@ -209,7 +259,12 @@
+@@ -258,7 +309,12 @@
  static void ar_dsi_remove(struct platform_device *pdev)
  {
  	struct ar_dsi *dsi = platform_get_drvdata(pdev);
+-
 +	unsigned long flags;
- 
++
 +	spin_lock_irqsave(&ar_dsi_trim_lock, flags);
 +	if (ar_dsi_live == dsi)
 +		ar_dsi_live = NULL;

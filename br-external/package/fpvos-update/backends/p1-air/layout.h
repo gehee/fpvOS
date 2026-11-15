@@ -2,6 +2,7 @@
 #ifndef FPVOS_P1_LAYOUT_H
 #define FPVOS_P1_LAYOUT_H
 #include <string.h>
+#include "config.h"
 #include "ar9311-gpt.h"
 /* P1 fixed layout: only kernel/DTB/userapp selection may switch together.
  * SPL, environment, U-Boot and the stock bank 1 contents are preserved. */
@@ -18,8 +19,8 @@ static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], un
     unsigned selected = valid[1] && (!valid[0] || fpvos_get_le32(records[1]+532) > fpvos_get_le32(records[0]+532));
     static const struct { const char *name; unsigned start, size, active; } expected[] = {
         {"vendor",0x180000,0x80000,1}, {"factory",0x200000,0x600000,1},
-        {"env0",0x800000,0x60000,0}, {"env1",0x860000,0x60000,1},
-        {"uboot0",0x8c0000,0xc0000,0}, {"uboot1",0x980000,0xc0000,1},
+        {"env0",0x800000,0x60000,P1_BOOT_BANK == 0}, {"env1",0x860000,0x60000,P1_BOOT_BANK == 1},
+        {"uboot0",0x8c0000,0xc0000,P1_BOOT_BANK == 0}, {"uboot1",0x980000,0xc0000,P1_BOOT_BANK == 1},
         {"kernel0",0xa40000,0x600000,0}, {"kernel1",0x1040000,0x600000,1},
         {"dtb0",0x1640000,0x60000,0}, {"dtb1",0x16a0000,0x60000,1},
         {"userapp0",0x1700000,0x2d00000,0}, {"userapp1",0x4400000,0x2d00000,1},
@@ -39,21 +40,21 @@ static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], un
         unsigned j;
         for (j = 0; j < sizeof(expected)/sizeof(expected[0]); j++) {
             if (strcmp(name, expected[j].name)) continue;
+            const int variable_boot = P1_BOOT_BANK < 0 && j >= 2 && j <= 5;
             if ((found & (1U<<j)) || fpvos_get_le64(e+32) != expected[j].start/512 ||
                 fpvos_get_le64(e+40) != (expected[j].start+expected[j].size)/512-1 ||
-                (j < 2 || j > 11 ? fpvos_get_le64(e+48) != (expected[j].active ? 1ULL<<47 : 0) : (fpvos_get_le64(e+48) & ~(1ULL<<47)) != 0)) return 0;
-            /* Stock updates can select either environment/U-Boot copy. Require
-             * a matched pair, preserving its selection unchanged. */
-            if (j >= 2 && j <= 5 && fpvos_get_le64(e+48)) boot_group[(j-2)/2] |= 1U << ((j-2)%2);
+                (!variable_boot && (j < 6 || j > 11) ? fpvos_get_le64(e+48) != (expected[j].active ? 1ULL<<47 : 0) : (fpvos_get_le64(e+48) & ~(1ULL<<47)) != 0)) return 0;
+            if (variable_boot && fpvos_get_le64(e+48)) boot_group[(j-2)/2] |= 1U << ((j-2)%2);
             if (j >= 6 && j <= 11 && fpvos_get_le64(e+48)) active_group[(j-6)/2] |= 1U << ((j-6)%2);
             found |= 1U<<j;
             break;
         }
         if (j == sizeof(expected)/sizeof(expected[0])) return 0;
     }
-    if (found != (1U<<14)-1 || (boot_group[0] != 1 && boot_group[0] != 2) ||
-        boot_group[0] != boot_group[1] || (active_group[0] != 1 && active_group[0] != 2) ||
+    if (found != (1U<<14)-1 || (active_group[0] != 1 && active_group[0] != 2) ||
         active_group[0] != active_group[1] || active_group[0] != active_group[2]) return 0;
+    if (P1_BOOT_BANK < 0 && ((boot_group[0] != 1 && boot_group[0] != 2) ||
+        boot_group[0] != boot_group[1])) return 0;
     if (record) *record = selected;
     if (bank) *bank = active_group[0] == 2;
     return 1;

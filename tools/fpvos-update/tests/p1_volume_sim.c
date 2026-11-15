@@ -3,6 +3,7 @@
 #include "../../../br-external/package/fpvos-update/backends/p1-air/storage.c"
 #include <assert.h>
 #include <stdarg.h>
+const struct fpvos_update_board fpvos_board = { .bundle_limits={P1_ROOT_LIMIT+0x800000,512} };
 int __real_open(const char *,int,...);
 DIR *__real_opendir(const char *);
 int __real_access(const char *,int);

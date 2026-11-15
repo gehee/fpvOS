@@ -8,6 +8,7 @@
 #   ./build.sh image        # just assemble the SD image (rootfs already built)
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
 #   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
+#   ./build.sh p1-goggle [config|kernel|all] # P1 goggles RAM bring-up
 #   ./build.sh skyzone-steadydigital [config|kernel|all] # Skyzone SteadyDigital (RAM)
 #   ./build.sh skyzone-steadydigital-flash [config|kernel|all] # Skyzone SteadyDigital flashable NAND image (.fwu)
 #   ./build.sh p1-air [config|all] # P1 stock-runtime development bundle
@@ -42,6 +43,7 @@ need_vendor() {
 ASCENT_VRX_PRO_OUT="$ROOT/output/ascent-vrx-pro"
 AIR_OUT="$ROOT/output/ascent-lite"
 ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
+P1_GOGGLE_OUT="$ROOT/output/p1-goggle"
 STEADYDIGITAL_OUT="$ROOT/output/skyzone-steadydigital"
 STEADYDIGITAL_FLASH_OUT="$ROOT/output/skyzone-steadydigital-flash"
 P1_AIR_OUT="$ROOT/output/p1-air"
@@ -51,6 +53,15 @@ P1_AIR_SOURCE_OUT="$ROOT/output/p1-air-source"
 [ "${1:-}" = ascent-vrx-pro ] && shift
 
 case "${1:-all}" in
+  p1-goggle)
+    case "${2:-all}" in
+      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig ;;
+      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig
+              make -C "$P1_GOGGLE_OUT" linux-reconfigure ;;
+      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig
+              make -C "$P1_GOGGLE_OUT" ;;
+      *) echo "usage: $0 p1-goggle [config|kernel|all]" >&2; exit 1 ;;
+    esac ;;
   p1-air-source)
     case "${2:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_SOURCE_OUT" p1air_source_defconfig ;;
@@ -116,5 +127,5 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" ascentvrxpro_defconfig
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-air [config|all]|p1-air-source [config|all]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-goggle [config|kernel|all]|p1-air [config|all]|p1-air-source [config|all]}" >&2; exit 1 ;;
 esac

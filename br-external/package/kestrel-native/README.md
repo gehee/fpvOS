@@ -20,7 +20,9 @@ unmount. The shared supervisor is also used by Kestrel Air; its tests remain in
 `../kestrel-air/tests/test_supervise.py`. Application logs stay in bounded RAM
 files. Missing HDMI and application crashes retry without reloading SDIO.
 
+Recording uses a writable mount at `/mnt/sd` independently of the settings
+migration marker. Its `fpvos/recordings` path must be a real directory.
 No writable SD means temporary settings/pairing and no recording. The full UI
 still boots from internal flash. Card hotplug needs a storage/service restart.
-Existing recordings can be migrated by moving their folder or linking it at
+Existing recordings can be migrated by moving their folder to
 `/mnt/sd/fpvos/recordings`; preserve all thumbnail/telemetry sidecars.

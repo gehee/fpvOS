@@ -13,7 +13,7 @@ KESTREL_NATIVE_LICENSE = MIT (supervisor), GPL-3.0 (runtime)
 # static target executables and host-baked assets, with no machine settings.
 define KESTREL_NATIVE_BUILD_CMDS
 	test -s "$(KESTREL_NATIVE_IMAGE)" || \
-		{ echo "Set KESTREL_NATIVE_IMAGE to the packaged Ascent runtime" >&2; exit 1; }
+		{ echo "Set KESTREL_NATIVE_IMAGE to the packaged board runtime" >&2; exit 1; }
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror $(TARGET_LDFLAGS) \
 		$(@D)/supervise.c -o $(@D)/kestrel-gnd-supervise
 endef

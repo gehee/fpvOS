@@ -86,6 +86,7 @@ first: it's the one step that writes to your hardware.
 | **Caddx Ascent Lite** (air, CV2004, IMU) | ✅ links to fpvOS | ✅ fpvOS air image |
 | **Caddx Ascent Lite+** (air, OS02K10) | ✅ links to fpvOS | ✅ fpvOS air image |
 | **Caddx Ascent VRX / Gnd485** (AR9311 receiver) | — | Experimental platform support; see below |
+| **BETAFPV P1 goggles** (AR9311 receiver) | — | [Initial RAM-boot platform](br-external/board/p1-goggle/README.md); display/radio integration pending |
 
 [What the fpvOS air image adds](docs/FAQ.md#what-the-fpvos-air-image-adds) over a stock air unit.
 

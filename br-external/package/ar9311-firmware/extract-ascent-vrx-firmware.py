@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the codec firmware (chagall.bin) from the Caddx Ascent VRX firmware.
+"""Extract the codec firmware (chagall.bin) from pinned AR9311 vendor firmware.
 
 Read a pinned NAND OTRA image; extract one file from its UBI/SquashFS root.
 
@@ -11,6 +11,8 @@ No vendor code runs and no filesystem contents are extracted onto the host.
 import argparse
 import ctypes
 import hashlib
+import gzip
+import io
 from pathlib import Path
 import struct
 import subprocess
@@ -141,6 +143,15 @@ def volume(image, peb_size, volume_id):
     return result
 
 
+def decode_member(blob, compressed):
+    if compressed:
+        # Bound gzip expansion and validate its trailer before publishing.
+        with gzip.GzipFile(fileobj=io.BytesIO(blob)) as stream:
+            blob = stream.read(16 * 1024 * 1024 + 1)
+    require(0 < len(blob) <= 16 * 1024 * 1024, "invalid codec firmware size")
+    return blob
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--image", type=Path, required=True)
@@ -148,6 +159,7 @@ def main():
     parser.add_argument("--peb-size", type=int, required=True)
     parser.add_argument("--volume-id", type=int, required=True)
     parser.add_argument("--member", required=True)
+    parser.add_argument("--gzip-member", action="store_true")
     parser.add_argument("--liblzo", type=Path, required=True)
     parser.add_argument("--unsquashfs", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
@@ -161,7 +173,7 @@ def main():
         blob = subprocess.run(
             [str(args.unsquashfs), "-cat", str(root), args.member],
             check=True, stdout=subprocess.PIPE).stdout
-        require(blob, "empty extracted file")
+        blob = decode_member(blob, args.gzip_member)
         staged = Path(temporary) / "blob"
         staged.write_bytes(blob)
         staged.replace(args.output)

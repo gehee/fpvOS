@@ -21,6 +21,7 @@ define AR9311_RADIO_BUILD_CALIBRATION
 endef
 
 define AR9311_RADIO_INSTALL_CALIBRATION
+	$(INSTALL) -D -m 0755 $(@D)/S43factory $(TARGET_DIR)/etc/init.d/S43factory
 	$(INSTALL) -D -m 0755 $(@D)/radio-calibrate $(TARGET_DIR)/usr/libexec/radio-calibrate
 endef
 endif

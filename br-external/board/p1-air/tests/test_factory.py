@@ -6,7 +6,7 @@ import subprocess
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).resolve().parents[1] / 'source-rootfs-overlay/etc/init.d/S43factory'
+SCRIPT = Path(__file__).resolve().parents[3] / 'package/ar9311-radio/src/S43factory'
 
 
 class FactoryMount(unittest.TestCase):

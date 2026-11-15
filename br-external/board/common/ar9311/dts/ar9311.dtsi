@@ -15,6 +15,16 @@
 	#size-cells = <2>;
 	interrupt-parent = <&gic>;
 
+	adc: adc@a108000 {
+		compatible = "artosyn,adc";
+		/* Keep the MMC PLL registers at +0x88/+0xc0 unclaimed. */
+		reg = <0 0x0a108000 0 0x30>, <0 0x0a108200 0 0x1c>;
+		reg-names = "control", "data";
+		#io-channel-cells = <1>;
+		samp-count = <4>;
+		status = "disabled";
+	};
+
 	cpus {
 		#address-cells = <2>;
 		#size-cells = <0>;

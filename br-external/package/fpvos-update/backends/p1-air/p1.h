@@ -2,6 +2,7 @@
 #ifndef FPVOS_P1_H
 #define FPVOS_P1_H
 #include <stddef.h>
+#include "config.h"
 #include "ar9311-gpt.h"
 #include <sys/types.h>
 #ifndef P1_WORK
