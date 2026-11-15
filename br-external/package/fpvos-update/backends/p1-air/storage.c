@@ -224,10 +224,11 @@ static int volume(int data, int writing, char node[64])
     char path[256],text[128];
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d/ro_mode",ubi);
     if (p1_read(path,text,sizeof(text)) || strcmp(text,"0")) return -1;
-    /* Stock names the volumes without the partition suffix or underscore:
-     * MTD usr_data holds volume "usrdata", userapp0 holds "userapp". */
+    /* Both usrdata and usr_data occur on P1 units. The MTD geometry above
+     * identifies the settings partition; keep the volume-name allowlist narrow. */
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/name",ubi);
-    if (p1_read(path,text,sizeof(text)) || strcmp(text,data ? "usrdata" : "userapp")) return -1;
+    if (p1_read(path,text,sizeof(text)) ||
+        (data ? (strcmp(text,"usrdata") && strcmp(text,"usr_data")) : strcmp(text,"userapp"))) return -1;
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/type",ubi);
     if (p1_read(path,text,sizeof(text)) || strcmp(text,"dynamic")) return -1;
     snprintf(node,64,"/dev/ubi%d_0",ubi);

@@ -43,7 +43,7 @@ static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], un
                 fpvos_get_le64(e+40) != (expected[j].start+expected[j].size)/512-1 ||
                 (j < 2 || j > 11 ? fpvos_get_le64(e+48) != (expected[j].active ? 1ULL<<47 : 0) : (fpvos_get_le64(e+48) & ~(1ULL<<47)) != 0)) return 0;
             /* Stock updates can select either environment/U-Boot copy. Require
-             * exactly one of each, but preserve those selections unchanged. */
+             * a matched pair, preserving its selection unchanged. */
             if (j >= 2 && j <= 5 && fpvos_get_le64(e+48)) boot_group[(j-2)/2] |= 1U << ((j-2)%2);
             if (j >= 6 && j <= 11 && fpvos_get_le64(e+48)) active_group[(j-6)/2] |= 1U << ((j-6)%2);
             found |= 1U<<j;
@@ -52,7 +52,7 @@ static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], un
         if (j == sizeof(expected)/sizeof(expected[0])) return 0;
     }
     if (found != (1U<<14)-1 || (boot_group[0] != 1 && boot_group[0] != 2) ||
-        (boot_group[1] != 1 && boot_group[1] != 2) || (active_group[0] != 1 && active_group[0] != 2) ||
+        boot_group[0] != boot_group[1] || (active_group[0] != 1 && active_group[0] != 2) ||
         active_group[0] != active_group[1] || active_group[0] != active_group[2]) return 0;
     if (record) *record = selected;
     if (bank) *bank = active_group[0] == 2;
