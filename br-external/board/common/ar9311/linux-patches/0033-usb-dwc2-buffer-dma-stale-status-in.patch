@@ -1,0 +1,174 @@
+From: fpvOS contributors
+Subject: [PATCH] usb: dwc2: gadget: buffer DMA ends a stale EP0 Status IN on the next SETUP
+
+With buffer DMA (the AR9311 core runs it, see 0001) EP0 OUT is re-armed for a
+SETUP only once the Status IN of the previous control transfer completes. When
+the gadget processes a SETUP after the host has already finished that transfer,
+it arms a Status IN the host never collects; the host's next SETUP then waits
+in the shared RxFIFO with EP0 OUT disarmed, the FIFO head never drains, and no
+OUT endpoint is served again (RxFLvl is masked in DMA mode, so the controller
+also goes silent).
+
+Seen on the AR9311 (core v4.00a) as a dead ECM link and ACM port a few seconds
+after enumeration whenever the host opens and closes the serial port while the
+unit boots, every time in 5 tries: the last SET_CONTROL_LINE_STATE arrives as
+one SETUP-received + transfer-complete + SETUP-done interrupt, its Status IN is
+armed and never taken, and the stall state is RxFLvl set, GRXSTSR an 8-byte
+EP0 SETUP, DIEPCTL0 EPEna+NAKSts, DOEPCTL0 disabled.
+
+A SETUP always ends the control transfer in progress (USB 2.0 8.5.3). While a
+Status IN is pending, unmask RxFLvl; if the FIFO head is an EP0 SETUP and EP0
+OUT is not armed, stop the stale Status IN, complete its request and arm EP0
+OUT, so the DMA takes the SETUP and it is handled as usual. The watch is off
+again as soon as the next SETUP is queued, and never holds the level interrupt.
+
+A Status IN that already went out, with only its completion still to be
+serviced when the next SETUP arrives, is not stale: its completion arms EP0
+OUT itself, and ending the transfer first would complete it twice and lose a
+request. It is told apart by its transfer-complete interrupt being pending.
+---
+--- a/drivers/usb/dwc2/core.h
++++ b/drivers/usb/dwc2/core.h
+@@ -1012,6 +1012,8 @@
+  * @ctrl_req:           Request for EP0 control packets.
+  * @ep0_state:          EP0 control transfers state
+  * @delayed_status:		true when gadget driver asks for delayed status
++ * @ep0_status_watch:		buffer DMA: RxFLvl watched while an EP0 Status IN
++ *				is pending
+  * @test_mode:          USB test mode requested by the host
+  * @remote_wakeup_allowed: True if device is allowed to wake-up host by
+  *                      remote-wakeup signalling
+@@ -1209,6 +1211,7 @@
+ 	void *ctrl_buff;
+ 	enum dwc2_ep0_state ep0_state;
+ 	unsigned delayed_status : 1;
++	unsigned ep0_status_watch : 1;
+ 	u8 test_mode;
+ 
+ 	dma_addr_t setup_desc_dma[2];
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -1045,6 +1045,26 @@
+  * Start the given request running by setting the endpoint registers
+  * appropriately, and writing any data to the FIFOs.
+  */
++/*
++ * Buffer DMA: EP0 OUT is re-armed for a SETUP only when the Status IN
++ * completes. If the host has already ended that control transfer (a SETUP the
++ * gadget processed late, after the host moved on), it never collects the
++ * Status IN, and its next SETUP waits in the shared RxFIFO with EP0 OUT
++ * disarmed: no OUT endpoint is served again. While a Status IN is pending,
++ * watch RxFLvl so such a SETUP ends the stale transfer (USB 2.0 8.5.3).
++ */
++static void dwc2_hsotg_ep0_status_watch(struct dwc2_hsotg *hsotg, bool on)
++{
++	if (!using_dma(hsotg) || using_desc_dma(hsotg) ||
++	    hsotg->ep0_status_watch == on)
++		return;
++	hsotg->ep0_status_watch = on;
++	if (on)
++		dwc2_hsotg_en_gsint(hsotg, GINTSTS_RXFLVL);
++	else
++		dwc2_hsotg_disable_gsint(hsotg, GINTSTS_RXFLVL);
++}
++
+ static void dwc2_hsotg_start_req(struct dwc2_hsotg *hsotg,
+ 				 struct dwc2_hsotg_ep *hs_ep,
+ 				struct dwc2_hsotg_req *hs_req,
+@@ -1214,6 +1234,8 @@
+ 
+ 	dev_dbg(hsotg->dev, "%s: DxEPCTL=0x%08x\n", __func__, ctrl);
+ 	dwc2_writel(hsotg, ctrl, epctrl_reg);
++	if (index == 0 && dir_in && hsotg->ep0_state == DWC2_EP0_STATUS_IN)
++		dwc2_hsotg_ep0_status_watch(hsotg, true);
+ 
+ 	/*
+ 	 * set these, it seems that DMA support increments past the end
+@@ -2047,6 +2069,7 @@
+ 	req->length = 8;
+ 	req->buf = hsotg->ctrl_buff;
+ 	req->complete = dwc2_hsotg_complete_setup;
++	dwc2_hsotg_ep0_status_watch(hsotg, false);
+ 
+ 	if (!list_empty(&hs_req->queue)) {
+ 		dev_dbg(hsotg->dev, "%s already queued???\n", __func__);
+@@ -2100,6 +2123,9 @@
+ 	ctrl |= DXEPCTL_EPENA; /* ensure ep enabled */
+ 	ctrl |= DXEPCTL_USBACTEP;
+ 	dwc2_writel(hsotg, ctrl, epctl_reg);
++	if (!index && hs_ep->dir_in &&
++	    hsotg->ep0_state == DWC2_EP0_STATUS_IN)
++		dwc2_hsotg_ep0_status_watch(hsotg, true);
+ }
+ 
+ /**
+@@ -3470,6 +3496,7 @@
+ 		intmsk |= GINTSTS_CONIDSTSCHNG;
+ 
+ 	dwc2_writel(hsotg, intmsk, GINTMSK);
++	hsotg->ep0_status_watch = 0;
+ 
+ 	if (using_dma(hsotg)) {
+ 		dwc2_writel(hsotg, GAHBCFG_GLBL_INTR_EN | GAHBCFG_DMA_EN |
+@@ -3705,6 +3732,48 @@
+  * @irq: The IRQ number triggered
+  * @pw: The pw value when registered the handler.
+  */
++/*
++ * RxFLvl while an EP0 Status IN is pending: if the FIFO head is a SETUP for
++ * EP0 and EP0 OUT is not armed, the host has ended the transfer. Stop the
++ * stale Status IN and arm EP0 OUT; the DMA then takes the SETUP as usual.
++ */
++static void dwc2_hsotg_ep0_status_rxflvl(struct dwc2_hsotg *hsotg)
++{
++	u32 grxstsr = dwc2_readl(hsotg, GRXSTSR);
++
++	if ((grxstsr & GRXSTS_EPNUM_MASK) ||
++	    ((grxstsr & GRXSTS_PKTSTS_MASK) >> GRXSTS_PKTSTS_SHIFT) !=
++	    GRXSTS_PKTSTS_SETUPRX ||
++	    (dwc2_readl(hsotg, DOEPCTL0) & DXEPCTL_EPENA))
++		return;	/* traffic the DMA drains */
++
++	if (hsotg->ep0_state != DWC2_EP0_STATUS_IN) {
++		/* Not the case handled here: never hold a level interrupt. */
++		dwc2_hsotg_ep0_status_watch(hsotg, false);
++		return;
++	}
++
++	/* The Status IN went out and only its completion is still to be
++	 * serviced (the host's next SETUP beat this handler): not stale. That
++	 * completion, later in this pass, arms EP0 OUT itself; ending the
++	 * transfer here would complete it twice and lose a request.
++	 */
++	if (dwc2_readl(hsotg, DIEPINT(0)) & DXEPINT_XFERCOMPL)
++		return;
++
++	dev_dbg(hsotg->dev, "%s: SETUP during a stale Status IN\n", __func__);
++	if (dwc2_readl(hsotg, DIEPCTL0) & DXEPCTL_EPENA) {
++		dwc2_set_bit(hsotg, DIEPCTL0, DXEPCTL_SNAK);
++		dwc2_hsotg_wait_bit_set(hsotg, DIEPINT(0), DXEPINT_INEPNAKEFF, 100);
++		dwc2_set_bit(hsotg, DIEPCTL0, DXEPCTL_EPDIS);
++		dwc2_hsotg_wait_bit_set(hsotg, DIEPINT(0), DXEPINT_EPDISBLD, 100);
++		dwc2_writel(hsotg, DXEPINT_INEPNAKEFF | DXEPINT_EPDISBLD,
++			    DIEPINT(0));
++	}
++	kill_all_requests(hsotg, hsotg->eps_out[0], -ECONNRESET);
++	dwc2_hsotg_enqueue_setup(hsotg);
++}
++
+ static irqreturn_t dwc2_hsotg_irq(int irq, void *pw)
+ {
+ 	struct dwc2_hsotg *hsotg = pw;
+@@ -3725,6 +3794,12 @@
+ 
+ 	gintsts &= gintmsk;
+ 
++	if (hsotg->ep0_status_watch && (gintsts & GINTSTS_RXFLVL)) {
++		/* Buffer DMA drains the FIFO; only look at its head. */
++		gintsts &= ~GINTSTS_RXFLVL;
++		dwc2_hsotg_ep0_status_rxflvl(hsotg);
++	}
++
+ 	if (gintsts & GINTSTS_RESETDET) {
+ 		dev_dbg(hsotg->dev, "%s: USBRstDet\n", __func__);
+ 

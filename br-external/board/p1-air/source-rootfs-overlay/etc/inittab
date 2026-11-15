@@ -19,6 +19,14 @@
 ::respawn:/usr/sbin/fpvos-update-service
 ttyS0::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
+# First: the watchdog daemon goes without its magic close, so the watchdog
+# stays armed (busybox's SIGTERM handler would disarm it, and the kernel then
+# keeps the DW watchdog fed for good): a shutdown step that hangs resets the
+# unit about 90 s later instead of never.
+::shutdown:/usr/bin/killall -KILL watchdog
+# Bridge mode (fpvOS_usb) undone before the USB gadget goes down: unbinding it
+# under the bridge's FunctionFS endpoints hangs the reboot.
+::shutdown:/usr/sbin/fpvos-usb shutdown
 ::shutdown:/etc/init.d/S60kestrel-air stop
 ::shutdown:/etc/init.d/S45settings stop
 ::shutdown:/etc/init.d/S43factory stop

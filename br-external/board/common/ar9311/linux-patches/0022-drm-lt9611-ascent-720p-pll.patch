@@ -1,0 +1,81 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] drm: lt9611: use the Ascent PLL divider for 720p60
+
+The Ascent firmware selects divide-by-four below 80 MHz. The generic
+70 MHz threshold selects divide-by-two for CEA-4 (74.25 MHz), leaving
+the PLL calibration near its lower limit. Use the board-specific
+threshold only for the opt-in Ascent 60 Hz profile.
+
+Derive the fixed-M calibration and PCR release value from the selected
+post-divider instead of a resolution-specific constant. CEA-4 with
+postdiv4 and CEA-16 with postdiv2 then share the validated PLL range.
+Legacy 1080p-only and non-Ascent bridge behavior is unchanged.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/drivers/gpu/drm/bridge/lontium-lt9611.c b/drivers/gpu/drm/bridge/lontium-lt9611.c
+--- a/drivers/gpu/drm/bridge/lontium-lt9611.c
++++ b/drivers/gpu/drm/bridge/lontium-lt9611.c
+@@ -257,10 +257,13 @@
+ 
+ 	regmap_multi_reg_write(lt9611->regmap, reg_cfg, ARRAY_SIZE(reg_cfg));
+ 
++	/* Ascent firmware uses an 80 MHz boundary: CEA-4 needs divide-by-four
++	 * to retain the same PLL operating range as CEA-16.
++	 */
+ 	if (pclk > 150000) {
+ 		regmap_write(lt9611->regmap, 0x812d, 0x88);
+ 		*postdiv = 1;
+-	} else if (pclk > 70000) {
++	} else if (pclk > (lt9611->ascent_60hz ? 80000 : 70000)) {
+ 		regmap_write(lt9611->regmap, 0x812d, 0x99);
+ 		*postdiv = 2;
+ 	} else {
+@@ -663,11 +666,13 @@
+  * leaves the first cold modeset black. Never select the internal test pattern.
+  * Supports RGB CEA-16 and, with ascent-60hz-quirk, CEA-4 (no DVI/audio).
+  */
+-static int lt9611_ascent_enable(struct lt9611 *lt, const struct drm_display_mode *mode)
++static int lt9611_ascent_enable(struct lt9611 *lt, const struct drm_display_mode *mode,
++			       unsigned int postdiv)
+ {
+ 	unsigned int lock, cal, band;
+ 	int ret;
+ 	const bool mode_720 = mode->hdisplay == 1280;
++	const unsigned int pcr_m = mode->clock * 5 * postdiv / 27000 - 1;
+ 	const struct reg_sequence init[] = {
+ 		{ 0x8130, 0x6a }, { 0x824f, 0x80 }, { 0x8250, 0x10 },
+ 		/* RGB 16:9 AVI packet for the selected CEA mode, also without EDID. */
+@@ -675,7 +680,7 @@
+ 		{ 0x8443, mode_720 ? 0x33 : 0x27 }, { 0x8444, 0x10 }, { 0x8445, 0x28 },
+ 		{ 0x8446, 0 }, { 0x8447, mode_720 ? 4 : 16 }, { 0x843d, 8 },
+ 		{ 0x8123, 0x40 }, { 0x8124, 0x62 }, { 0x8125, 0x80 },
+-		{ 0x832d, 0x40 }, { 0x8331, 8 }, { 0x8326, mode_720 ? 0x9b : 0xb6 },
++		{ 0x832d, 0x40 }, { 0x8331, 8 }, { 0x8326, 0x80 | pcr_m },
+ 		{ 0x82de, 0x20 }, { 0x82de, 0xe0 },
+ 		{ 0x8011, 0x5a }, { 0x8011, 0xfa }, { 0x8016, 0xf2 },
+ 		{ 0x8018, 0xdc }, { 0x8018, 0xfc }, { 0x8016, 0xf3 },
+@@ -687,10 +692,10 @@
+ 		{ 0x8016, 0xe3 }, { 0x8016, 0xf3, 100000 },
+ 	};
+ 	const struct reg_sequence enable[] = {
+-		{ 0x8326, mode_720 ? 0x1b : 0x36 }, { 0x8011, 0x5a, 10000 },
++		{ 0x8326, pcr_m }, { 0x8011, 0x5a, 10000 },
+ 		{ 0x8011, 0xfa, 100000 },
+ 		{ 0x8130, 0xea, 100000 },
+-		{ 0x8326, mode_720 ? 0x1b : 0x36 }, { 0x8011, 0x5a, 10000 }, { 0x8011, 0xfa },
++		{ 0x8326, pcr_m }, { 0x8011, 0x5a, 10000 }, { 0x8011, 0xfa },
+ 	};
+ 
+ 	ret = regmap_multi_reg_write(lt->regmap, init, ARRAY_SIZE(init));
+@@ -760,7 +765,7 @@
+ 	lt9611_video_check(lt9611);
+ 
+ 	if (lt9611->ascent_fixed_mode) {
+-		int ret = lt9611_ascent_enable(lt9611, mode);
++		int ret = lt9611_ascent_enable(lt9611, mode, postdiv);
+ 
+ 		if (ret) {
+ 			regmap_write(lt9611->regmap, 0x8130, 0x6a);

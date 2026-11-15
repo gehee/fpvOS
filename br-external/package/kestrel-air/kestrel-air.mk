@@ -9,7 +9,7 @@
 # KESTREL_AIR_SITE another copy of the repository.
 KESTREL_AIR_SITE ?= https://github.com/gehee/kestrel-air.git
 KESTREL_AIR_SITE_METHOD = git
-KESTREL_AIR_VERSION ?= 4e5d95608c4be13790ad040a03fff9fbe8e9f5c1
+KESTREL_AIR_VERSION ?= b3fa662b25e03cd5d8a76544f0d941c34b5dd68d
 KESTREL_AIR_LICENSE = GPL-3.0 with an additional permission
 KESTREL_AIR_LICENSE_FILES = LICENSE LICENSE.exception
 KESTREL_AIR_DEPENDENCIES = ar-libre
@@ -19,7 +19,7 @@ KESTREL_AIR_BACKEND = ar9311
 
 define KESTREL_AIR_BUILD_SUPERVISOR
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror $(TARGET_LDFLAGS) \
-		$(KESTREL_AIR_PKGDIR)/supervise.c -o $(@D)/kestrel-air-supervise
+		$(KESTREL_AIR_PKGDIR)/../kestrel-common/supervise.c -o $(@D)/kestrel-air-supervise
 endef
 KESTREL_AIR_POST_BUILD_HOOKS += KESTREL_AIR_BUILD_SUPERVISOR
 else

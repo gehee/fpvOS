@@ -1,7 +1,6 @@
 config BR2_PACKAGE_OPEN8030
 	bool "open8030"
-	depends on BR2_HOSTARCH = "x86_64" # prebuilt RISC-V compiler
-	select BR2_PACKAGE_OPEN8030_PROFILES
+	depends on BR2_HOSTARCH = "x86_64" || BR2_HOSTARCH = "aarch64" # prebuilt RISC-V compiler
 	help
 	  Open8030, the open-source firmware for the AR8030 radio
 	  chip, built from source with Zephyr and installed next to
@@ -11,8 +10,8 @@ config BR2_PACKAGE_OPEN8030
 	  exists.
 
 	  The board selects its profile, host transport and radio
-	  role. Profiles come from open8030-profiles or an explicit
-	  private path.
+	  role. Profiles come from Open8030's own profiles/ or an
+	  explicit private path.
 
 if BR2_PACKAGE_OPEN8030
 
@@ -29,7 +28,7 @@ config BR2_PACKAGE_OPEN8030_PROFILE
 	string "Board profile source"
 	depends on !BR2_PACKAGE_OPEN8030_PROFILE_P1_STOCK
 	help
-	  Profile filename from open8030-profiles, or an absolute path
+	  Profile filename in Open8030's profiles/, or an absolute path
 	  to a private profile. Set this in the board defconfig. A
 	  make-time OPEN8030_PRIVATE_DIR override looks up this
 	  profile's basename in that directory instead.
@@ -89,8 +88,11 @@ config BR2_PACKAGE_OPEN8030_CONFIG
 	default "bb_config_gnd_open8030.json"
 	depends on !BR2_PACKAGE_OPEN8030_ROLE_AP
 	help
-	  Configuration filename from open8030-profiles, or an
-	  absolute path. Installed as open8030.json independently of
+	  A bare filename is made at build time from the stock VRX
+	  Pro configuration (vendor/rootfs, or the make variable
+	  OPEN8030_STOCK_GND_CONFIG) with fpvOS's link tuning
+	  (gnd-config.py); an absolute path is used as it is.
+	  Installed as open8030.json independently of
 	  the input name. OPEN8030_CONFIG_DIR (by default
 	  OPEN8030_PRIVATE_DIR) can override the source directory at
 	  make time. Air units use their runtime board-specific stock

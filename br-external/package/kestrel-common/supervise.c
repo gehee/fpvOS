@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-/* Supervise one air application and its camera helpers. All state/logs are RAM.
+/* Supervise one application and its helpers. All state/logs are RAM.
  * A process group contains each generation; subreaping collects orphaned AE/AWB
  * workers after a crash before the next generation can acquire the camera.
  */
@@ -147,7 +147,7 @@ int main(int argc, char **argv)
             if (dup2(pipefd[1], STDOUT_FILENO) < 0 || dup2(pipefd[1], STDERR_FILENO) < 0) _exit(126);
             close(pipefd[1]);
             execvp(argv[2], argv + 2);
-            perror("exec air launcher");
+            perror("exec application launcher");
             _exit(127);
         }
         sigprocmask(SIG_SETMASK, &previous, NULL);

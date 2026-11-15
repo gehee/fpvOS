@@ -1,7 +1,7 @@
 config BR2_PACKAGE_FPVOS_UPDATE
 	bool "fpvOS firmware updater"
 	depends on BR2_USE_MMU
-	depends on BR2_aarch64
+	depends on BR2_aarch64 || BR2_arm
 	help
 	  USB CDC transport, bundle verification and update service. Storage,
 	  image validation and clean-mode policy come from a board backend.
@@ -17,6 +17,23 @@ config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX
 	  Fixed NAND layout, readback and rollback, clean-mode selection and
 	  original vendor kernel/DTB restoration for Gnd485.
 
+config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_LITE
+	bool "Caddx Ascent Lite / Lite+ (in place of the stock updater)"
+	depends on BR2_arm
+	help
+	  The stock updater's replacement, at its path in the app volume
+	  (/usrdata/fpv/ar_fpvhs_upgrade): the vendor's PC tool, the fpvOS
+	  Flasher and fpvOS's client flash the bank the unit did not boot
+	  from, read it back, then switch to it.
+
+config BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX_PRO
+	bool "Caddx VRX Pro (serial port only)"
+	depends on BR2_aarch64
+	help
+	  The serial port and its USB modes (with fpvos-usb, bridge mode),
+	  no update over USB: the goggle is updated by reflashing its SD
+	  card.
+
 config BR2_PACKAGE_FPVOS_UPDATE_P1_AIR
 	bool "BETAFPV P1 Air NAND"
 	depends on BR2_FPVOS_BOARD_P1_AIR
@@ -24,5 +41,14 @@ config BR2_PACKAGE_FPVOS_UPDATE_P1_AIR
 	  Direct boot with an embedded fpvOS recovery system. Write and
 	  verify bank 0 before selecting it; preserve stock bank 1, factory
 	  calibration and user settings. Stock clean mode is only an installer.
+
+config BR2_PACKAGE_FPVOS_UPDATE_SKYZONE_STEADYDIGITAL
+	bool "Skyzone SteadyDigital NAND (AR9311)"
+	depends on BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
+	help
+	  Direct boot with an embedded fpvOS recovery system, as the P1,
+	  but mirrored for this board: write and verify bank B before
+	  selecting it; preserve stock bank A, factory calibration and user
+	  settings. The receiver is kestrel-gnd.
 endchoice
 endif

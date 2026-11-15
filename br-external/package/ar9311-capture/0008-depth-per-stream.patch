@@ -1,0 +1,89 @@
+From: fpvOS developers
+Subject: [PATCH] media: ar-cvisp: depth read at each stream start, and its timing
+
+The depth parameter becomes writable and is read when a stream starts, so a
+low-delay consumer (depth 1, reading rows as they land) and one that wants
+whole frames (depth 2) can share the module without reloading it. The
+comment records the measured timing: the tick comes as a frame starts to
+land, so at depth 1 a buffer is handed back as its own frame begins to land
+in it, and the consumer must read rows only once they have landed and queue
+the buffer again only once its last row has.
+
+--- a/overlay/drivers/media/artosyn/ar-cvisp.c
++++ b/overlay/drivers/media/artosyn/ar-cvisp.c
+@@ -219,11 +219,25 @@
+  *
+  * Take the measurement from a buffer marked while the stream is running. See
+  * the geometry block for what the first buffer of a stream reports instead.
++ *
++ * Timed on the P1 with luma rows marked before each queue (fpvOS, 2026-11-04):
++ * the tick comes as a frame starts to land, its row 0 0.1 ms before it, and the
++ * rows follow at the line rate, row 1079 15.6 ms after the tick. A buffer
++ * armed at one tick receives the frame that starts at the next, so at depth 1
++ * a buffer is handed back as its own frame begins to land in it, and at depth
++ * 2 one frame later, its last row 1 ms in place. Depth 1 is therefore a
++ * low-delay contract, the vendor's: the consumer reads each row only once it
++ * has landed (watching a marked row), and queues the buffer again only once
++ * its last row has, or that row lands in the next owner's frame. Torn frames
++ * at 1 came from consumers that did neither.
++ *
++ * Writable, and read at each stream start, so a low-delay consumer and one
++ * that wants whole frames can share the module.
+  */
+ static unsigned int depth = 3;
+-module_param(depth, uint, 0444);
++module_param(depth, uint, 0644);
+ MODULE_PARM_DESC(depth,
+-		 "frame ticks a buffer is held before completion, 1 to 4 (default 3)");
++		 "frame ticks a buffer is held before completion, 1 to 4 (default 3); read at stream start");
+ 
+ /*
+  * Bring the sensor, input path and ISP up from STREAMON, so opening the node is
+@@ -274,6 +288,7 @@
+ 	 * enough to hand back; see ar_cvisp_frame_tick.
+ 	 */
+ 	struct ar_cvisp_buffer *held[AR_CVISP_MAX_DEPTH];
++	unsigned int depth;	/* the depth parameter as this stream started */
+ 	bool streaming;
+ 	bool chain_up;		/* the chain ahead of this block has been started */
+ 	unsigned int sequence;
+@@ -425,8 +440,8 @@
+ 	list_del(&next->list);
+ 
+ 	/* Shift the pipeline: the oldest leaves, the new one enters at the front. */
+-	done = cv->held[depth - 1];
+-	for (unsigned int i = depth - 1; i > 0; i--)
++	done = cv->held[cv->depth - 1];
++	for (unsigned int i = cv->depth - 1; i > 0; i--)
+ 		cv->held[i] = cv->held[i - 1];
+ 
+ 	cv->held[0] = next;
+@@ -756,6 +771,9 @@
+ 	for (unsigned int i = 0; i < ARRAY_SIZE(plane_size); i++)
+ 		sizes[i] = plane_size[i];
+ 
++	/* One more queued than the depth the next stream will hold (see probe). */
++	q->min_queued_buffers = clamp_val(READ_ONCE(depth), 1, AR_CVISP_MAX_DEPTH) + 1;
++
+ 	return 0;
+ }
+ 
+@@ -920,6 +938,7 @@
+ 	list_del(&first->list);
+ 	memset(cv->held, 0, sizeof(cv->held));
+ 	cv->held[0] = first;
++	cv->depth = clamp_val(READ_ONCE(depth), 1, AR_CVISP_MAX_DEPTH);
+ 	cv->sequence = 0;
+ 	ar_cvisp_arm_buffer(cv, first);
+ 
+@@ -928,8 +947,8 @@
+ 
+ 	spin_unlock_irqrestore(&cv->buffer_lock, flags);
+ 
+-	dev_info(cv->dev, "streaming: %ux%u YUV420M, %u buffers\n",
+-		 AR_CVISP_WIDTH, AR_CVISP_HEIGHT, count);
++	dev_info(cv->dev, "streaming: %ux%u YUV420M, %u buffers, depth %u\n",
++		 AR_CVISP_WIDTH, AR_CVISP_HEIGHT, count, cv->depth);
+ 
+ 	return 0;
+ }

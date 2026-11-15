@@ -1,0 +1,35 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] drm: artosyn: configure the primary before loading scaler RAM
+
+Match the vendor initialization order: set the primary format and scaler
+geometry, then load its filter coefficients before starting scanout.
+Keep filter RAM writes out of normal page flips.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/artosyn_vo.c
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -272,6 +272,10 @@
+ 	writel(VO_1080P60_DPI_CTRL, vo->regs + VO_DPI_CTRL);
+ 	writel(0xff, vo->regs + VO_QOS);
+ 
++	vo->cur_cfg = (5 << 26) | BIT(0); /* opaque XRGB8888, not yet started */
++	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
++	ar_vo_set_fb_addr(vo, plane_state);
++
+ 	/* Filter RAM is not shadowed: initialize only with scanout stopped. */
+ 	if (mode->hdisplay == 1280) {
+ 		writel(0, vo->regs + VO_H_FILTER_INDEX);
+@@ -282,9 +286,6 @@
+ 			writel(ar_vo_filter_3_2[i], vo->regs + VO_V_FILTER_DATA);
+ 	}
+ 
+-	vo->cur_cfg = (5 << 26) | BIT(0); /* opaque XRGB8888, not yet started */
+-	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
+-	ar_vo_set_fb_addr(vo, plane_state);
+ 	vo->cur_cfg |= VO_MAIN_START;
+ 	writel(vo->cur_cfg, vo->regs + VO_MAIN_CTRL);
+ 

@@ -1,0 +1,364 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] drm: artosyn: add the remaining Ascent HDMI refresh rates
+
+Add the opt-in ascent-hdmi profile for CEA-4/16/19/31/41/47:
+720p50/60/100/120 and 1080p50/60. Preserve the two legacy profiles.
+
+Share explicit mode validation and internal raster timing between VO
+and DSI. Reuse the 464.4 Mbps PHY for 720p50/60 and the 928.8 Mbps PHY
+for 1080p and 720p100/120. Extend horizontal blanking for 50/100 Hz;
+keep the established 60 Hz clocks and raster values unchanged.
+
+Select the LT9611 AVI VIC/checksum and fixed-M calibration from the
+actual mode. Retain the board's 80 MHz PLL divider boundary.
+No changes to the hardware planes, scaler or decoder are required.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/drivers/gpu/drm/artosyn/artosyn_dsi.c b/drivers/gpu/drm/artosyn/artosyn_dsi.c
+--- a/drivers/gpu/drm/artosyn/artosyn_dsi.c
++++ b/drivers/gpu/drm/artosyn/artosyn_dsi.c
+@@ -3,7 +3,7 @@
+  * AR9311 glue for the Synopsys DSI host and Artosyn custom D-PHY.
+  * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
+  * Ascent profiles use the validated vendor lane clock and D-PHY register table.
+- * Four-lane RGB888 sync-event video supports CEA-16 and optionally CEA-4.
++ * Four-lane RGB888 sync-event video uses explicit board timing profiles.
+  * Each mode uses a matched D-PHY, lane rate and internal DC raster. The
+  * non-burst host timing overrides are expressed in actual lane-byte clocks.
+  */
+@@ -18,6 +18,8 @@
+ #include <drm/bridge/dw_mipi_dsi.h>
+ #include <drm/drm_mipi_dsi.h>
+ #include <drm/drm_modes.h>
++
++#include "artosyn_display.h"
+ 
+ #define DSI_PHY_RSTZ		0xa0
+ #define DSI_PHY_IF_CFG		0xa4
+@@ -29,8 +31,8 @@
+ 	struct dw_mipi_dsi	*dmd;
+ 	struct dw_mipi_dsi_plat_data pdata;
+ 	unsigned int		lanes;
+-	bool mode_720;
+-	bool mode_720_allowed;
++	enum ar_display_profile profile;
++	const struct ar_display_timing *timing;
+ };
+ 
+ static const struct { u16 off; u32 val; } ar_dphy_ascent[] = {
+@@ -104,7 +106,7 @@
+ 	struct ar_dsi *dsi = priv;
+ 	unsigned int i;
+ 
+-	writel(dsi->mode_720 ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV,
++	writel(dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV,
+ 	       dsi->base + 0x2c0);
+ 
+ 	for (i = 0; i < ARRAY_SIZE(ar_dphy_ascent); i++)
+@@ -114,14 +116,14 @@
+ 	for (i = 0; i < ARRAY_SIZE(ar_dsi_vid_ascent); i++)
+ 		writel(ar_dsi_vid_ascent[i].val, dsi->base + ar_dsi_vid_ascent[i].off);
+ 
+-	if (dsi->mode_720) {
++	if (dsi->timing->slow_phy) {
+ 		for (i = 0; i < ARRAY_SIZE(ar_dphy_ascent_720); i++)
+ 			writel(ar_dphy_ascent_720[i].val,
+ 			       dsi->base + ar_dphy_ascent_720[i].off);
+-		writel(20, dsi->base + 0x48);
+-		writel(110, dsi->base + 0x4c);
+-		writel(1290, dsi->base + 0x50);
+ 	}
++	writel(dsi->timing->dsi_hsa, dsi->base + 0x48);
++	writel(dsi->timing->dsi_hbp, dsi->base + 0x4c);
++	writel(dsi->timing->dsi_hline, dsi->base + 0x50);
+ 	writel(dsi->lanes - 1, dsi->base + DSI_PHY_IF_CFG);
+ 	writel(0xd, dsi->base + DSI_PHY_RSTZ);
+ 	writel(0xf, dsi->base + DSI_PHY_RSTZ);
+@@ -134,15 +136,12 @@
+ 				unsigned int *lane_mbps)
+ {
+ 	struct ar_dsi *dsi = priv;
+-	bool mode_720 = dsi->mode_720_allowed && mode->clock == 74250 &&
+-		mode->hdisplay == 1280 && mode->vdisplay == 720;
+-
+-	if (lanes != 4 || format != MIPI_DSI_FMT_RGB888 ||
+-	    (!mode_720 && (mode->clock != 148500 || mode->hdisplay != 1920 ||
+-			   mode->vdisplay != 1080)))
++	const struct ar_display_timing *timing = ar_display_timing(dsi->profile, mode);
++
++	if (lanes != 4 || format != MIPI_DSI_FMT_RGB888 || !timing)
+ 		return -EINVAL;
+-	dsi->mode_720 = mode_720;
+-	*lane_mbps = mode_720 ? 465 : 929;
++	dsi->timing = timing;
++	*lane_mbps = timing->slow_phy ? 465 : 929;
+ 	return 0;
+ }
+ 
+@@ -172,14 +171,14 @@
+ 
+ 	/* Reject absent/unknown profiles before mapping or programming hardware. */
+ 	if (of_property_read_string(dev->of_node, "artosyn,display-profile", &profile) ||
+-	    (strcmp(profile, "ascent-1080p60") && strcmp(profile, "ascent-60hz")))
++	    !ar_display_profile(profile))
+ 		return dev_err_probe(dev, -EINVAL, "unsupported display profile\n");
+ 
+ 	dsi = devm_kzalloc(dev, sizeof(*dsi), GFP_KERNEL);
+ 	if (!dsi)
+ 		return -ENOMEM;
+ 
+-	dsi->mode_720_allowed = !strcmp(profile, "ascent-60hz");
++	dsi->profile = ar_display_profile(profile);
+ 	dsi->dev = dev;
+ 	dsi->lanes = 4;
+ 	platform_set_drvdata(pdev, dsi);
+diff --git a/drivers/gpu/drm/artosyn/artosyn_vo.c b/drivers/gpu/drm/artosyn/artosyn_vo.c
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -1,9 +1,9 @@
+ // SPDX-License-Identifier: GPL-2.0
+ /*
+- * Artosyn AR9311 VO: RGB/YUV primary and ARGB UI overlay, 720p/1080p at nominal 60 Hz.
++ * Artosyn AR9311 VO: RGB/YUV primary and ARGB UI overlay, 720p/1080p HDMI output.
+  * Adapted from Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
+  * Register sequencing originates in that project's Artosyn display work;
+- * The ascent-60hz profile adds 720p; ascent-1080p60 retains its legacy restriction.
++ * Board profiles select an explicit set of supported HDMI timings.
+  * The DC feeds the Artosyn DSI host and Lontium HDMI bridge.
+  */
+ 
+@@ -34,6 +34,8 @@
+ #include <drm/drm_probe_helper.h>
+ #include <drm/drm_simple_kms_helper.h>
+ #include <drm/drm_vblank.h>
++
++#include "artosyn_display.h"
+ 
+ #define VO_GLOBAL	0x0000
+ #define  VO_GLOBAL_AXI_EN	BIT(11)
+@@ -96,7 +98,7 @@
+ 	void __iomem			*crg;
+ 	void __iomem			*pixreg;
+ 	u32				cur_cfg;
+-	bool				mode_720_allowed;
++	enum ar_display_profile		profile;
+ };
+ 
+ #define to_ar_vo(d) container_of(d, struct ar_vo, drm)
+@@ -224,6 +226,7 @@
+ {
+ 	struct ar_vo *vo = to_ar_vo(pipe->crtc.dev);
+ 	const struct drm_display_mode *mode = &crtc_state->adjusted_mode;
++	const struct ar_display_timing *timing = ar_display_timing(vo->profile, mode);
+ 	u32 g;
+ 	unsigned int i;
+ 
+@@ -249,13 +252,9 @@
+ 	writel(0, vo->regs + VO_MAIN_CTRL);
+ 	writel(readl(vo->regs + VO_GLOBAL) & ~VO_GLOBAL_AXI_EN, vo->regs + VO_GLOBAL);
+ 
+-	/* The shared MIPI PLL supplies ~154.8 MHz at 1080p and ~77.4 MHz
+-	 * at 720p. Match the internal raster to the selected lane rate:
+-	 * 2293 x 1125 or 1720 x 750. DSI/PCR emits standard CEA-16/4 timing.
+-	 */
+-	writel(mode->hdisplay == 1280 ? (1720 << 16) | 1280 : 0x08f50780,
+-	       vo->regs + VO_H_ACT_FP);
+-	writel(mode->hdisplay == 1280 ? VO_SYNC_VALID | (1574 << 15) | 1547 : 0x441807f5,
++	/* The profile pairs this internal raster with the DSI lane clock. */
++	writel((timing->htotal << 16) | mode->hdisplay, vo->regs + VO_H_ACT_FP);
++	writel(VO_SYNC_VALID | (timing->hsync_end << 15) | timing->hsync_start,
+ 	       vo->regs + VO_H_SA_BP);
+ 	writel((mode->vtotal << 16) | mode->vdisplay, vo->regs + VO_V_ACT_FP);
+ 	writel(VO_SYNC_VALID | (mode->vsync_end << 15) | mode->vsync_start, vo->regs + VO_V_SA_BP);
+@@ -357,16 +356,8 @@
+ 					  const struct drm_display_mode *m)
+ {
+ 	struct ar_vo *vo = to_ar_vo(pipe->crtc.dev);
+-	bool timing = (m->clock == 148500 && m->hdisplay == 1920 && m->vdisplay == 1080 &&
+-		m->hsync_start == 2008 && m->hsync_end == 2052 && m->htotal == 2200 &&
+-		m->vsync_start == 1084 && m->vsync_end == 1089 && m->vtotal == 1125) ||
+-		(vo->mode_720_allowed && m->clock == 74250 && m->hdisplay == 1280 &&
+-		 m->vdisplay == 720 &&
+-		m->hsync_start == 1390 && m->hsync_end == 1430 && m->htotal == 1650 &&
+-		m->vsync_start == 725 && m->vsync_end == 730 && m->vtotal == 750);
+-
+-	if (!timing || (m->flags & (DRM_MODE_FLAG_INTERLACE | DRM_MODE_FLAG_DBLSCAN |
+-		DRM_MODE_FLAG_NHSYNC | DRM_MODE_FLAG_NVSYNC)))
++
++	if (!ar_display_timing(vo->profile, m))
+ 		return MODE_BAD;
+ 	return MODE_OK;
+ }
+@@ -543,14 +534,14 @@
+ 
+ 	/* Reject absent/unknown profiles before mapping or programming hardware. */
+ 	if (of_property_read_string(dev->of_node, "artosyn,display-profile", &profile) ||
+-	    (strcmp(profile, "ascent-1080p60") && strcmp(profile, "ascent-60hz")))
++	    !ar_display_profile(profile))
+ 		return dev_err_probe(dev, -EINVAL, "unsupported display profile\n");
+ 
+ 	vo = devm_drm_dev_alloc(dev, &ar_vo_drm_driver, struct ar_vo, drm);
+ 	if (IS_ERR(vo))
+ 		return PTR_ERR(vo);
+ 
+-	vo->mode_720_allowed = !strcmp(profile, "ascent-60hz");
++	vo->profile = ar_display_profile(profile);
+ 	platform_set_drvdata(pdev, vo);
+ 
+ 	vo->regs = devm_platform_ioremap_resource(pdev, 0);
+diff --git a/drivers/gpu/drm/bridge/lontium-lt9611.c b/drivers/gpu/drm/bridge/lontium-lt9611.c
+--- a/drivers/gpu/drm/bridge/lontium-lt9611.c
++++ b/drivers/gpu/drm/bridge/lontium-lt9611.c
+@@ -49,6 +49,7 @@
+ 	bool ac_mode;
+ 	bool ascent_fixed_mode;
+ 	bool ascent_60hz;
++	bool ascent_hdmi;
+ 
+ 	struct gpio_desc *reset_gpio;
+ 	struct gpio_desc *enable_gpio;
+@@ -263,7 +264,7 @@
+ 	if (pclk > 150000) {
+ 		regmap_write(lt9611->regmap, 0x812d, 0x88);
+ 		*postdiv = 1;
+-	} else if (pclk > (lt9611->ascent_60hz ? 80000 : 70000)) {
++	} else if (pclk > ((lt9611->ascent_60hz || lt9611->ascent_hdmi) ? 80000 : 70000)) {
+ 		regmap_write(lt9611->regmap, 0x812d, 0x99);
+ 		*postdiv = 2;
+ 	} else {
+@@ -664,21 +665,21 @@
+  * Opt-in Ascent sequence: calibrate at fixed M, then release clock recovery.
+  * Reset PCR once more AFTER enabling TMDS; doing this only before output-enable
+  * leaves the first cold modeset black. Never select the internal test pattern.
+- * Supports RGB CEA-16 and, with ascent-60hz-quirk, CEA-4 (no DVI/audio).
++ * AVI VIC and PCR multiplier follow the selected board mode (no DVI/audio).
+  */
+ static int lt9611_ascent_enable(struct lt9611 *lt, const struct drm_display_mode *mode,
+ 			       unsigned int postdiv)
+ {
+ 	unsigned int lock, cal, band;
+ 	int ret;
+-	const bool mode_720 = mode->hdisplay == 1280;
++	const u8 vic = drm_match_cea_mode(mode);
+ 	const unsigned int pcr_m = mode->clock * 5 * postdiv / 27000 - 1;
+ 	const struct reg_sequence init[] = {
+ 		{ 0x8130, 0x6a }, { 0x824f, 0x80 }, { 0x8250, 0x10 },
+ 		/* RGB 16:9 AVI packet for the selected CEA mode, also without EDID. */
+ 		{ 0x82d6, 0x8e }, { 0x82d7, 4 },
+-		{ 0x8443, mode_720 ? 0x33 : 0x27 }, { 0x8444, 0x10 }, { 0x8445, 0x28 },
+-		{ 0x8446, 0 }, { 0x8447, mode_720 ? 4 : 16 }, { 0x843d, 8 },
++		{ 0x8443, (0x37 - vic) & 0xff }, { 0x8444, 0x10 }, { 0x8445, 0x28 },
++		{ 0x8446, 0 }, { 0x8447, vic }, { 0x843d, 8 },
+ 		{ 0x8123, 0x40 }, { 0x8124, 0x62 }, { 0x8125, 0x80 },
+ 		{ 0x832d, 0x40 }, { 0x8331, 8 }, { 0x8326, 0x80 | pcr_m },
+ 		{ 0x82de, 0x20 }, { 0x82de, 0xe0 },
+@@ -845,11 +846,18 @@
+ {
+ 	struct lt9611 *lt9611 = bridge_to_lt9611(bridge);
+ 
+-	/* Legacy quirk stays CEA-16 only; the Ascent profile also accepts CEA-4. */
+-	if (lt9611->ascent_fixed_mode &&
+-	    ((mode->clock != 148500 || drm_match_cea_mode(mode) != 16) &&
+-	     (!lt9611->ascent_60hz || mode->clock != 74250 || drm_match_cea_mode(mode) != 4)))
+-		return MODE_BAD;
++	if (lt9611->ascent_fixed_mode) {
++		u8 vic = drm_match_cea_mode(mode);
++		bool supported = vic == 16 && mode->clock == 148500;
++
++		if (lt9611->ascent_60hz || lt9611->ascent_hdmi)
++			supported |= vic == 4 && mode->clock == 74250;
++		if (lt9611->ascent_hdmi)
++			supported |= (vic == 19 && mode->clock == 74250) ||
++				((vic == 31 || vic == 41 || vic == 47) && mode->clock == 148500);
++		if (!supported)
++			return MODE_BAD;
++	}
+ 
+ 	if (mode->hdisplay > 3840)
+ 		return MODE_BAD_HVALUE;
+@@ -1175,9 +1183,11 @@
+ 		return PTR_ERR(lt9611);
+ 
+ 	lt9611->dev = dev;
++	lt9611->ascent_hdmi = of_property_read_bool(dev->of_node,
++						 "lontium,ascent-hdmi-quirk");
+ 	lt9611->ascent_60hz = of_property_read_bool(dev->of_node,
+ 						"lontium,ascent-60hz-quirk");
+-	lt9611->ascent_fixed_mode = lt9611->ascent_60hz ||
++	lt9611->ascent_fixed_mode = lt9611->ascent_hdmi || lt9611->ascent_60hz ||
+ 		of_property_read_bool(dev->of_node, "lontium,fixed-1080p60-quirk");
+ 	lt9611->client = client;
+ 	lt9611->sleep = false;
+diff --git a/drivers/gpu/drm/artosyn/artosyn_display.h b/drivers/gpu/drm/artosyn/artosyn_display.h
+new file mode 100644
+--- /dev/null
++++ b/drivers/gpu/drm/artosyn/artosyn_display.h
+@@ -0,0 +1,65 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++#ifndef __ARTOSYN_DISPLAY_H__
++#define __ARTOSYN_DISPLAY_H__
++
++#include <drm/drm_edid.h>
++#include <linux/string.h>
++
++enum ar_display_profile {
++	AR_DISPLAY_INVALID, AR_DISPLAY_1080P60, AR_DISPLAY_60HZ, AR_DISPLAY_HDMI,
++};
++
++static inline enum ar_display_profile ar_display_profile(const char *name)
++{
++	if (!strcmp(name, "ascent-1080p60"))
++		return AR_DISPLAY_1080P60;
++	if (!strcmp(name, "ascent-60hz"))
++		return AR_DISPLAY_60HZ;
++	if (!strcmp(name, "ascent-hdmi"))
++		return AR_DISPLAY_HDMI;
++	return AR_DISPLAY_INVALID;
++}
++
++struct ar_display_timing {
++	u8 vic;
++	unsigned int clock;
++	bool slow_phy;
++	u16 htotal, hsync_start, hsync_end;
++	u16 dsi_hsa, dsi_hbp, dsi_hline;
++};
++
++/* Internal DC clock = lane rate / 6; DSI byte clock = lane rate / 8.
++ * Keep their line periods matched. 50/100 Hz extend blanking, while
++ * 720p120 doubles the 720p60 clocks without changing its raster.
++ * 1080p60 retains the original vendor's rounded 2293-pixel line.
++ */
++static const struct ar_display_timing ar_display_timings[] = {
++	{  4,  74250, true,  1720, 1547, 1574, 20, 110, 1290 },
++	{ 16, 148500, false, 2293, 2037, 2096, 44, 148, 1720 },
++	{ 19,  74250, true,  2064, 1891, 1918, 20, 110, 1548 },
++	{ 31, 148500, false, 2752, 2496, 2555, 44, 148, 2064 },
++	{ 41, 148500, false, 2064, 1891, 1918, 20, 110, 1548 },
++	{ 47, 148500, false, 1720, 1547, 1574, 20, 110, 1290 },
++};
++
++static inline const struct ar_display_timing *
++ar_display_timing(enum ar_display_profile profile, const struct drm_display_mode *mode)
++{
++	unsigned int i;
++	u8 vic = drm_match_cea_mode(mode);
++
++	for (i = 0; i < ARRAY_SIZE(ar_display_timings); i++) {
++		const struct ar_display_timing *t = &ar_display_timings[i];
++
++		/* Exact nominal clocks only: no fractional or arbitrary timings. */
++		if (t->vic != vic || t->clock != mode->clock)
++			continue;
++		if (profile == AR_DISPLAY_HDMI ||
++		    (profile == AR_DISPLAY_60HZ && (vic == 4 || vic == 16)) ||
++		    (profile == AR_DISPLAY_1080P60 && vic == 16))
++			return t;
++	}
++	return NULL;
++}
++
++#endif

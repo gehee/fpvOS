@@ -1,0 +1,75 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] dt-bindings: display: add the Ascent HDMI refresh profiles
+
+Document the opt-in profile for 720p50/60/100/120 and 1080p50/60,
+including the matching LT9611 quirk. Keep the legacy profiles valid.
+Correct the description of the existing 720p60 transport clock.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml b/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
+--- a/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
+@@ -15,7 +15,9 @@
+   The ascent-1080p60 profile preserves the validated Ascent raster, divider
+   and four-lane RGB888 DSI sync-event PHY setup for CEA-16 at 148.5 MHz.
+   The ascent-60hz profile also supports CEA-4 1280x720p60 at 74.25 MHz,
+-  using the same lane clock and longer internal blanking.
++  using a 464.4 Mbps lane clock and matched internal raster.
++  The ascent-hdmi profile adds CEA-19/31/41/47: 720p50/100/120 and 1080p50.
++  720p50/60 use 464.4 Mbps lanes; all other modes use 928.8 Mbps.
+   It relies on early firmware clock and pinmux setup; it does not describe
+   arbitrary modes or guarantee compatibility with another board's sink.
+ 
+@@ -28,7 +30,7 @@
+ 
+   artosyn,display-profile:
+     $ref: /schemas/types.yaml#/definitions/string
+-    enum: [ascent-1080p60, ascent-60hz]
++    enum: [ascent-1080p60, ascent-60hz, ascent-hdmi]
+     description: Explicit selection of the supported fixed output setup.
+ 
+   clocks:
+diff --git a/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml b/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
+--- a/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
+@@ -15,7 +15,9 @@
+   The ascent-1080p60 profile preserves the validated Ascent raster, divider
+   and four-lane RGB888 DSI sync-event PHY setup for CEA-16 at 148.5 MHz.
+   The ascent-60hz profile also supports CEA-4 1280x720p60 at 74.25 MHz,
+-  using the same lane clock and longer internal blanking.
++  using a 464.4 Mbps lane clock and matched internal raster.
++  The ascent-hdmi profile adds CEA-19/31/41/47: 720p50/100/120 and 1080p50.
++  720p50/60 use 464.4 Mbps lanes; all other modes use 928.8 Mbps.
+   It relies on early firmware clock and pinmux setup; it does not describe
+   arbitrary modes or guarantee compatibility with another board's sink.
+ 
+@@ -28,7 +30,7 @@
+ 
+   artosyn,display-profile:
+     $ref: /schemas/types.yaml#/definitions/string
+-    enum: [ascent-1080p60, ascent-60hz]
++    enum: [ascent-1080p60, ascent-60hz, ascent-hdmi]
+     description: Explicit selection of the supported fixed output setup.
+ 
+   reg-names:
+diff --git a/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml b/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
+--- a/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
++++ b/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
+@@ -34,6 +34,14 @@
+       The page selector can read back stale register data. Cache only the
+       selector so every page change is written explicitly; data registers
+       remain volatile. Select this only on hardware with this behavior.
++
++  lontium,ascent-hdmi-quirk:
++    type: boolean
++    description:
++      Use Ascent fixed-M calibration, board PLL divider selection and clock
++      recovery reset. Supports RGB CEA-4/16/19/31/41/47 (720p50/60/100/120
++      and 1080p50/60) with the Artosyn ascent-hdmi profile. Programs the
++      matching AVI packet and PCR multiplier. DVI and audio are not supported.
+ 
+   lontium,ascent-60hz-quirk:
+     type: boolean

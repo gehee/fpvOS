@@ -1,0 +1,25 @@
+{
+  "board_id": 1279874117,
+  "hardware": "ASCENT_LITE",
+  "usb_identity": [
+    "1d76",
+    "0101",
+    "fpvos-ascent-lite"
+  ],
+  "names": [
+    "Ascent_H_Sky.img"
+  ],
+  "limits": [
+    50331648
+  ],
+  "counts": [
+    1,
+    0
+  ],
+  "bundle_limits": [
+    50331648,
+    512
+  ],
+  "restore_sources": [],
+  "bootstrap_resources": {}
+}
