@@ -35,6 +35,21 @@ int p1_bundle_read(const char *destination) {
     if (!rc && !strcmp(fault,"corrupt")) { int fd=open(destination,O_WRONLY); assert(fd>=0); assert(write(fd,"!",1)==1); close(fd); }
     return rc;
 }
+/* What the unit runs and what the fpvOS bank's volume holds. "stock-fpvos-bank"
+ * is a unit whose own stock runs from the bank fpvOS installs to, "stock-other"
+ * one running stock from the stock bank (a first install), "bad-volume" one
+ * whose bundle volume cannot be used. Anything else: fpvOS already installed. */
+int p1_active_bank(unsigned *bank) {
+    event("active-bank");
+    if (!strcmp(fault,"gpt")) return -1;
+    *bank = strcmp(fault,"stock-other") ? P1_FPVOS_BANK : P1_STOCK_BANK;
+    return 0;
+}
+int p1_bundle_present(void) {
+    event("bundle-present");
+    if (!strcmp(fault,"bad-volume")) return -1;
+    return strcmp(fault,"stock-fpvos-bank") && strcmp(fault,"stock-other");
+}
 int p1_select_bank(unsigned bank) {
     event(bank == P1_STOCK_BANK ? "select-stock" : "activate");
     if ((bank == P1_STOCK_BANK && !strcmp(fault,"select-stock")) || (bank == P1_FPVOS_BANK && !strcmp(fault,"activate"))) return -1;

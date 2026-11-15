@@ -178,6 +178,14 @@ int p1_gpt_read(unsigned char gpt[2][AR9311_GPT_BYTES])
     return p1_layout_valid(gpt) ? 0 : -1;
 }
 
+/* The bank the unit boots (0 or 1). */
+int p1_active_bank(unsigned *bank)
+{
+    unsigned char gpt[2][AR9311_GPT_BYTES];
+    if (p1_gpt_read(gpt)) return -1;
+    return p1_layout(gpt,NULL,bank) ? 0 : -1;
+}
+
 int p1_preflight(void)
 {
     stock = p1_stock();
@@ -268,6 +276,20 @@ int p1_bundle_read(const char *destination)
     close(in);
     if (out >= 0) close(out);
     return rc;
+}
+
+/* What the fpvOS bank's bundle volume holds, asked before anything is selected
+ * or written: 1 an fpvOS bundle, 0 anything else (stock's own userapp), -1 the
+ * volume is not the expected one or cannot be written. */
+int p1_bundle_present(void)
+{
+    char node[64];
+    int fd = volume(0,1,node);
+    if (fd < 0) return -1;
+    unsigned char header[512];
+    int present = !p1_exact(fd,header,sizeof(header),0) && !memcmp(header,"FPVOSUP1",8);
+    close(fd);
+    return present;
 }
 
 int p1_bundle_write(const char *source)
