@@ -1,0 +1,67 @@
+# SteadyDigital: P1-style flash and boot, the Ascent receiver's display.
+CONFIG_USB_DWC2_PERIPHERAL=y
+
+# The stock A/B layout (fixed partitions in the DT). The updater keeps the
+# bundle in userapp1's UBI volume and settings in usr_data's UBIFS, as on the P1.
+CONFIG_MTD=y
+CONFIG_MTD_SPI_NAND=y
+CONFIG_MTD_OF_PARTS=y
+# CONFIG_MTD_CMDLINE_PARTS is not set
+# CONFIG_MTD_PARTITIONED_MASTER is not set
+CONFIG_MTD_UBI=y
+# CONFIG_MTD_UBI_FASTMAP is not set
+# The main root is a squashfs inside the bundle volume: UBI's block layer
+# under a loop device, with a RAM overlay on top.
+CONFIG_MTD_UBI_BLOCK=y
+CONFIG_OVERLAY_FS=y
+# The overlay's RAM layer needs xattrs: without them replacing anything from
+# the root (rm then mkdir, as dropbear's start does with /etc/dropbear) fails
+# with EIO. And POSIX ACLs: without them overlayfs creates over a whiteout
+# with the umask ignored (/etc/dropbear came out 0777).
+CONFIG_TMPFS_XATTR=y
+CONFIG_TMPFS_POSIX_ACL=y
+CONFIG_UBIFS_FS=y
+CONFIG_UBIFS_FS_ADVANCED_COMPR=y
+CONFIG_UBIFS_FS_LZO=y
+CONFIG_UBIFS_FS_ZLIB=y
+# CONFIG_UBIFS_FS_ZSTD is not set
+CONFIG_SPI_ARTOSYN_QSPI=y
+CONFIG_COMMON_CLK_AR9311_QSPI=y
+
+# Decoder, VO/DSI and the LT9611 HDMI bridge (the Gnd485 driver and quirks).
+CONFIG_DRM=y
+CONFIG_DRM_ARTOSYN=y
+CONFIG_DRM_LONTIUM_LT9611=y
+CONFIG_DRM_DISPLAY_CONNECTOR=y
+# CONFIG_DRM_FBDEV_EMULATION is not set
+CONFIG_CMA=y
+CONFIG_DMA_CMA=y
+# The screen's plane buffers take about 30 MiB of it, each in one piece; the rest is
+# room to place them around a page that cannot be moved. Unused CMA pages
+# remain available for movable system allocations.
+CONFIG_CMA_SIZE_MBYTES=48
+
+# Front-panel keys on polled GPIOs (the SoC GPIO driver has no IRQs yet).
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_INPUT_KEYBOARD=y
+CONFIG_KEYBOARD_GPIO_POLLED=y
+CONFIG_I2C_CHARDEV=y
+
+CONFIG_MFD_SYSCON=y
+CONFIG_SYSCON_REBOOT_MODE=y
+
+# Read-only compressed root and application/assets.
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y
+
+# The SPL passes stock's root arguments on a NAND boot; this image always
+# runs from its initramfs.
+CONFIG_CMDLINE="console=ttyS0,1152000 earlycon loglevel=7 rdinit=/init clk_ignore_unused"
+CONFIG_CMDLINE_FORCE=y
+
+# Bring-up: register access from userspace (devmem) while display and radio
+# setup still depend on comparing with the stock firmware.
+CONFIG_DEVMEM=y
+# CONFIG_IO_STRICT_DEVMEM is not set

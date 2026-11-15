@@ -1,0 +1,8 @@
+config BR2_PACKAGE_AR9311_TEMP
+	bool "AR9311 SoC temperature (hwmon)"
+	depends on BR2_FPVOS_SOC_AR9311
+	depends on BR2_LINUX_KERNEL
+	help
+	  The SoC's temperature sensor (device tree "artosyn,protemp")
+	  as hwmon temp1_input, named ar9311_temp, for kernels without
+	  IIO. kestrel-air reports it to the ground.

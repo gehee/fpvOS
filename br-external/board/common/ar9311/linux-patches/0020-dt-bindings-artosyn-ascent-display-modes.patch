@@ -1,0 +1,70 @@
+From: fpvOS contributors <dev@fpvos.local>
+Subject: [PATCH] dt-bindings: display: add the Ascent 60 Hz profile
+
+Document the opt-in 720p60/1080p60 board profile and matching LT9611
+calibration quirk. Preserve the existing 1080p-only profile.
+
+Upstream: not submitted
+Signed-off-by: fpvOS contributors <dev@fpvos.local>
+
+---
+diff --git a/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml b/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
+--- a/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
+@@ -14,6 +14,8 @@
+   supported fixed display profile and supply their board output graph.
+   The ascent-1080p60 profile preserves the validated Ascent raster, divider
+   and four-lane RGB888 DSI sync-event PHY setup for CEA-16 at 148.5 MHz.
++  The ascent-60hz profile also supports CEA-4 1280x720p60 at 74.25 MHz,
++  using the same lane clock and longer internal blanking.
+   It relies on early firmware clock and pinmux setup; it does not describe
+   arbitrary modes or guarantee compatibility with another board's sink.
+ 
+@@ -26,7 +28,7 @@
+ 
+   artosyn,display-profile:
+     $ref: /schemas/types.yaml#/definitions/string
+-    const: ascent-1080p60
++    enum: [ascent-1080p60, ascent-60hz]
+     description: Explicit selection of the supported fixed output setup.
+ 
+   reg-names:
+diff --git a/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml b/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
+--- a/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
+@@ -14,6 +14,8 @@
+   supported fixed display profile and supply their board output graph.
+   The ascent-1080p60 profile preserves the validated Ascent raster, divider
+   and four-lane RGB888 DSI sync-event PHY setup for CEA-16 at 148.5 MHz.
++  The ascent-60hz profile also supports CEA-4 1280x720p60 at 74.25 MHz,
++  using the same lane clock and longer internal blanking.
+   It relies on early firmware clock and pinmux setup; it does not describe
+   arbitrary modes or guarantee compatibility with another board's sink.
+ 
+@@ -26,7 +28,7 @@
+ 
+   artosyn,display-profile:
+     $ref: /schemas/types.yaml#/definitions/string
+-    const: ascent-1080p60
++    enum: [ascent-1080p60, ascent-60hz]
+     description: Explicit selection of the supported fixed output setup.
+ 
+   clocks:
+diff --git a/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml b/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
+--- a/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
++++ b/Documentation/devicetree/bindings/display/bridge/lontium,lt9611.yaml
+@@ -34,6 +34,14 @@
+       The page selector can read back stale register data. Cache only the
+       selector so every page change is written explicitly; data registers
+       remain volatile. Select this only on hardware with this behavior.
++
++  lontium,ascent-60hz-quirk:
++    type: boolean
++    description:
++      Use Ascent fixed-M calibration and clock-recovery reset after TMDS enable.
++      Supports RGB CEA-4 720p60 and CEA-16 1080p60 only, with the matching
++      Artosyn ascent-60hz DSI raster profile. Programs the corresponding AVI
++      packet and PCR multiplier. DVI and audio are not supported.
+ 
+   lontium,fixed-1080p60-quirk:
+     type: boolean

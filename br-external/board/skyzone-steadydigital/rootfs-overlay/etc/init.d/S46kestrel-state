@@ -1,0 +1,69 @@
+#!/bin/sh
+# SteadyDigital: Kestrel's settings and pairing live in the stock usr_data
+# UBIFS (shared with stock in bank A), under fpvos/kestrel, card or not.
+# Never format, resize or replace it; stock's own files are left alone. The
+# recovery init has already attached usr_data (the updater's boot check).
+# The "persistent" marker is what sends recordings to the SD card
+# (kestrel-native's run): set each boot only while S45ar9311-sd mounted one,
+# beside the settings wherever they are (usr_data, or RAM without it).
+set -eu
+umask 077
+root=/persist
+dir=$root/fpvos/kestrel
+ram=/run/kestrel-state
+mounted() { awk -v point="$1" '$2 == point { found=1 } END { exit !found }' /proc/mounts; }
+volume() {
+    for p in /sys/class/ubi/ubi[0-9]*_0; do
+        [ -f "$p/name" ] && [ "$(cat "$p/name")" = usr_data ] || continue
+        u=${p%_0}
+        [ "$(cat "$u/ro_mode")" = 0 ] || return 1
+        m=/sys/class/mtd/mtd$(cat "$u/mtd_num")
+        [ "$(cat "$m/name")" = usr_data ] && [ "$(cat "$m/size")" = 6291456 ] || return 1
+        echo "/dev/${p##*/}"
+        return 0
+    done
+    return 1
+}
+persist() {
+    node=$(volume) || return 1
+    if ! mounted "$root"; then
+        [ ! -L "$root" ] || return 1
+        mkdir -p "$root"
+        mount -t ubifs -o rw,nodev,nosuid,noexec "$node" "$root" || return 1
+    fi
+    awk -v d="$node" -v p="$root" '$1 == d && $2 == p && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { ok=1 } END { exit !ok }' /proc/mounts || return 1
+    for d in "$root/fpvos" "$dir"; do
+        [ ! -L "$d" ] || return 1
+        [ -d "$d" ] || mkdir -m 0700 "$d" || return 1
+    done
+    sync
+}
+case "${1:-}" in
+start)
+    mkdir -p "$ram" /var/lib
+    if persist; then
+        state=$dir
+        echo 'Kestrel: settings and pairing saved in usr_data'
+    else
+        if mounted "$root"; then umount "$root" || :; fi
+        state=$ram
+        echo 'Kestrel: usr_data unavailable; settings and pairing are temporary' >&2
+    fi
+    ln -sfn "$state" /var/lib/kestrel
+    # Recordings go to a mounted card wherever the settings are (the RAM
+    # image has no usr_data attached).
+    if mountpoint -q /mnt/sd && [ -d /mnt/sd/fpvos ] && [ ! -L /mnt/sd/fpvos ]; then
+        touch "$state/persistent" && echo 'Kestrel: recordings on the SD card'
+    else
+        rm -f "$state/persistent"
+        echo 'Kestrel: no SD card mounted; recordings stay in RAM'
+    fi
+    ;;
+stop)
+    # The updater stops Kestrel first, then needs every UBIFS unmounted.
+    sync
+    ln -sfn "$ram" /var/lib/kestrel
+    if mounted "$root"; then umount "$root"; fi
+    ;;
+*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

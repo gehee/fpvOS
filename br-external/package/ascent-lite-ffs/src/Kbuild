@@ -1,0 +1,4 @@
+# The kernel's f_fs.c, copied in from the tree at build time, as a module.
+obj-m := usb_f_fs.o
+usb_f_fs-y := f_fs.o
+ccflags-y := -I$(srctree)/drivers/usb/gadget -I$(srctree)/drivers/usb/gadget/function

@@ -1,0 +1,20 @@
+config BR2_PACKAGE_FPVOS_USB
+	bool "fpvos-usb"
+	depends on BR2_TOOLCHAIN_HAS_THREADS
+	help
+	  fpvOS_usb: the USB modes next to the serial port (normal and
+	  bridge, where the unit's AR8030 shows up on USB), changed by
+	  fpvos-update's receiver. Bridge mode needs FunctionFS in the
+	  kernel (CONFIG_USB_CONFIGFS_F_FS).
+
+if BR2_PACKAGE_FPVOS_USB
+config BR2_PACKAGE_FPVOS_USB_BOARD
+	string "board"
+	default "ascent-vrx-pro" if BR2_PACKAGE_FPVOS_UPDATE_ASCENT_VRX_PRO
+	default "ascent-lite" if BR2_PACKAGE_FPVOS_UPDATE_ASCENT_LITE
+	default "p1-air"
+	help
+	  The board directory in fpvOS_usb's boards/: its settings and
+	  hooks (radio-stop, chip-load). ascent-lite installs the Lite's
+	  and the Lite+'s in the app volume (/usrdata/fpv/air/usb).
+endif

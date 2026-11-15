@@ -1,0 +1,131 @@
+--- a/ml-aed/ml-aed.c
++++ b/ml-aed/ml-aed.c
+@@ -20,6 +20,7 @@
+ #include <unistd.h>
+ 
+ #include "ml-aed-core.h"
++#include "control.h"
+ 
+ /* Default for a hand-run; the per-board init script passes --tuning. */
+ #define ML_AED_TUNING_FALLBACK "/lib/firmware/artosyn/sc231-tuning-preview-fpv.bin"
+@@ -80,6 +81,7 @@
+ 
+ struct ae_opts {
+     const char *sensor_device;
++    int control_fd;
+     int start_index;
+     int max_step;               /* 0 = no clamp (vendor behaviour) */
+     int floor_index;
+@@ -331,7 +333,7 @@
+     uint8_t *buf = malloc(STATS_RAW_SIZE);
+     uint32_t last_seq = 0;
+     unsigned int waited = 0;
+-    int have_seq = 0, decided = 0, ret;
++    int have_seq = 0, decided = 0, ret, ev_x10 = 0;
+ 
+     if (!buf) {
+         return 1;
+@@ -424,9 +426,23 @@
+         last_seq = (uint32_t)seq;
+         have_seq = 1;
+ 
++        struct camera_request request;
++        int changed = camera_receive(opts->control_fd, &request);
++        if (changed < 0) break;
++        if (changed && !camera_ev_valid(&request)) {
++            camera_reply(opts->control_fd, 0, request.value, 0, 0);
++            changed = 0;
++        }
++        if (changed) {
++            ev_x10 = request.value;
++            st.skip_countdown = 0;
++            st.settle_counter = 0;
++        }
+         luma = ae_current_luma(ae_metered_luma(buf + 4));
+         prev = st.exp_index;
+-        ae_decide(tune, &st, luma);
++        /* Compensation changes AE's brightness target without modifying the
++         * calibrated table or the scene estimate used by the tone controller. */
++        ae_decide(tune, &st, camera_ev_luma(luma, ev_x10));
+         if (opts->max_step && abs(st.exp_index - prev) > opts->max_step) {
+             st.exp_index = st.exp_index > prev ?
+                 prev + opts->max_step : prev - opts->max_step;
+@@ -451,7 +467,7 @@
+          */
+         if (opts->stats) {
+             ae_health_update(&health, step, luma,
+-                     ae_luma_target(tune, st.exp_index));
++                     ae_luma_target(tune, st.exp_index) * exp2f(ev_x10 / 10.0f));
+             if (health.decisions >= (unsigned int)opts->stats) {
+                 printf("stats: held %u%% of %u decisions, mean luma error %.2f\n",
+                        ae_health_hold_pct(&health), health.decisions,
+@@ -469,9 +485,9 @@
+         tone_q8 = opts->tone ? ae_tone_scalar_q8(tune, st.exp_index, luma) : -1;
+ 
+         if (step || opts->verbose) {
+-            printf("seq %u luma %.3f target %d index %d step %d settle %u tone %d%s\n",
++            printf("seq %u luma %.3f target %.3f index %d step %d settle %u tone %d%s\n",
+                    (unsigned int)seq, (double)luma,
+-                   ae_luma_target(tune, st.exp_index), st.exp_index,
++                   ae_luma_target(tune, st.exp_index) * exp2(ev_x10 / 10.0), st.exp_index,
+                    step, st.settle_counter, tone_q8 >> 8,
+                    opts->dry_run ? " (dry)" : "");
+             fflush(stdout);
+@@ -488,7 +504,7 @@
+             }
+         }
+ 
+-        if (step) {
++        if (step || changed) {
+             int ret = ae_actuate(tune, opts, st.exp_index);
+ 
+             if (ret) {
+@@ -498,6 +514,12 @@
+                 return 1;
+             }
+         }
++        if (changed) {
++            printf("EV applied=%d luma=%.3f target=%.3f index=%d\n", ev_x10,
++                   (double)luma, ae_luma_target(tune, st.exp_index)*exp2(ev_x10/10.0), st.exp_index);
++            fflush(stdout);
++            camera_reply(opts->control_fd, 1, ev_x10, 0, 0);
++        }
+     }
+ 
+     free(buf);
+@@ -509,6 +531,7 @@
+ {
+     fprintf(stderr,
+         "usage: ml-aed [options]\n"
++        "  --control-fd N    private SEQPACKET endpoint for live EV control\n"
+         "  --sensor-device PATH  SC231AI V4L2 subdevice\n"
+         "  --start-index N   initial exp_index (default 317, the boot recipe)\n"
+         "  --max-step N      clamp a decision to N indices (low authority)\n"
+@@ -532,6 +555,7 @@
+ int main(int argc, char **argv)
+ {
+     static const struct option longopts[] = {
++        { "control-fd", required_argument, NULL, 301 },
+         { "sensor-device", required_argument, NULL, 300 },
+         { "start-index", required_argument, NULL, 's' },
+         { "max-step", required_argument, NULL, 'm' },
+@@ -549,6 +573,7 @@
+         { NULL, 0, NULL, 0 },
+     };
+     struct ae_opts opts = {
++        .control_fd = -1,
+         .start_index = 317,
+         .floor_index = 1,
+         .line_ns = ML_AED_LINE_NS,
+@@ -561,6 +586,11 @@
+     while ((c = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
+         switch (c) {
+         case 300: opts.sensor_device = optarg; break;
++        case 301: {
++            char *end; long fd = strtol(optarg, &end, 10);
++            if (!*optarg || *end || fd < 0 || fd > INT_MAX) return 2;
++            opts.control_fd = (int)fd; break;
++        }
+ 
+         case 's': {
+             opts.start_index = atoi(optarg);

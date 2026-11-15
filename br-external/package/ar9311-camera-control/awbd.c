@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 #define _POSIX_C_SOURCE 200809L
 #include "awb.h"
+#include "control.h"
 #include <errno.h>
 #include <signal.h>
 #include <stdio.h>
@@ -35,7 +36,13 @@ int main(int argc, char **argv)
 	unsigned int failures = 0, updates = 0;
 	int have_previous = 0;
 	struct sigaction action = {.sa_handler = stop};
-	if (argc != 4) goto usage;
+	int control_fd = -1, locked = 0;
+	if (argc != 4 && argc != 6) goto usage;
+	if (argc == 6) {
+		char *end; long fd = strtol(argv[5], &end, 10);
+		if (strcmp(argv[4], "--control-fd") || !*argv[5] || *end || fd < 0 || fd > INT_MAX) goto usage;
+		control_fd = (int)fd;
+	}
 	state.red = state.anchor_red = gain(argv[2]);
 	state.blue = state.anchor_blue = gain(argv[3]);
 	if (!state.red || !state.blue) goto usage;
@@ -71,8 +78,19 @@ int main(int argc, char **argv)
 		failures = 0;
 		have_previous = 1;
 		previous = le32(stats);
-		zones = awb_update(&state, stats + 4);
-		if (red != state.red || blue != state.blue) {
+		struct camera_request request;
+		int changed = camera_receive(control_fd, &request);
+		if (changed < 0) break;
+		if (changed && !camera_wb_valid(&request)) {
+			camera_reply(control_fd, 0, request.value, 0, 0);
+			changed = 0;
+		}
+		if (changed) {
+			locked = request.value == -1;
+			if (request.gains) { state.red = request.red; state.blue = request.blue; }
+		}
+		zones = locked ? 0 : awb_update(&state, stats + 4);
+		if (changed || red != state.red || blue != state.blue) {
 			int failed;
 			file = fopen("/sys/kernel/debug/ar-isp/white_balance", "w");
 			if (!file) { perror("ar9311-awbd: white balance"); return 1; }
@@ -80,11 +98,15 @@ int main(int argc, char **argv)
 			if (fclose(file)) failed = 1;
 			if (failed) { perror("ar9311-awbd: write white balance"); return 1; }
 		}
+		if (changed) {
+			fprintf(stderr, "WB applied=%d red=%u blue=%u\n", locked ? -1 : 0, state.red, state.blue);
+			camera_reply(control_fd, 1, locked ? -1 : 0, state.red, state.blue);
+		}
 		if (!(updates++ % 50))
 			fprintf(stderr, "AWB zones=%u red=%u blue=%u\n", zones, state.red, state.blue);
 	}
 	return 0;
 usage:
-	fprintf(stderr, "Usage: ar9311-awbd STATS_ORDER RED BLUE (Q8 gains 128..1024)\n");
+	fprintf(stderr, "Usage: ar9311-awbd STATS_ORDER RED BLUE [--control-fd FD] (Q8 gains 128..1024)\n");
 	return 2;
 }

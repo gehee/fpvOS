@@ -89,12 +89,27 @@
 			status = "disabled";
 		};
 
+		dc_crg: syscon@a106018 {
+			compatible = "artosyn,ar9311-dc-crg", "syscon";
+			reg = <0 0x0a106018 0 4>;
+		};
+
+		ge2d: compositor@881f000 {
+			compatible = "artosyn,ar9311-ge2d";
+			reg = <0 0x0881f000 0 0x100>;
+			interrupts = <GIC_SPI 79 IRQ_TYPE_LEVEL_HIGH>;
+			artosyn,dc-syscon = <&dc_crg>;
+			status = "disabled";
+		};
+
 		vo: display@8810000 {
 			compatible = "artosyn,ar9311-vo";
-			reg = <0 0x08810000 0 0x10000>,
+			reg = <0 0x08810000 0 0xf000>,
 			      <0 0x0a10404c 0 4>,
-			      <0 0x0a106018 0 4>;
-			reg-names = "vo", "pixel-clock", "dc-crg";
+			      <0 0x0a106018 0 4>,
+			      <0 0x0881ff00 0 4>;
+			reg-names = "vo", "pixel-clock", "dc-crg", "qos";
+			artosyn,dc-syscon = <&dc_crg>;
 			interrupts = <GIC_SPI 70 IRQ_TYPE_LEVEL_HIGH>;
 			status = "disabled";
 		};
@@ -114,6 +129,17 @@
 			      <0 0x0a108000 0 0x420>;
 			clocks = <&clk24m>;
 			#clock-cells = <1>;
+			status = "disabled";
+		};
+
+		/* The SoC temperature sensor (vendor DT "temperature@0a108000"),
+		 * with the SAR ADC's window (the vendor's adc@0a108000, 0x21c) for
+		 * a board's supply (artosyn,vin-channel and
+		 * artosyn,vin-ratio-permille in the board's node); the PLL bank
+		 * maps it non-exclusively too. */
+		soc_temp: temperature@a108000 {
+			compatible = "artosyn,protemp";
+			reg = <0 0x0a108000 0 0x21c>;
 			status = "disabled";
 		};
 
@@ -170,6 +196,24 @@
 			clocks = <&clk150m>;
 			#address-cells = <1>;
 			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		i2c3: i2c@1206000 {
+			compatible = "snps,designware-i2c";
+			reg = <0 0x01206000 0 0x2000>;
+			interrupts = <GIC_SPI 35 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
+		pwm0: pwm@1000000 {
+			compatible = "artosyn,ar9301-pwm";
+			reg = <0 0x01000000 0 0x2000>;
+			clocks = <&clk150m>;
+			#pwm-cells = <2>;
 			status = "disabled";
 		};
 
@@ -244,6 +288,17 @@
 			/* Keep earlycon's existing divisor; 8250_dw uses the clock
 			 * and hardware fractional divisor for the normal console.
 			 */
+			reg-shift = <2>;
+			reg-io-width = <4>;
+			status = "disabled";
+		};
+
+		/* The P1 Air's flight controller port (stock: enabled, its ttyS1). */
+		uart2: serial@1504000 {
+			compatible = "snps,dw-apb-uart";
+			reg = <0 0x01504000 0 0x400>;
+			interrupts = <GIC_SPI 13 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
 			reg-shift = <2>;
 			reg-io-width = <4>;
 			status = "disabled";

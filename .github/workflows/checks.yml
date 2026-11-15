@@ -29,6 +29,7 @@ jobs:
                    br-external/board/ascent-vrx-pro/post-build.sh \
                    $(git ls-files 'br-external/board/ascent-vrx-pro/rootfs-overlay/etc/init.d/*') \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-wifi \
+                   br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-format-dvr \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/root/bb-restart.sh \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/ar8030soc/bb_only.sh \
                    br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/start.sh; do
@@ -44,8 +45,10 @@ jobs:
       - name: AR9311 shell syntax
         run: |
           for f in $(git ls-files 'br-external/board/ascent-vrx/*' \
+                     'br-external/board/skyzone-steadydigital/*' \
                      'br-external/board/common/ar9311/*' \
                      'br-external/package/ar9311-radio/src/*' \
+                     'br-external/package/kestrel-native/*' \
                      'br-external/package/fpvos-recovery/src/*' \
                      'br-external/package/fpvos-update/*'); do
             if head -1 "$f" | grep -q '^#!/bin/sh'; then
@@ -70,6 +73,7 @@ jobs:
           sh -n br-external/package/kestrel-air/S60kestrel-air
           python3 br-external/package/kestrel-air/tests/test_supervise.py -v
           python3 br-external/board/p1-air/tests/test_settings.py -v
+          python3 br-external/board/p1-air/tests/test_inittab.py -v
           sh -n br-external/board/p1-air/post-image.sh
           sh -n br-external/board/p1-air/source-post-image.sh
           sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh
@@ -79,8 +83,23 @@ jobs:
         run: |
           sh -n br-external/package/ar9311-camera-control/ar9311-camera-record
           python3 br-external/package/ar9311-camera-control/tests/test_awb.py -v
+          python3 br-external/package/ar9311-camera-control/tests/test_control.py -v
           cc -Wall -Wextra -Werror br-external/package/ar9311-camera-control/awbd.c \
              br-external/package/ar9311-camera-control/awb.c -lm -o /tmp/ar9311-awbd
+
+      - name: Source camera exposure daemon (patched ml-aed) and its tests
+        run: |
+          # The package's pinned upstream, with fpvOS's patches, built as the
+          # package builds it; then the tuning/cap tests on that source.
+          pkg=br-external/package/ar9311-camera-control
+          ver=$(sed -n 's/^AR9311_CAMERA_CONTROL_VERSION = //p' $pkg/ar9311-camera-control.mk)
+          mkdir -p /tmp/ml-userspace
+          curl -fsSL "https://github.com/Missing-Lynk/ml-userspace/archive/$ver.tar.gz" |
+            tar xz -C /tmp/ml-userspace --strip-components=1
+          for p in $pkg/0*.patch; do patch -p1 -d /tmp/ml-userspace < "$p"; done
+          cc -Wall -Wextra -Werror -I$pkg -o /tmp/ar9311-aed /tmp/ml-userspace/ml-aed/ml-aed.c \
+             /tmp/ml-userspace/ml-aed/ml-aed-core.c /tmp/ml-userspace/ml-aed/ml-aed-tuning.c -lm
+          python3 $pkg/tests/test_tuning.py /tmp/ml-userspace -v
 
       - name: Radio calibration provisioning tests
         run: |

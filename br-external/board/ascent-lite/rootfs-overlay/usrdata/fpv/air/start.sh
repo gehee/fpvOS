@@ -73,6 +73,11 @@ case $board_type in
 *) ours=0; echo "air: board type $board_type is not a Lite or Lite+" ;;
 esac
 
+# What the radio is loaded with, for fpvOS_usb's way back from bridge mode
+# (usb/radio-start loads it again) and its board id (air/fpvos-usb).
+printf 'board_type=%s\nradio_dir=%s\nradio_fw=%s\nradio_cfg=%s\n' "$board_type" \
+	"$(cat /sys/module/firmware_class/parameters/path)" "$bb_fw" "$bb_cfg" > /tmp/air-radio
+
 if [ $ours = 1 ] && [ -x $air/kestrel-air ] && insmod $air/arlink.ko fw_name=$bb_fw cfg_name=$bb_cfg; then
 	echo "air: arlink $(cat $air/ar-libre.version 2>/dev/null)"
 	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
@@ -80,6 +85,14 @@ if [ $ours = 1 ] && [ -x $air/kestrel-air ] && insmod $air/arlink.ko fw_name=$bb
 		sleep 1
 	done
 	[ -e /dev/arlink0 ] && echo "air: /dev/arlink0 after $i s" || echo "air: NO /dev/arlink0 after 15 s"
+	# Bridge mode, kept by fpvOS_usb until switched back to normal: the radio
+	# is the USB host's, so no kestrel-air; the same switch as the updater's
+	# (from a loaded chip, as verified live).
+	if [ "$($air/fpvos-usb saved 2>/dev/null)" = bridge ]; then
+		echo "air: bridge mode (saved): the AR8030 is on USB"
+		$air/fpvos-usb mode bridge
+		exit 0
+	fi
 	echo "air: kestrel-air $(cat $air/kestrel-air.version 2>/dev/null)"
 	$air/run-kestrel-air.sh &
 else

@@ -20,7 +20,7 @@ start() {
 		echo 0x0104 > "$g/idProduct"
 		mkdir "$g/strings/0x409"
 		echo "$USB_SERIAL" > "$g/strings/0x409/serialnumber"
-		echo fpvOS > "$g/strings/0x409/manufacturer"
+		echo "${USB_MANUFACTURER:-fpvOS}" > "$g/strings/0x409/manufacturer"
 		echo "$USB_PRODUCT" > "$g/strings/0x409/product"
 		mkdir "$g/configs/c.1"
 		mkdir "$g/configs/c.1/strings/0x409"

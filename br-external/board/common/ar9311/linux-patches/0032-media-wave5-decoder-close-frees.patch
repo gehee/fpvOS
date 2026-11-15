@@ -1,0 +1,177 @@
+From: fpvOS contributors
+Subject: [PATCH] media: wave5: the decoder's close always frees, as the encoder's
+
+A decoder close that failed (firmware still running after the retries, or the
+finish-sequence command timing out) returned before any free, and the release
+path then skipped the instance cleanup: framebuffers, FBC tables, MV/work/task
+buffers and the bitstream ring stayed in the fixed codec pool until a reboot.
+Measured with an injected close failure: 8-12 MB lost per 1080p close, and
+after a handful a 1080p session no longer allocates ("Framebuffer
+preparation, fail: -12"; kestrel then restarts in a loop).
+
+Apply the encoder's rules (0013) to the decoder: never interruptible on the
+release path, always reach the cleanup, and a firmware that will not finish
+the sequence is reset and reloaded before anything is freed - only when no
+other instance is live, otherwise its buffers stay allocated rather than
+become memory it may still write, and its instance index stays taken so the
+next open is not created on it. The reload now works for any Artosyn VPU,
+and a VPU found running at probe gets the same reset and download, so the
+decoder module can be reloaded (it failed with -EBUSY until a reboot).
+---
+--- a/drivers/media/platform/chips-media/wave5/wave5-helper.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-helper.c
+@@ -71,7 +71,11 @@
+ 		v4l2_fh_exit(&inst->v4l2_fh);
+ 	}
+ 	kfifo_free(&inst->irq_status);
+-	ida_free(&inst->dev->inst_ida, inst->id);
++	/* An instance the firmware still runs keeps its index too: the next
++	 * open must not create another one on it.
++	 */
++	if (!inst->keep_dma_bufs)
++		ida_free(&inst->dev->inst_ida, inst->id);
+ 	kfree(inst->codec_info);
+ 	kfree(inst);
+ }
+@@ -105,13 +109,7 @@
+ 	 * buffers) leaks from the fixed mmz pool until power cycle. Same for the early
+ 	 * returns on close failure: the fd is gone either way, so bailing out only
+ 	 * converts a firmware hiccup into a permanent pool leak. */
+-	if (inst->type == VPU_INST_TYPE_ENC) {
+-		mutex_lock(&inst->dev->irq_lock);
+-	} else {
+-		ret = mutex_lock_interruptible(&inst->dev->irq_lock);
+-		if (ret)
+-			return ret;
+-	}
++	mutex_lock(&inst->dev->irq_lock);
+ 	spin_lock_irqsave(&inst->dev->irq_spinlock, flags);
+ 	list_del_init(&inst->list);
+ 	spin_unlock_irqrestore(&inst->dev->irq_spinlock, flags);
+@@ -123,17 +121,13 @@
+ 		if (fail_res == WAVE5_SYSERR_VPU_STILL_RUNNING) {
+ 			dev_err(inst->dev->dev, "%s close failed, device is still running\n",
+ 				name);
+-			if (inst->type != VPU_INST_TYPE_ENC)
+-				return -EBUSY;
+ 			ret = -EBUSY;
+ 		} else if (ret && ret != -EIO) {
+ 			dev_err(inst->dev->dev, "%s close, fail: %d\n", name, ret);
+-			if (inst->type != VPU_INST_TYPE_ENC)
+-				return ret;
+ 		}
+ 	}
+ 
+-	if (inst->type == VPU_INST_TYPE_ENC && ret == -EIO)
++	if (ret == -EIO)
+ 		ret = 0;
+ 	wave5_cleanup_instance(inst, filp);
+ 
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
+@@ -25,7 +25,10 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	if (wave5_vpu_is_init(vpu_dev) && !vpu_dev->artosyn_encoder) {
++	/* ML (Artosyn): a VPU still running firmware from before (a module reload, or
++	 * the close path's reload) gets the full reset and download, as on the P1:
++	 * re_init returned -EBUSY and the codec never probed again until a reboot. */
++	if (wave5_vpu_is_init(vpu_dev) && !vpu_dev->artosyn) {
+ 		wave5_vpu_re_init(dev, (void *)code, size);
+ 		ret = -EBUSY;
+ 		goto err_out;
+@@ -55,7 +58,7 @@
+ 	const struct firmware *fw;
+ 	int ret;
+ 
+-	if (!vpu_dev->artosyn_encoder || !vpu_dev->fw_name)
++	if (!vpu_dev->artosyn || !vpu_dev->fw_name)
+ 		return -ENOENT;
+ 
+ 	ret = request_firmware(&fw, vpu_dev->fw_name, vpu_dev->dev);
+@@ -256,44 +259,69 @@
+ 
+ 	pm_runtime_resume_and_get(inst->dev->dev);
+ 
+-	ret = mutex_lock_interruptible(&vpu_dev->hw_lock);
+-	if (ret) {
+-		pm_runtime_put_sync(inst->dev->dev);
+-		return ret;
+-	}
++	/* ML (Artosyn): the encoder's close rules, now for the decoder too. This runs
++	 * from the file-release path, so the lock must not be interruptible (a
++	 * SIGKILL-driven exit has the fatal signal pending), and no failure may skip
++	 * the frees: an early return here left the work/task buffers, FBC tables and
++	 * (through the release path) the framebuffers and bitstream ring in the fixed
++	 * codec pool until a reboot, and a 1080p session no longer fitted. A firmware
++	 * that will not finish the sequence is reset and reloaded before anything is
++	 * freed, and only when no other instance is live; otherwise its buffers stay
++	 * allocated rather than become reusable memory it may still write. */
++	mutex_lock(&vpu_dev->hw_lock);
+ 
+ 	do {
+ 		ret = wave5_vpu_dec_finish_seq(inst, fail_res);
+ 		if (ret < 0 && *fail_res != WAVE5_SYSERR_VPU_STILL_RUNNING) {
+ 			dev_warn(inst->dev->dev, "dec_finish_seq timed out\n");
+-			goto unlock_and_return;
++			break;
+ 		}
+ 
+ 		if (*fail_res == WAVE5_SYSERR_VPU_STILL_RUNNING &&
+ 		    retry++ >= MAX_FIRMWARE_CALL_RETRY) {
+ 			ret = -ETIMEDOUT;
+-			goto unlock_and_return;
++			break;
+ 		}
+ 	} while (ret != 0);
+ 
+-	dev_dbg(inst->dev->dev, "%s: dec_finish_seq complete\n", __func__);
++	if (ret < 0) {
++		bool last;
++		unsigned long flags;
++
++		spin_lock_irqsave(&vpu_dev->irq_spinlock, flags);
++		last = list_empty(&vpu_dev->instances);   /* this inst is already delisted (release path) */
++		spin_unlock_irqrestore(&vpu_dev->irq_spinlock, flags);
++		if (!last) {
++			dev_warn(inst->dev->dev,
++				 "%s: instance still running with siblings live, leaking its buffers (no global reset)\n",
++				 __func__);
++			inst->keep_dma_bufs = true;
++			goto unlock_and_return;
++		}
++		dev_warn(inst->dev->dev, "%s: instance still running, VPU reload before free\n",
++			 __func__);
++		if (wave5_vpu_recover_locked(vpu_dev)) {
++			dev_err(inst->dev->dev, "%s: VPU reload failed, leaking instance buffers\n",
++				__func__);
++			inst->keep_dma_bufs = true;
++			goto unlock_and_return;
++		}
++	} else {
++		dev_dbg(inst->dev->dev, "%s: dec_finish_seq complete\n", __func__);
++	}
+ 
+ 	wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_work);
+ 
+-	for (i = 0 ; i < MAX_REG_FRAME; i++) {
+-		ret = reset_auxiliary_buffers(inst, i);
+-		if (ret) {
+-			ret = 0;
++	for (i = 0 ; i < MAX_REG_FRAME; i++)
++		if (reset_auxiliary_buffers(inst, i))
+ 			break;
+-		}
+-	}
+ 
+ 	wave5_vdi_free_dma_memory(vpu_dev, &p_dec_info->vb_task);
+ 
+ unlock_and_return:
+ 	mutex_unlock(&vpu_dev->hw_lock);
+ 	pm_runtime_put_sync(inst->dev->dev);
+-	return ret;
++	return ret < 0 ? ret : 0;
+ }
+ 
+ int wave5_vpu_dec_issue_seq_init(struct vpu_instance *inst)

@@ -1,0 +1,8 @@
+config BR2_PACKAGE_AR9311_GE2D
+	bool "AR9311 DMA-BUF video/HUD compositor"
+	depends on BR2_FPVOS_BOARD_ASCENT_VRX
+	depends on BR2_LINUX_KERNEL
+	help
+	  Native GE2D memory-to-memory composition for offline HUD video
+	  export. Imports planar YUV and ARGB DMA buffers without a vendor
+	  media daemon. Requires the GE2D/display resource split in the DT.

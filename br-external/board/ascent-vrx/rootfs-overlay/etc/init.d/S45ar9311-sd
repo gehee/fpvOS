@@ -17,6 +17,20 @@ find_card() {
 	done
 }
 
+# A card the controller has identified, with or without its block device yet.
+card_identified() {
+	for host in /sys/class/mmc_host/mmc*; do
+		case "$(readlink -f "$host")" in
+			*/1c00000.mmc/mmc_host/*) ;;
+			*) continue ;;
+		esac
+		for device in "$host"/mmc*:*; do
+			[ -e "$device" ] && return 0
+		done
+	done
+	return 1
+}
+
 start() {
 	# Repeated start must not mount twice or hide an existing mount.
 	if mountpoint -q "$mount_dir"; then
@@ -29,12 +43,16 @@ start() {
 	modprobe dw_mci-artosyn || return 1
 
 	# The platform probe and card scan run asynchronously. Wait for a card
-	# and for the kernel to finish registering its block device/partitions.
+	# and for the kernel to finish registering its block device/partitions:
+	# up to 10 s for a card the controller has identified, but only 4 s for
+	# it to identify one (a card answers within about a second) - an empty
+	# slot must not hold the receiver's start back the full time.
 	i=0
-	while [ "$i" -lt 10 ]; do
+	while [ "$i" -lt 50 ]; do
 		card=$(find_card)
 		[ -n "$card" ] && [ -b "/dev/${card##*/}" ] && break
-		sleep 1
+		[ "$i" -ge 20 ] && ! card_identified && break
+		sleep 0.2
 		i=$((i + 1))
 	done
 	if [ -z "$card" ] || [ ! -b "/dev/${card##*/}" ]; then
