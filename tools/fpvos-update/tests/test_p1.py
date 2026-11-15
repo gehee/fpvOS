@@ -73,6 +73,28 @@ class P1Tests(unittest.TestCase):
         parts=list(PARTS);parts[-1]=parts[-2]
         self.assertFalse(self.layout(record(0),record(parts=parts)))
 
+    def test_either_boot_pair_is_preserved(self):
+        for bank in (0,1):
+            with self.subTest(bank=bank):
+                parts=list(PARTS)
+                for i in range(2,6):
+                    parts[i]=(*parts[i][:3],int(i%2==bank))
+                self.assertTrue(self.layout(b'\xff'*0x4400,record(parts=parts)))
+                d=self.flash_directory()
+                before=bytearray((d/'boot-state').read_bytes())
+                before[0x40000:0x44400]=record(parts=parts)
+                (d/'boot-state').write_bytes(before)
+                for target in (0,1):
+                    self.assertEqual(self.flash(d,'select',target),0)
+                    after=(d/'boot-state').read_bytes()
+                    offset=0 if target==0 else 0x40000
+                    self.assertEqual(after[offset+1024+2*128:offset+1024+6*128],
+                                     before[0x40000+1024+2*128:0x40000+1024+6*128])
+        # Selecting different environment and U-Boot banks is not a valid pair.
+        parts=list(PARTS)
+        for i in (2,3): parts[i]=(*parts[i][:3],1-parts[i][3])
+        self.assertFalse(self.layout(b'\xff'*0x4400,record(parts=parts)))
+
     def volume(self,kind,data='usrdata',app='userapp'):
         with tempfile.TemporaryDirectory() as t:
             d=Path(t)
@@ -91,7 +113,8 @@ class P1Tests(unittest.TestCase):
         # As on a stock 1.0.44 unit: MTD usr_data holds volume usrdata, userapp0 holds userapp.
         self.assertEqual(self.volume('data'),'/dev/ubi0_0')
         self.assertEqual(self.volume('app'),'/dev/ubi1_0')
-        self.assertIsNone(self.volume('data',data='usr_data'))
+        self.assertEqual(self.volume('data',data='usr_data'),'/dev/ubi0_0')
+        self.assertIsNone(self.volume('data',data='unrelated'))
         self.assertIsNone(self.volume('app',app='userapp0'))
 
     def flash_directory(self):
