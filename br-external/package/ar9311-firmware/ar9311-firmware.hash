@@ -3,3 +3,8 @@
 sha256  d5fba9a867bd5c6b664750937e2185a2b2db01d49b0b586815f1199db747791f  Ascent_G_Gnd_17_5_15.img
 # Extracted userapp/usr/bin/chagall.bin; identical to validated Ascent 17.5.8.
 sha256  99bc74cdf1e7ded785c2b65440c983f4e128727eb2bbdf309b14ddde668fd8ac  chagall.bin
+# BETAFPV official P1 goggles 1.0.36 release; independently computed hashes:
+# https://support.betafpv.com/hc/en-us/articles/53798961852185
+sha256  4fd67842b03ef56602478b2420b8f68eb039eb03dc40198195cd1ba2acab1ecf  P1_GND_v1.0.36_20251110_49e4cf0.img
+# userapp0/usr/bin/chagall.bin.gz, decompressed; matches the tested stock device.
+sha256  308b96351168cc7dbbe936de1490f9ab553aa9ae7e1679d8e9a8c4ab8cd5bf86  p1-goggle-chagall.bin

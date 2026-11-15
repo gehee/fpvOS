@@ -117,7 +117,8 @@ int p1_stock(void)
     char model[128], cmdline[4096], version[1024];
     struct utsname u;
     if (p1_read("/proc/device-tree/model", model, sizeof(model)) || uname(&u)) return -1;
-    if (!strcmp(model,"BETAFPV P1 Air (AR9311) source bring-up") && !strncmp(u.release,"6.18.",5)) return 0;
+    if (!strcmp(model,P1_MODEL) && !strncmp(u.release,"6.18.",5)) return 0;
+    if (!P1_STOCK_BOOTSTRAP) return -1;
     if (strcmp(model,"Artosyn, Proxima Development Board") || strcmp(u.release,"4.9.38") ||
         p1_read("/proc/cmdline",cmdline,sizeof(cmdline)) || !token(cmdline,stock_map) ||
         !token(cmdline,"ubi.mtd=18,2048") || !token(cmdline,"root=/dev/ubiblock0_0")) return -1;
@@ -215,7 +216,7 @@ static int ubi_for(unsigned mtd_number, int attach)
 static int volume(int data, int writing, char node[64])
 {
     unsigned number;
-    int fd = p1_mtd(data ? "usr_data" : "userapp0",data ? 0x7100000 : 0x1700000,
+    int fd = p1_mtd(data ? "usr_data" : P1_ROOT_PART,data ? 0x7100000 : P1_ROOT_OFFSET,
                  data ? 0x600000 : 0x2d00000,&number);
     if (fd < 0) return -1;
     close(fd);
@@ -234,7 +235,7 @@ static int volume(int data, int writing, char node[64])
     snprintf(node,64,"/dev/ubi%d_0",ubi);
     if (!data) {
         snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/reserved_ebs",ubi);
-        if (p1_read(path,text,sizeof(text)) || strtoul(text,NULL,10) < 134) return -1;
+        if (p1_read(path,text,sizeof(text)) || strtoul(text,NULL,10) < (fpvos_board.bundle_limits[0] + 126975U) / 126976U) return -1;
         snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/usable_eb_size",ubi);
         if (p1_read(path,text,sizeof(text)) || strcmp(text,"126976")) return -1;
         /* Kernel UBI update also refuses a volume in use, including ubiblock. */

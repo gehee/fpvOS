@@ -1,0 +1,22 @@
+From: fpvOS contributors
+Subject: [PATCH] media: wave5: reset inherited AR9311 decoder state
+
+AR9311 can enter through a stock-Linux RAM handoff with codec firmware
+still running. Apply the existing encoder reset path to decoder probe too,
+so no old firmware or DMA allocation is reused. Other platforms retain
+their existing initialization behavior.
+
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
+@@ -25,7 +25,10 @@
+ 	if (ret)
+ 		return ret;
+ 
+-	if (wave5_vpu_is_init(vpu_dev) && !vpu_dev->artosyn_encoder) {
++	/* Stock Linux can leave firmware running across an AR9311 RAM handoff.
++	 * Reset it before assigning new code and DMA buffers, for either role.
++	 */
++	if (wave5_vpu_is_init(vpu_dev) && !vpu_dev->artosyn) {
+ 		wave5_vpu_re_init(dev, (void *)code, size);
+ 		ret = -EBUSY;
+ 		goto err_out;

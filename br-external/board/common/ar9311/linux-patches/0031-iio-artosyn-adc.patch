@@ -1,0 +1,296 @@
+From: fpvOS contributors
+Subject: [PATCH] iio: add shared AR9311 SAR ADC provider
+
+Adapt Missing-Lynk ml-kernel modules/artosyn_adc.c (GPL-2.0), using
+vendor nominal reference voltages instead of board-measured constants.
+Bound the sample count. Key wiring remains in board device trees.
+
+--- /dev/null
++++ b/drivers/iio/adc/artosyn_adc.c
+@@ -0,0 +1,224 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * AR9311 SAR ADC, adapted from Missing-Lynk/ml-kernel artosyn_adc.c.
++ * Register sequencing was recovered there from the vendor ADC driver.
++ * Control and data mappings exclude unrelated PLL registers in this bank.
++ * IIO PROCESSED supplies calibrated millivolts to standard adc-keys.
++ */
++#define pr_fmt(fmt) "artosyn_adc: " fmt
++
++#include <linux/module.h>
++#include <linux/platform_device.h>
++#include <linux/iio/iio.h>
++#include <linux/io.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++
++#define AR_ADC_CTRL		0x00	/* bit7 = ADC enable/power */
++#define AR_ADC_CTRL_EN		BIT(7)
++#define AR_ADC_SAMPLE_EN	0x18	/* write 0 to begin a burst, 1 when done */
++#define AR_ADC_CHAN_SEL		0x24	/* channel index 0..7 */
++#define AR_ADC_CALIB		0x2c	/* bit3 = calibration enable */
++#define AR_ADC_CALIB_EN		BIT(3)
++#define AR_ADC_DATA_RESET	0x00	/* write 0 at init (9341 variant: 0x800) */
++#define AR_ADC_DATA		0x10	/* 16-bit sample output (9341 variant: 0x810) */
++
++#define AR_ADC_WARMUP_READS	16	/* vendor discards 16 reads before sampling */
++#define AR_ADC_MAX_CHANNELS	8
++
++/*
++ * Fallback full-scale reference in millivolts: vendor nominal 2025 mV.
++ */
++#define AR_ADC_FULLSCALE_MV	2025
++#define AR_ADC_FULLSCALE_CODE	1024
++
++/*
++ * On-chip calibration reference in millivolts: vendor nominal 900 mV.
++ */
++#define AR_ADC_CAL_REF_MV	900
++
++struct ar_adc {
++	void __iomem	*regs;
++	void __iomem	*data;
++	struct mutex	lock;	/* serialises the channel-select + sample burst */
++	u32		samp_count;
++	u16		code_ref[AR_ADC_MAX_CHANNELS];	/* per-channel code at AR_ADC_CAL_REF_MV, 0 = uncalibrated */
++};
++
++/* One conversion of the selected channel; returns the averaged 10-bit code. */
++static u16 ar_adc_sample(struct ar_adc *adc, unsigned int channel)
++{
++	unsigned int i;
++	u32 sum = 0;
++
++	writel(channel & 0xff, adc->regs + AR_ADC_CHAN_SEL);
++	writel(0, adc->regs + AR_ADC_SAMPLE_EN);
++
++	for (i = 0; i < AR_ADC_WARMUP_READS; i++)
++		readl(adc->data + AR_ADC_DATA);
++
++	for (i = 0; i < adc->samp_count; i++)
++		sum += readl(adc->data + AR_ADC_DATA) & 0xffff;
++
++	writel(1, adc->regs + AR_ADC_SAMPLE_EN);
++
++	return sum / adc->samp_count;
++}
++
++/* Zero code is ground. Calibrate gain using the on-chip nominal 900 mV
++ * reference; a board-measured full-scale offset must not turn idle into a key. */
++static int ar_adc_code_to_mv(struct ar_adc *adc, unsigned int channel, u16 code)
++{
++	int ref = adc->code_ref[channel];
++
++	if (ref <= 0 || ref >= AR_ADC_FULLSCALE_CODE)
++		return (int)code * AR_ADC_FULLSCALE_MV / AR_ADC_FULLSCALE_CODE;
++	return DIV_ROUND_CLOSEST((int)code * AR_ADC_CAL_REF_MV, ref);
++}
++
++static int ar_adc_read_raw(struct iio_dev *indio_dev,
++			   struct iio_chan_spec const *chan,
++			   int *val, int *val2, long mask)
++{
++	struct ar_adc *adc = iio_priv(indio_dev);
++	u16 code;
++
++	switch (mask) {
++	case IIO_CHAN_INFO_RAW:
++		mutex_lock(&adc->lock);
++		*val = ar_adc_sample(adc, chan->channel);
++		mutex_unlock(&adc->lock);
++		return IIO_VAL_INT;
++	case IIO_CHAN_INFO_PROCESSED:
++		mutex_lock(&adc->lock);
++		code = ar_adc_sample(adc, chan->channel);
++		mutex_unlock(&adc->lock);
++		*val = ar_adc_code_to_mv(adc, chan->channel, code);
++		return IIO_VAL_INT;
++	case IIO_CHAN_INFO_SCALE:
++		/* gain-only fallback: millivolts = raw * AR_ADC_FULLSCALE_MV / AR_ADC_FULLSCALE_CODE */
++		*val = AR_ADC_FULLSCALE_MV;
++		*val2 = AR_ADC_FULLSCALE_CODE;
++		return IIO_VAL_FRACTIONAL;
++	default:
++		return -EINVAL;
++	}
++}
++
++static const struct iio_info ar_adc_info = {
++	.read_raw = ar_adc_read_raw,
++};
++
++#define AR_ADC_CHANNEL(idx) {						\
++	.type = IIO_VOLTAGE,						\
++	.indexed = 1,							\
++	.channel = (idx),						\
++	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |			\
++			      BIT(IIO_CHAN_INFO_PROCESSED),		\
++	.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE),		\
++}
++
++static const struct iio_chan_spec ar_adc_channels[AR_ADC_MAX_CHANNELS] = {
++	AR_ADC_CHANNEL(0), AR_ADC_CHANNEL(1), AR_ADC_CHANNEL(2), AR_ADC_CHANNEL(3),
++	AR_ADC_CHANNEL(4), AR_ADC_CHANNEL(5), AR_ADC_CHANNEL(6), AR_ADC_CHANNEL(7),
++};
++
++static void ar_adc_hw_init(struct ar_adc *adc)
++{
++	u32 v;
++
++	writel(0, adc->data + AR_ADC_DATA_RESET);
++
++	v = readl(adc->regs + AR_ADC_CALIB);
++	writel(v & ~AR_ADC_CALIB_EN, adc->regs + AR_ADC_CALIB);
++
++	writel(1, adc->regs + AR_ADC_SAMPLE_EN);
++
++	v = readl(adc->regs + AR_ADC_CTRL);
++	writel(v | AR_ADC_CTRL_EN, adc->regs + AR_ADC_CTRL);
++}
++
++/*
++ * Self-measure each channel against the on-chip AR_ADC_CAL_REF_MV reference (vendor probe
++ * step 7): with the calibration bit set, one sample of the channel returns the code that
++ * corresponds to the reference voltage. Stored per channel for the zero-preserving gain calibration.
++ * Run once at probe, ADC already enabled.
++ */
++static void ar_adc_calibrate(struct ar_adc *adc, u32 channels)
++{
++	unsigned int ch;
++	u32 v;
++
++	for (ch = 0; ch < channels; ch++) {
++		mutex_lock(&adc->lock);
++
++		v = readl(adc->regs + AR_ADC_CALIB);
++		writel(v | AR_ADC_CALIB_EN, adc->regs + AR_ADC_CALIB);
++
++		adc->code_ref[ch] = ar_adc_sample(adc, ch);
++
++		v = readl(adc->regs + AR_ADC_CALIB);
++		writel(v & ~AR_ADC_CALIB_EN, adc->regs + AR_ADC_CALIB);
++
++		mutex_unlock(&adc->lock);
++
++		pr_info("channel %u reference code %u (%u mV)\n",
++			ch, adc->code_ref[ch], AR_ADC_CAL_REF_MV);
++	}
++}
++
++static int ar_adc_probe(struct platform_device *pdev)
++{
++	struct iio_dev *indio_dev;
++	struct ar_adc *adc;
++	u32 channels = AR_ADC_MAX_CHANNELS;
++
++	indio_dev = devm_iio_device_alloc(&pdev->dev, sizeof(*adc));
++	if (!indio_dev)
++		return -ENOMEM;
++
++	adc = iio_priv(indio_dev);
++	mutex_init(&adc->lock);
++
++	adc->regs = devm_platform_ioremap_resource_byname(pdev, "control");
++	if (IS_ERR(adc->regs))
++		return PTR_ERR(adc->regs);
++	adc->data = devm_platform_ioremap_resource_byname(pdev, "data");
++	if (IS_ERR(adc->data))
++		return PTR_ERR(adc->data);
++
++	if (of_property_read_u32(pdev->dev.of_node, "samp-count", &adc->samp_count) ||
++	    adc->samp_count == 0 || adc->samp_count > 64)
++		adc->samp_count = 1;
++
++
++	ar_adc_hw_init(adc);
++	ar_adc_calibrate(adc, channels);
++
++	indio_dev->name = "artosyn-adc";
++	indio_dev->info = &ar_adc_info;
++	indio_dev->modes = INDIO_DIRECT_MODE;
++	indio_dev->channels = ar_adc_channels;
++	indio_dev->num_channels = channels;
++
++	return devm_iio_device_register(&pdev->dev, indio_dev);
++}
++
++static const struct of_device_id ar_adc_match[] = {
++	{ .compatible = "artosyn,adc" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, ar_adc_match);
++
++static struct platform_driver ar_adc_driver = {
++	.probe	= ar_adc_probe,
++	.driver = {
++		.name		= "artosyn-adc",
++		.of_match_table	= ar_adc_match,
++	},
++};
++module_platform_driver(ar_adc_driver);
++
++MODULE_DESCRIPTION("Artosyn Proxima SAR ADC (button voltage ladder)");
++MODULE_AUTHOR("missinglynk");
++MODULE_LICENSE("GPL");
+--- a/drivers/iio/adc/Kconfig
++++ b/drivers/iio/adc/Kconfig
+@@ -1875,4 +1875,11 @@
+ 	  The driver can also be built as a module. If so, the module will be called
+ 	  xilinx-ams.
+ 
++config ARTOSYN_ADC
++	tristate "Artosyn AR9311 SAR ADC"
++	depends on OF && HAS_IOMEM
++	help
++	  Eight-channel SAR ADC used by AR9311 boards. Keypad voltage
++	  ladders are described separately using the adc-keys binding.
++
+ endmenu
+--- a/drivers/iio/adc/Makefile
++++ b/drivers/iio/adc/Makefile
+@@ -163,3 +163,5 @@
+ obj-$(CONFIG_XILINX_AMS) += xilinx-ams.o
+ xilinx-xadc-y := xilinx-xadc-core.o xilinx-xadc-events.o
+ obj-$(CONFIG_XILINX_XADC) += xilinx-xadc.o
++
++obj-$(CONFIG_ARTOSYN_ADC) += artosyn_adc.o
+--- /dev/null
++++ b/Documentation/devicetree/bindings/iio/adc/artosyn,adc.yaml
+@@ -0,0 +1,37 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/iio/adc/artosyn,adc.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: Artosyn AR9311 SAR ADC
++maintainers:
++  - mh1412 <mh1412@users.noreply.github.com>
++description: |
++  Eight-channel SAR ADC. Control and sample-data resources exclude the
++  unrelated PLL registers between them. The temperature consumer must not
++  independently access the ADC while this provider is enabled.
++properties:
++  compatible:
++    const: artosyn,adc
++  reg:
++    items:
++      - description: Conversion control registers
++      - description: Data reset and sample registers
++  reg-names:
++    items:
++      - const: control
++      - const: data
++  '#io-channel-cells':
++    const: 1
++  samp-count:
++    $ref: /schemas/types.yaml#/definitions/uint32
++    minimum: 1
++    maximum: 64
++    default: 1
++    description: Samples averaged for each conversion
++required:
++  - compatible
++  - reg
++  - reg-names
++  - '#io-channel-cells'
++additionalProperties: false

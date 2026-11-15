@@ -24,6 +24,15 @@ config BR2_FPVOS_BOARD_P1_AIR
 	  P1 board storage and direct NAND recovery policy. Uses the
 	  verified 1.0.44 partition layout and preserves stock bank 1.
 
+config BR2_FPVOS_BOARD_P1_GOGGLE
+	bool "BETAFPV P1 goggles (AR9311)"
+	depends on BR2_aarch64
+	select BR2_FPVOS_SOC_AR9311
+	help
+	  P1 goggles RAM-boot bring-up. Reuses shared AR9311 drivers
+	  with board-specific memory and SD wiring. NAND is read-only;
+	  no persistent installer or receiver application is selected.
+
 config BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
 	bool "Skyzone SteadyDigital (AR9311)"
 	depends on BR2_aarch64

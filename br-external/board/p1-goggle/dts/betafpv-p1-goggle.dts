@@ -1,0 +1,228 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/* P1 goggles wiring from the stock device tree and VR04 platform research.
+ * Independent NAND recovery; stock bank 0 and factory are preserved.
+ */
+/dts-v1/;
+#include "ar9311.dtsi"
+#include <dt-bindings/input/input.h>
+
+/ {
+	model = "BETAFPV P1 goggles (AR9311)";
+	compatible = "betafpv,p1-goggle", "artosyn,proxima-9311";
+
+	reboot-scratch@a106138 {
+		compatible = "syscon", "simple-mfd";
+		reg = <0 0x0a106138 0 4>;
+		reboot-mode {
+			compatible = "syscon-reboot-mode";
+			offset = <0>;
+			mode-normal = <2>;
+			mode-bootloader = <3>;
+		};
+	};
+	p1-goggle-keys {
+		compatible = "adc-keys";
+		io-channels = <&adc 0>;
+		io-channel-names = "buttons";
+		poll-interval = <10>;
+		keyup-threshold-microvolt = <0>;
+		button-bind { label = "bind"; linux,code = <KEY_CONNECT>; press-threshold-microvolt = <200000>; };
+		button-back { label = "back"; linux,code = <KEY_BACK>; press-threshold-microvolt = <400000>; };
+		button-record { label = "record"; linux,code = <KEY_RECORD>; press-threshold-microvolt = <600000>; };
+		button-up { label = "up"; linux,code = <KEY_UP>; press-threshold-microvolt = <800000>; };
+		button-left { label = "left"; linux,code = <KEY_LEFT>; press-threshold-microvolt = <1000000>; };
+		button-right { label = "right"; linux,code = <KEY_RIGHT>; press-threshold-microvolt = <1200000>; };
+		button-enter { label = "enter"; linux,code = <KEY_ENTER>; press-threshold-microvolt = <1400000>; };
+		button-down { label = "down"; linux,code = <KEY_DOWN>; press-threshold-microvolt = <1600000>; };
+	};
+
+	aliases { serial0 = &uart0; };
+	chosen {
+		stdout-path = "serial0:1152000n8";
+		bootargs = "console=ttyS0,1152000 earlycon loglevel=7 mem=148M rdinit=/init";
+	};
+
+	/* Stock has 256 MiB DRAM: 148 MiB Linux and 108 MiB media. */
+	memory@20000000 {
+		device_type = "memory";
+		reg = <0 0x20000000 0 0x10000000>;
+	};
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		codec_memory: media@29400000 {
+			compatible = "shared-dma-pool";
+			reg = <0 0x29400000 0 0x06b00000>;
+			no-map;
+		};
+		loader@2ff00000 {
+			reg = <0 0x2ff00000 0 0x00100000>;
+			no-map;
+		};
+	};
+};
+
+/* The stock SPL uses the same secondary CPU handshake as P1 Air.
+ * A diagnostic Linux-to-Linux loader may instead park CPU1 and use maxcpus=1.
+ */
+&cpu0 { enable-method = "ar-spin-table"; };
+&cpu1 {
+	enable-method = "ar-spin-table";
+	cpu-release-addr = <0 0x00100000>;
+};
+&uart0 { status = "okay"; };
+&usb {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+&watchdog { status = "okay"; };
+
+&gpio {
+	status = "okay";
+	/* GPIO100 is the shared panel/SD I/O rail. Do not cycle it when
+	 * probing or removing the SD card. Stock keeps it at 3.3 V.
+	 */
+	sd-panel-power-hog {
+		gpio-hog;
+		gpios = <100 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "sd-panel-power";
+	};
+};
+&mmc_clocks {
+	status = "okay";
+	artosyn,clock-config = <0x87 2>, <0x80 0>;
+};
+&mmc1 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	card-detect-delay = <200>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	disable-wp;
+	no-1-8-v;
+	no-mmc;
+	no-sdio;
+};
+
+&qspi_clock { status = "okay"; };
+&qspi {
+	status = "okay";
+	clocks = <&qspi_clock>;
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			partition@0 { label = "stock-spl"; reg = <0 0x100000>; read-only; };
+			partition@100000 { label = "boot-state"; reg = <0x100000 0x80000>; };
+			partition@180000 { label = "stock-vendor"; reg = <0x180000 0x80000>; read-only; };
+			partition@200000 { label = "factory"; reg = <0x200000 0x600000>; read-only; };
+			partition@800000 { label = "stock-bootloaders"; reg = <0x800000 0x240000>; read-only; };
+			partition@a40000 { label = "stock-kernel"; reg = <0xa40000 0x600000>; read-only; };
+			partition@1040000 { label = "kernel1"; reg = <0x1040000 0x600000>; };
+			partition@1640000 { label = "stock-dtb"; reg = <0x1640000 0x60000>; read-only; };
+			partition@16a0000 { label = "dtb1"; reg = <0x16a0000 0x60000>; };
+			partition@1700000 { label = "stock-rootfs"; reg = <0x1700000 0x2d00000>; read-only; };
+			partition@4400000 { label = "userapp1"; reg = <0x4400000 0x2d00000>; };
+			partition@7100000 { label = "usr_data"; reg = <0x7100000 0x600000>; };
+		};
+	};
+};
+
+/* Keep scan straps owned; the shared SD/panel rail is never cycled here. */
+&gpio {
+	panel-scan-horizontal {
+		gpio-hog;
+		gpios = <42 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "panel-scan-horizontal";
+	};
+	panel-scan-vertical {
+		gpio-hog;
+		gpios = <107 GPIO_ACTIVE_HIGH>;
+		output-low;
+		line-name = "panel-scan-vertical";
+	};
+};
+
+/ {
+	panel_backlight: backlight {
+		compatible = "pwm-backlight";
+		pwms = <&pwm0 1 500000>;
+		brightness-levels = <0 28 36 44 52 60 68 76 84 92 100>;
+		default-brightness-level = <0>;
+	};
+};
+&pwm0 { status = "okay"; };
+&vo {
+	status = "okay";
+	artosyn,display-profile = "p1-goggle-1080p";
+	port {
+		vo_out: endpoint { remote-endpoint = <&dsi_in>; };
+	};
+};
+&dsi {
+	status = "okay";
+	artosyn,display-profile = "p1-goggle-1080p";
+	#address-cells = <1>;
+	#size-cells = <0>;
+	ports {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		port@0 {
+			reg = <0>;
+			dsi_in: endpoint { remote-endpoint = <&vo_out>; };
+		};
+		port@1 {
+			reg = <1>;
+			dsi_out: endpoint { remote-endpoint = <&panel_in>; };
+		};
+	};
+	panel@0 {
+		compatible = "qiyang,qy45043a0";
+		reg = <0>;
+		reset-gpios = <&gpio 43 GPIO_ACTIVE_HIGH>;
+		enable-gpios = <&gpio 95 GPIO_ACTIVE_HIGH>;
+		backlight = <&panel_backlight>;
+		port {
+			panel_in: endpoint { remote-endpoint = <&dsi_out>; };
+		};
+	};
+};
+
+&vpu {
+	status = "okay";
+	memory-region = <&codec_memory>;
+	firmware-name = "artosyn/p1-goggle-chagall.bin";
+};
+
+&adc { status = "okay"; };
+
+/* Stock start_ar813x.sh resets the radio on GPIO23. */
+/ {
+	p1_radio_pwrseq: radio-pwrseq {
+		compatible = "artosyn,ar8030-pwrseq";
+		reset-gpios = <&gpio 23 GPIO_ACTIVE_LOW>;
+	};
+};
+&mmc0 {
+	status = "okay";
+	clock-frequency = <100000000>;
+	max-frequency = <50000000>;
+	bus-width = <4>;
+	cap-sd-highspeed;
+	cap-sdio-irq;
+	broken-cd;
+	no-mmc;
+	no-sd;
+	no-1-8-v;
+	mmc-pwrseq = <&p1_radio_pwrseq>;
+};
+
+&watchdog { status = "okay"; };

@@ -1,0 +1,1045 @@
+From: fpvOS contributors
+Subject: [PATCH] drm: artosyn: add explicit P1 goggles panel profile
+
+Adapt the GPL-2.0 QY45043A0 panel support from Missing-Lynk/ml-kernel
+and select its stock raster and PHY independently of Ascent HDMI.
+The P1 stock timing registers were checked on the connected goggles.
+Keep the shared MIPI PLL pixel-clock selector: stock selector 0x200
+depends on vendor initialization and gives only ~31 Hz on direct cold boot.
+
+--- a/drivers/gpu/drm/artosyn/Kconfig
++++ b/drivers/gpu/drm/artosyn/Kconfig
+@@ -11,3 +11,11 @@
+ 	  AR9311 VO controller and Artosyn DSI PHY glue. Boards must
+ 	  select a supported display profile and provide their output graph.
+ 	  Currently only ascent-1080p60 with RGB/I420 scanout is supported.
++
++config DRM_PANEL_QIYANG_QY45043A0
++	tristate "Qiyang QY45043A0 panel"
++	depends on OF && DRM && GPIOLIB
++	select DRM_MIPI_DSI
++	select DRM_PANEL
++	help
++	  Four-lane 1080p panel used by BETAFPV P1 goggles.
+--- a/drivers/gpu/drm/artosyn/Makefile
++++ b/drivers/gpu/drm/artosyn/Makefile
+@@ -1 +1,2 @@
+ obj-$(CONFIG_DRM_ARTOSYN) += artosyn_vo.o artosyn_dsi.o
++obj-$(CONFIG_DRM_PANEL_QIYANG_QY45043A0) += panel-qy45043a0.o
+--- a/drivers/gpu/drm/artosyn/artosyn_display.h
++++ b/drivers/gpu/drm/artosyn/artosyn_display.h
+@@ -6,7 +6,7 @@
+ #include <linux/string.h>
+ 
+ enum ar_display_profile {
+-	AR_DISPLAY_INVALID, AR_DISPLAY_1080P60, AR_DISPLAY_60HZ, AR_DISPLAY_HDMI,
++	AR_DISPLAY_INVALID, AR_DISPLAY_1080P60, AR_DISPLAY_60HZ, AR_DISPLAY_HDMI, AR_DISPLAY_P1_GOGGLE,
+ };
+ 
+ static inline enum ar_display_profile ar_display_profile(const char *name)
+@@ -17,6 +17,8 @@
+ 		return AR_DISPLAY_60HZ;
+ 	if (!strcmp(name, "ascent-hdmi"))
+ 		return AR_DISPLAY_HDMI;
++	if (!strcmp(name, "p1-goggle-1080p"))
++		return AR_DISPLAY_P1_GOGGLE;
+ 	return AR_DISPLAY_INVALID;
+ }
+ 
+@@ -42,11 +44,18 @@
+ 	{ 47, 148500, false, 1720, 1547, 1574, 20, 110, 1290 },
+ };
+ 
++/* Stock P1 internal raster; panel advertises nominal CEA-16. */
++static const struct ar_display_timing ar_p1_timing =
++	{ 16, 148500, false, 2091, 2005, 2048, 32, 32, 1568 };
++
+ static inline const struct ar_display_timing *
+ ar_display_timing(enum ar_display_profile profile, const struct drm_display_mode *mode)
+ {
+ 	unsigned int i;
+ 	u8 vic = drm_match_cea_mode(mode);
++
++	if (profile == AR_DISPLAY_P1_GOGGLE)
++		return vic == 16 && mode->clock == 148500 ? &ar_p1_timing : NULL;
+ 
+ 	for (i = 0; i < ARRAY_SIZE(ar_display_timings); i++) {
+ 		const struct ar_display_timing *t = &ar_display_timings[i];
+--- a/drivers/gpu/drm/artosyn/artosyn_dsi.c
++++ b/drivers/gpu/drm/artosyn/artosyn_dsi.c
+@@ -98,6 +98,44 @@
+ 	{ 0xb4, 0x00000001 },
+ };
+ 
++static const struct { u16 off; u32 val; } ar_dphy_p1[] = {
++	{ 0x2c4, 0x0410b016 }, { 0x2c8, 0x002468ac }, { 0x2cc, 0x0000000a },
++	{ 0x2d0, 0x00003284 }, { 0x2d4, 0x00000064 }, { 0x2d8, 0x1e080b00 },
++	{ 0x2dc, 0x110c1f0a }, { 0x2e0, 0x000a0000 }, { 0x2e4, 0x00000011 },
++	{ 0x2e8, 0x0000206a }, { 0x2ec, 0x000000c4 }, { 0x2f0, 0x00c803e8 },
++	{ 0x2f4, 0x0f080b00 }, { 0x2f8, 0x0000110c }, { 0x2fc, 0x003c1131 },
++	{ 0x300, 0x000a0000 }, { 0x304, 0x00000011 }, { 0x308, 0x0000206a },
++	{ 0x30c, 0x000000c4 }, { 0x310, 0x0f080b00 }, { 0x314, 0x0000110c },
++	{ 0x318, 0x00000008 }, { 0x32c, 0x0000000a }, { 0x330, 0x00003284 },
++	{ 0x334, 0x00000064 }, { 0x338, 0x1e080b00 }, { 0x33c, 0x110c1f0a },
++	{ 0x340, 0x000a0000 }, { 0x344, 0x00000011 }, { 0x348, 0x0000206a },
++	{ 0x34c, 0x000000c4 }, { 0x350, 0x00c803e8 }, { 0x354, 0x0f080b00 },
++	{ 0x358, 0x0000110c }, { 0x35c, 0x003c1131 }, { 0x360, 0x000a0000 },
++	{ 0x364, 0x00000011 }, { 0x368, 0x0000206a }, { 0x36c, 0x000000c4 },
++	{ 0x370, 0x0f080b00 }, { 0x374, 0x0000110c }, { 0x378, 0x00000008 },
++	{ 0x38c, 0x00011400 }, { 0x394, 0x00000200 }, { 0x398, 0x00008000 },
++	{ 0x3a0, 0x00000200 }, { 0x3a4, 0x00008000 },
++};
++static const struct { u16 off; u32 val; } ar_dsi_vid_p1[] = {
++	{ 0x08, 0x00000811 },	/* CLKMGR_CFG */
++	{ 0x18, 0x00000000 },	/* DPI_LP_CMD_TIM (stock 0, mainline 0x100004) */
++	{ 0x2c, 0x00000004 },	/* PCKHDL_CFG = BTA_EN only; no EOTP/ECC/CRC (stock) */
++	{ 0x38, 0x00003f01 },	/* VID_MODE_CFG (sync-event, all-LP) */
++	{ 0x48, 0x00000020 },	/* VID_HSA_TIME */
++	{ 0x4c, 0x00000020 },	/* VID_HBP_TIME */
++	{ 0x50, 0x00000620 },	/* VID_HLINE_TIME */
++	{ 0x54, 0x00000001 },	/* VID_VSA_LINES */
++	{ 0x58, 0x0000001f },	/* VID_VBP_LINES */
++	{ 0x5c, 0x00000020 },	/* VID_VFP_LINES */
++	{ 0x80, 0x00000020 },	/* LP_RD_TO_CNT (stock) */
++	{ 0x88, 0x00000020 },	/* LP_WR_TO_CNT (stock) */
++	{ 0x8c, 0x00000020 },	/* BTA_TO_CNT (stock) */
++	{ 0x94, 0x00000001 },	/* LPCLK_CTRL (continuous HS clock) */
++	{ 0x98, 0x00000000 },	/* PHY_TMR_LPCLK_CFG = 0 (vendor D-PHY block owns timing) */
++	{ 0x9c, 0x00000000 },	/* PHY_TMR_CFG = 0 (do NOT let mainline fight the vendor block) */
++	{ 0xb4, 0x00000001 },	/* stock=1 (mainline 0) */
++};
++
+ #define AR_DSI_MIPI_PLL_DIV	0x044e7f72
+ /* Inverse Q8.24 divider: doubling halves the 928.8 Mbps lane rate. */
+ 
+@@ -105,6 +143,15 @@
+ {
+ 	struct ar_dsi *dsi = priv;
+ 	unsigned int i;
++
++	if (dsi->profile == AR_DISPLAY_P1_GOGGLE) {
++		writel(0x04a54972, dsi->base + 0x2c0);
++		for (i = 0; i < ARRAY_SIZE(ar_dphy_p1); i++)
++			writel(ar_dphy_p1[i].val, dsi->base + ar_dphy_p1[i].off);
++		for (i = 0; i < ARRAY_SIZE(ar_dsi_vid_p1); i++)
++			writel(ar_dsi_vid_p1[i].val, dsi->base + ar_dsi_vid_p1[i].off);
++		goto enable_phy;
++	}
+ 
+ 	writel(dsi->timing->slow_phy ? AR_DSI_MIPI_PLL_DIV * 2 : AR_DSI_MIPI_PLL_DIV,
+ 	       dsi->base + 0x2c0);
+@@ -124,6 +171,7 @@
+ 	writel(dsi->timing->dsi_hsa, dsi->base + 0x48);
+ 	writel(dsi->timing->dsi_hbp, dsi->base + 0x4c);
+ 	writel(dsi->timing->dsi_hline, dsi->base + 0x50);
++enable_phy:
+ 	writel(dsi->lanes - 1, dsi->base + DSI_PHY_IF_CFG);
+ 	writel(0xd, dsi->base + DSI_PHY_RSTZ);
+ 	writel(0xf, dsi->base + DSI_PHY_RSTZ);
+@@ -141,7 +189,8 @@
+ 	if (lanes != 4 || format != MIPI_DSI_FMT_RGB888 || !timing)
+ 		return -EINVAL;
+ 	dsi->timing = timing;
+-	*lane_mbps = timing->slow_phy ? 465 : 929;
++	*lane_mbps = dsi->profile == AR_DISPLAY_P1_GOGGLE ? 864 :
++		     timing->slow_phy ? 465 : 929;
+ 	return 0;
+ }
+ 
+--- a/drivers/gpu/drm/artosyn/artosyn_vo.c
++++ b/drivers/gpu/drm/artosyn/artosyn_vo.c
+@@ -256,8 +257,10 @@
+ 	writel((timing->htotal << 16) | mode->hdisplay, vo->regs + VO_H_ACT_FP);
+ 	writel(VO_SYNC_VALID | (timing->hsync_end << 15) | timing->hsync_start,
+ 	       vo->regs + VO_H_SA_BP);
+-	writel((mode->vtotal << 16) | mode->vdisplay, vo->regs + VO_V_ACT_FP);
+-	writel(VO_SYNC_VALID | (mode->vsync_end << 15) | mode->vsync_start, vo->regs + VO_V_SA_BP);
++	writel(vo->profile == AR_DISPLAY_P1_GOGGLE ? 0x04780438 :
++	       (mode->vtotal << 16) | mode->vdisplay, vo->regs + VO_V_ACT_FP);
++	writel(vo->profile == AR_DISPLAY_P1_GOGGLE ? 0x422c8458 :
++	       VO_SYNC_VALID | (mode->vsync_end << 15) | mode->vsync_start, vo->regs + VO_V_SA_BP);
+ 
+ 	writel((mode->vdisplay << 15) | mode->hdisplay, vo->regs + VO_FB_SIZE);
+ 	writel(0, vo->regs + VO_WIN_X);
+--- /dev/null
++++ b/drivers/gpu/drm/artosyn/panel-qy45043a0.c
+@@ -0,0 +1,235 @@
++// SPDX-License-Identifier: GPL-2.0
++/*
++ * panel-qy45043a0.c - DRM panel driver for the QY45043A0 MIPI-DSI panel used in the
++ * Artosyn/Proxima goggle (1920x1080@60, 4-lane, RGB888). The power-on GPIO sequence and
++ * the 519-command DCS init table are recovered from the vendor ar_lowdelay (QY45043A0_power_on
++ * @0x442830 + the init table at rodata 0x4c7a10). See ../../../../../docs/display-backlight.md.
++ *
++ * The init table (panel-qy45043a0.h) ends with Sleep-Out + Display-On, so the whole panel
++ * power-up runs in .prepare(). The backlight is not attached to the panel; it is driven
++ * entirely by userspace through /sys/class/backlight.
++ */
++#include <linux/delay.h>
++#include <linux/gpio/consumer.h>
++#include <linux/module.h>
++#include <linux/of.h>
++
++#include <drm/drm_mipi_dsi.h>
++#include <drm/drm_modes.h>
++#include <drm/drm_panel.h>
++#include <video/mipi_display.h>
++
++#include "panel-qy45043a0.h"
++
++struct qy45043a0 {
++	struct drm_panel	panel;
++	struct mipi_dsi_device	*dsi;
++	struct gpio_desc	*reset;		/* global GPIO 43 */
++	struct gpio_desc	*enable;	/* global GPIO 95 */
++};
++
++/* 1920x1080@60, standard CEA-861 1080p timing (recovered from get_vo_mipi_dsi_pub_attr):
++ * HFP 88 / HSA 44 / HBP 148 (Htotal 2200), VFP 4 / VSA 5 / VBP 36 (Vtotal 1125),
++ * pixel clock 148.5 MHz.
++ */
++static const struct drm_display_mode qy45043a0_mode = {
++	.clock		= 148500,
++	.flags		= DRM_MODE_FLAG_PHSYNC | DRM_MODE_FLAG_PVSYNC,
++	.hdisplay	= 1920,
++	.hsync_start	= 1920 + 88,
++	.hsync_end	= 1920 + 88 + 44,
++	.htotal		= 1920 + 88 + 44 + 148,
++	.vdisplay	= 1080,
++	.vsync_start	= 1080 + 4,
++	.vsync_end	= 1080 + 4 + 5,
++	.vtotal		= 1080 + 4 + 5 + 36,
++	/* Physical dimensions have not been verified. */
++	.width_mm	= 0,
++	.height_mm	= 0,
++};
++
++static inline struct qy45043a0 *to_qy(struct drm_panel *panel)
++{
++	return container_of(panel, struct qy45043a0, panel);
++}
++
++static int qy_send(struct mipi_dsi_device *dsi, const struct qy_cmd *cmds, unsigned int n)
++{
++	unsigned int i;
++	int ret;
++
++	for (i = 0; i < n; i++) {
++		u8 buf[2] = { cmds[i].cmd, cmds[i].param };
++
++		ret = mipi_dsi_dcs_write_buffer(dsi, buf, 1 + cmds[i].plen);
++		if (ret < 0)
++			return ret;
++
++		if (cmds[i].delay)
++			msleep(cmds[i].delay);
++	}
++
++	return 0;
++}
++
++static int qy45043a0_prepare(struct drm_panel *panel)
++{
++	struct qy45043a0 *ctx = to_qy(panel);
++	struct mipi_dsi_device *dsi = ctx->dsi;
++	int ret;
++
++	/* Power/reset sequence (vendor QY45043A0_power_on): both low, raise reset, raise
++	 * the second rail, 10 ms between steps. GPIOs are driven at raw level.
++	 */
++	gpiod_set_value_cansleep(ctx->enable, 0);
++	gpiod_set_value_cansleep(ctx->reset, 0);
++	usleep_range(10000, 11000);
++
++	gpiod_set_value_cansleep(ctx->reset, 1);
++	usleep_range(10000, 11000);
++
++	gpiod_set_value_cansleep(ctx->enable, 1);
++	usleep_range(10000, 11000);
++
++	dev_info(&dsi->dev, "qy45043a0 prepare: reset done, sending %u init cmds\n",
++		 (unsigned int)ARRAY_SIZE(qy45043a0_init));
++
++	/* The whole sequence including the trailing Sleep-Out (0x11) + Display-On (0x29) runs here in
++	 * COMMAND mode, before the bridge switches to video - this is the stock order (RE: ar_lowdelay
++	 * customerHmLcdDetect -> all DCS in cmd mode -> AR_MPI_VO_Dsi_Enable flips to video). The panel
++	 * scan direction is NOT set by this table; it is latched from two power-on strap GPIOs (see the
++	 * panel-scan-* hogs in the DT).
++	 */
++	ret = qy_send(dsi, qy45043a0_init, ARRAY_SIZE(qy45043a0_init));
++	if (ret < 0) {
++		dev_err(&dsi->dev, "init table failed: %d\n", ret);
++		gpiod_set_value_cansleep(ctx->reset, 0);
++		gpiod_set_value_cansleep(ctx->enable, 0);
++		return ret;
++	}
++
++	dev_info(&dsi->dev, "qy45043a0 prepare: init done (incl Sleep-Out + Display-On)\n");
++	return 0;
++}
++
++static int qy45043a0_unprepare(struct drm_panel *panel)
++{
++	struct qy45043a0 *ctx = to_qy(panel);
++
++	mipi_dsi_dcs_set_display_off(ctx->dsi);
++	mipi_dsi_dcs_enter_sleep_mode(ctx->dsi);
++	msleep(20);
++
++	/* Vendor power_off drops the reset line. */
++	gpiod_set_value_cansleep(ctx->reset, 0);
++
++	return 0;
++}
++
++static int qy45043a0_get_modes(struct drm_panel *panel, struct drm_connector *connector)
++{
++	struct drm_display_mode *mode;
++
++	mode = drm_mode_duplicate(connector->dev, &qy45043a0_mode);
++	if (!mode)
++		return -ENOMEM;
++
++	drm_mode_set_name(mode);
++	mode->type = DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED;
++	drm_mode_probed_add(connector, mode);
++
++	connector->display_info.width_mm = mode->width_mm;
++	connector->display_info.height_mm = mode->height_mm;
++
++	return 1;
++}
++
++static const struct drm_panel_funcs qy45043a0_funcs = {
++	.prepare	= qy45043a0_prepare,
++	.unprepare	= qy45043a0_unprepare,
++	.get_modes	= qy45043a0_get_modes,
++};
++
++static int qy45043a0_probe(struct mipi_dsi_device *dsi)
++{
++	struct device *dev = &dsi->dev;
++	struct qy45043a0 *ctx;
++	int ret;
++
++	ctx = devm_kzalloc(dev, sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++
++	ctx->dsi = dsi;
++	mipi_dsi_set_drvdata(dsi, ctx);
++
++	dsi->lanes = 4;
++	dsi->format = MIPI_DSI_FMT_RGB888;
++	/* Non-burst SYNC-EVENT mode (not sync-pulse): stock drives this panel with DSI
++	 * VID_MODE_CFG = 0x3f01 (vid_mode_type=1). Declaring SYNC_PULSE made the bridge program
++	 * 0x3f00 (type 0), which the panel won't lock video on.
++	 */
++	dsi->mode_flags = MIPI_DSI_MODE_VIDEO | MIPI_DSI_MODE_LPM;
++
++	ctx->reset = devm_gpiod_get(dev, "reset", GPIOD_OUT_LOW);
++	if (IS_ERR(ctx->reset))
++		return dev_err_probe(dev, PTR_ERR(ctx->reset), "no reset gpio\n");
++
++	ctx->enable = devm_gpiod_get(dev, "enable", GPIOD_OUT_LOW);
++	if (IS_ERR(ctx->enable))
++		return dev_err_probe(dev, PTR_ERR(ctx->enable), "no enable gpio\n");
++
++	drm_panel_init(&ctx->panel, dev, &qy45043a0_funcs, DRM_MODE_CONNECTOR_DSI);
++
++	/*
++	 * The DSI host must be powered up and switched to command mode BEFORE we send the panel
++	 * init sequence. Without this, drm_atomic_bridge_chain_pre_enable runs the panel's
++	 * prepare() (the 519 DCS init commands) before the dw-mipi-dsi bridge's pre_enable, so the
++	 * commands are transmitted on a dead link and silently lost - the panel never initializes
++	 * and the screen stays black even though the VO/DSI registers are all correct.
++	 */
++	ctx->panel.prepare_prev_first = true;
++
++	/*
++	 * The backlight is deliberately NOT attached to the panel (no drm_panel_of_backlight):
++	 * the DT phandle from the panel node keeps pwm-backlight probing in the OFF state, and
++	 * userspace alone controls it via /sys/class/backlight. Attaching it here would make
++	 * the DRM core light the backlight at the first modeset, before any image is painted.
++	 */
++	drm_panel_add(&ctx->panel);
++
++	ret = mipi_dsi_attach(dsi);
++	if (ret < 0) {
++		drm_panel_remove(&ctx->panel);
++		return dev_err_probe(dev, ret, "mipi_dsi_attach failed\n");
++	}
++
++	return 0;
++}
++
++static void qy45043a0_remove(struct mipi_dsi_device *dsi)
++{
++	struct qy45043a0 *ctx = mipi_dsi_get_drvdata(dsi);
++
++	mipi_dsi_detach(dsi);
++	drm_panel_remove(&ctx->panel);
++}
++
++static const struct of_device_id qy45043a0_of_match[] = {
++	{ .compatible = "qiyang,qy45043a0" },
++	{}
++};
++MODULE_DEVICE_TABLE(of, qy45043a0_of_match);
++
++static struct mipi_dsi_driver qy45043a0_driver = {
++	.probe	= qy45043a0_probe,
++	.remove	= qy45043a0_remove,
++	.driver = {
++		.name		= "panel-qy45043a0",
++		.of_match_table	= qy45043a0_of_match,
++	},
++};
++module_mipi_dsi_driver(qy45043a0_driver);
++
++MODULE_DESCRIPTION("QY45043A0 MIPI-DSI panel");
++MODULE_LICENSE("GPL");
+--- /dev/null
++++ b/drivers/gpu/drm/artosyn/panel-qy45043a0.h
+@@ -0,0 +1,547 @@
++/* SPDX-License-Identifier: GPL-2.0 */
++/*
++ * QY45043A0 MIPI-DSI panel init sequence, extracted verbatim from the vendor
++ * firmware/bin/ar_lowdelay rodata 0x4c7a10..0x4c822c (519 entries).
++ *
++ * Each tuple is {dcs_cmd, param, param_len, post_delay_ms}: param_len 1 = DCS
++ * short write (type 0x15), 0 = DCS short write no-param (type 0x05).
++ *
++ * Ends with Sleep-Out + Display-On.
++ *
++ * RE: ../../../../../docs/display-backlight.md.
++ *
++ * Do not hand-edit; regenerate from the blob.
++ */
++#ifndef _PANEL_QY45043A0_INIT_H
++#define _PANEL_QY45043A0_INIT_H
++
++struct qy_cmd {
++	u8 cmd;
++	u8 param;
++	u8 plen;
++	u8 delay;
++};
++
++static const struct qy_cmd qy45043a0_init[] = {
++	{ 0x80, 0x00, 1, 0 },
++	{ 0x81, 0x88, 1, 0 },
++	{ 0x82, 0x0c, 1, 0 },
++	{ 0x83, 0x00, 1, 0 },
++	{ 0x84, 0x14, 1, 0 },
++	{ 0x85, 0x0f, 1, 0 },
++	{ 0x86, 0x14, 1, 0 },
++	{ 0x87, 0x28, 1, 0 },
++	{ 0x88, 0x23, 1, 0 },
++	{ 0x89, 0x06, 1, 0 },
++	{ 0x8a, 0x01, 1, 0 },
++	{ 0x8b, 0x09, 1, 0 },
++	{ 0x8c, 0x00, 1, 0 },
++	{ 0x8d, 0x14, 1, 0 },
++	{ 0x8e, 0x03, 1, 0 },
++	{ 0x8f, 0xa0, 1, 0 },
++	{ 0x90, 0xa2, 1, 0 },
++	{ 0x91, 0x1c, 1, 0 },
++	{ 0x92, 0xa5, 1, 0 },
++	{ 0x93, 0x00, 1, 0 },
++	{ 0x94, 0x00, 1, 0 },
++	{ 0x95, 0x00, 1, 0 },
++	{ 0x96, 0x00, 1, 0 },
++	{ 0x97, 0x00, 1, 0 },
++	{ 0x80, 0x01, 1, 0 },
++	{ 0x81, 0x03, 1, 0 },
++	{ 0x82, 0xaa, 1, 0 },
++	{ 0x83, 0x0b, 1, 0 },
++	{ 0x84, 0x0b, 1, 0 },
++	{ 0x85, 0x3a, 1, 0 },
++	{ 0x86, 0xb1, 1, 0 },
++	{ 0x87, 0x3a, 1, 0 },
++	{ 0x88, 0xb1, 1, 0 },
++	{ 0x89, 0x88, 1, 0 },
++	{ 0x8a, 0x88, 1, 0 },
++	{ 0x8b, 0x03, 1, 0 },
++	{ 0x8c, 0x03, 1, 0 },
++	{ 0x8d, 0x93, 1, 0 },
++	{ 0x8e, 0x57, 1, 0 },
++	{ 0x8f, 0x2d, 1, 0 },
++	{ 0x90, 0x0d, 1, 0 },
++	{ 0x91, 0x11, 1, 0 },
++	{ 0x92, 0xa1, 1, 0 },
++	{ 0x93, 0x00, 1, 0 },
++	{ 0x94, 0xa1, 1, 0 },
++	{ 0x95, 0x0c, 1, 0 },
++	{ 0x96, 0xa8, 1, 0 },
++	{ 0x97, 0x00, 1, 0 },
++	{ 0x98, 0xcc, 1, 0 },
++	{ 0x99, 0x10, 1, 0 },
++	{ 0x9a, 0x20, 1, 0 },
++	{ 0x9b, 0xfd, 1, 0 },
++	{ 0x9c, 0x7b, 1, 0 },
++	{ 0x80, 0x02, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x02, 1, 0 },
++	{ 0x83, 0x03, 1, 0 },
++	{ 0x84, 0x05, 1, 0 },
++	{ 0x85, 0x04, 1, 0 },
++	{ 0x86, 0x0d, 1, 0 },
++	{ 0x87, 0x12, 1, 0 },
++	{ 0x88, 0x1b, 1, 0 },
++	{ 0x89, 0x22, 1, 0 },
++	{ 0x8a, 0x25, 1, 0 },
++	{ 0x8b, 0x27, 1, 0 },
++	{ 0x8c, 0x1c, 1, 0 },
++	{ 0x8d, 0x15, 1, 0 },
++	{ 0x8e, 0x1b, 1, 0 },
++	{ 0x8f, 0x29, 1, 0 },
++	{ 0x90, 0x1d, 1, 0 },
++	{ 0x91, 0x18, 1, 0 },
++	{ 0x92, 0x28, 1, 0 },
++	{ 0x93, 0x31, 1, 0 },
++	{ 0x94, 0x1f, 1, 0 },
++	{ 0x80, 0x03, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x02, 1, 0 },
++	{ 0x83, 0x03, 1, 0 },
++	{ 0x84, 0x05, 1, 0 },
++	{ 0x85, 0x04, 1, 0 },
++	{ 0x86, 0x0d, 1, 0 },
++	{ 0x87, 0x12, 1, 0 },
++	{ 0x88, 0x1b, 1, 0 },
++	{ 0x89, 0x22, 1, 0 },
++	{ 0x8a, 0x25, 1, 0 },
++	{ 0x8b, 0x27, 1, 0 },
++	{ 0x8c, 0x1c, 1, 0 },
++	{ 0x8d, 0x15, 1, 0 },
++	{ 0x8e, 0x1b, 1, 0 },
++	{ 0x8f, 0x29, 1, 0 },
++	{ 0x90, 0x1d, 1, 0 },
++	{ 0x91, 0x18, 1, 0 },
++	{ 0x92, 0x28, 1, 0 },
++	{ 0x93, 0x31, 1, 0 },
++	{ 0x94, 0x1f, 1, 0 },
++	{ 0x80, 0x04, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x04, 1, 0 },
++	{ 0x83, 0x0c, 1, 0 },
++	{ 0x84, 0x1c, 1, 0 },
++	{ 0x85, 0x2c, 1, 0 },
++	{ 0x86, 0x3c, 1, 0 },
++	{ 0x87, 0x5c, 1, 0 },
++	{ 0x88, 0x7c, 1, 0 },
++	{ 0x89, 0xbc, 1, 0 },
++	{ 0x8a, 0xfc, 1, 0 },
++	{ 0x8b, 0x7c, 1, 0 },
++	{ 0x8c, 0xfc, 1, 0 },
++	{ 0x8d, 0x00, 1, 0 },
++	{ 0x8e, 0x80, 1, 0 },
++	{ 0x8f, 0x00, 1, 0 },
++	{ 0x90, 0x40, 1, 0 },
++	{ 0x91, 0x80, 1, 0 },
++	{ 0x92, 0xa0, 1, 0 },
++	{ 0x93, 0xc0, 1, 0 },
++	{ 0x94, 0xd0, 1, 0 },
++	{ 0x95, 0xe0, 1, 0 },
++	{ 0x96, 0xf0, 1, 0 },
++	{ 0x97, 0xf8, 1, 0 },
++	{ 0x98, 0xfc, 1, 0 },
++	{ 0x99, 0x00, 1, 0 },
++	{ 0x9a, 0x00, 1, 0 },
++	{ 0x9b, 0x05, 1, 0 },
++	{ 0x9c, 0xaf, 1, 0 },
++	{ 0x9d, 0xff, 1, 0 },
++	{ 0x9e, 0xff, 1, 0 },
++	{ 0x80, 0x05, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x04, 1, 0 },
++	{ 0x83, 0x0c, 1, 0 },
++	{ 0x84, 0x1c, 1, 0 },
++	{ 0x85, 0x2c, 1, 0 },
++	{ 0x86, 0x3c, 1, 0 },
++	{ 0x87, 0x5c, 1, 0 },
++	{ 0x88, 0x7c, 1, 0 },
++	{ 0x89, 0xbc, 1, 0 },
++	{ 0x8a, 0xfc, 1, 0 },
++	{ 0x8b, 0x7c, 1, 0 },
++	{ 0x8c, 0xfc, 1, 0 },
++	{ 0x8d, 0x00, 1, 0 },
++	{ 0x8e, 0x80, 1, 0 },
++	{ 0x8f, 0x00, 1, 0 },
++	{ 0x90, 0x40, 1, 0 },
++	{ 0x91, 0x80, 1, 0 },
++	{ 0x92, 0xa0, 1, 0 },
++	{ 0x93, 0xc0, 1, 0 },
++	{ 0x94, 0xd0, 1, 0 },
++	{ 0x95, 0xe0, 1, 0 },
++	{ 0x96, 0xf0, 1, 0 },
++	{ 0x97, 0xf8, 1, 0 },
++	{ 0x98, 0xfc, 1, 0 },
++	{ 0x99, 0x00, 1, 0 },
++	{ 0x9a, 0x00, 1, 0 },
++	{ 0x9b, 0x05, 1, 0 },
++	{ 0x9c, 0xaf, 1, 0 },
++	{ 0x9d, 0xff, 1, 0 },
++	{ 0x9e, 0xff, 1, 0 },
++	{ 0x80, 0x06, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x04, 1, 0 },
++	{ 0x83, 0x0c, 1, 0 },
++	{ 0x84, 0x1c, 1, 0 },
++	{ 0x85, 0x2c, 1, 0 },
++	{ 0x86, 0x3c, 1, 0 },
++	{ 0x87, 0x5c, 1, 0 },
++	{ 0x88, 0x7c, 1, 0 },
++	{ 0x89, 0xbc, 1, 0 },
++	{ 0x8a, 0xfc, 1, 0 },
++	{ 0x8b, 0x7c, 1, 0 },
++	{ 0x8c, 0xfc, 1, 0 },
++	{ 0x8d, 0x00, 1, 0 },
++	{ 0x8e, 0x80, 1, 0 },
++	{ 0x8f, 0x00, 1, 0 },
++	{ 0x90, 0x40, 1, 0 },
++	{ 0x91, 0x80, 1, 0 },
++	{ 0x92, 0xa0, 1, 0 },
++	{ 0x93, 0xc0, 1, 0 },
++	{ 0x94, 0xd0, 1, 0 },
++	{ 0x95, 0xe0, 1, 0 },
++	{ 0x96, 0xf0, 1, 0 },
++	{ 0x97, 0xf8, 1, 0 },
++	{ 0x98, 0xfc, 1, 0 },
++	{ 0x99, 0x00, 1, 0 },
++	{ 0x9a, 0x00, 1, 0 },
++	{ 0x9b, 0x05, 1, 0 },
++	{ 0x9c, 0xaf, 1, 0 },
++	{ 0x9d, 0xff, 1, 0 },
++	{ 0x9e, 0xff, 1, 0 },
++	{ 0x80, 0x07, 1, 0 },
++	{ 0x81, 0x18, 1, 0 },
++	{ 0x82, 0x00, 1, 0 },
++	{ 0x83, 0x00, 1, 0 },
++	{ 0x84, 0x00, 1, 0 },
++	{ 0x85, 0x00, 1, 0 },
++	{ 0x86, 0x00, 1, 0 },
++	{ 0x87, 0x00, 1, 0 },
++	{ 0x88, 0x15, 1, 0 },
++	{ 0x89, 0x00, 1, 0 },
++	{ 0x8a, 0x00, 1, 0 },
++	{ 0x8b, 0x00, 1, 0 },
++	{ 0x8c, 0x00, 1, 0 },
++	{ 0x8d, 0x7f, 1, 0 },
++	{ 0x8e, 0x00, 1, 0 },
++	{ 0x8f, 0x00, 1, 0 },
++	{ 0x90, 0x00, 1, 0 },
++	{ 0x91, 0x00, 1, 0 },
++	{ 0x80, 0x08, 1, 0 },
++	{ 0x81, 0x01, 1, 0 },
++	{ 0x82, 0x01, 1, 0 },
++	{ 0x83, 0x01, 1, 0 },
++	{ 0x84, 0x01, 1, 0 },
++	{ 0x85, 0x01, 1, 0 },
++	{ 0x86, 0x01, 1, 0 },
++	{ 0x87, 0x11, 1, 0 },
++	{ 0x88, 0x00, 1, 0 },
++	{ 0x89, 0x00, 1, 0 },
++	{ 0x8a, 0x00, 1, 0 },
++	{ 0x8b, 0x00, 1, 0 },
++	{ 0x8c, 0x24, 1, 0 },
++	{ 0x8d, 0x06, 1, 0 },
++	{ 0x8e, 0xd0, 1, 0 },
++	{ 0x8f, 0x22, 1, 0 },
++	{ 0x90, 0x22, 1, 0 },
++	{ 0x91, 0xff, 1, 0 },
++	{ 0x92, 0xff, 1, 0 },
++	{ 0x93, 0xff, 1, 0 },
++	{ 0x94, 0x07, 1, 0 },
++	{ 0x95, 0xfc, 1, 0 },
++	{ 0x96, 0x03, 1, 0 },
++	{ 0x97, 0x7c, 1, 0 },
++	{ 0x98, 0x32, 1, 0 },
++	{ 0x80, 0x09, 1, 0 },
++	{ 0x81, 0x5f, 1, 0 },
++	{ 0x82, 0x5f, 1, 0 },
++	{ 0x83, 0x11, 1, 0 },
++	{ 0x84, 0x02, 1, 0 },
++	{ 0x85, 0x42, 1, 0 },
++	{ 0x86, 0x0f, 1, 0 },
++	{ 0x87, 0x4f, 1, 0 },
++	{ 0x88, 0x11, 1, 0 },
++	{ 0x89, 0x0f, 1, 0 },
++	{ 0x8a, 0x0f, 1, 0 },
++	{ 0x8b, 0x15, 1, 0 },
++	{ 0x8c, 0x80, 1, 0 },
++	{ 0x8d, 0x2f, 1, 0 },
++	{ 0x8e, 0x12, 1, 0 },
++	{ 0x8f, 0x45, 1, 0 },
++	{ 0x90, 0x40, 1, 0 },
++	{ 0x91, 0xc4, 1, 0 },
++	{ 0x92, 0x01, 1, 0 },
++	{ 0x93, 0x02, 1, 0 },
++	{ 0x94, 0x14, 1, 0 },
++	{ 0x95, 0x14, 1, 0 },
++	{ 0x96, 0x28, 1, 0 },
++	{ 0x97, 0x00, 1, 0 },
++	{ 0x98, 0x00, 1, 0 },
++	{ 0x99, 0x00, 1, 0 },
++	{ 0x9a, 0x00, 1, 0 },
++	{ 0x9b, 0x00, 1, 0 },
++	{ 0x9c, 0x00, 1, 0 },
++	{ 0x9d, 0x00, 1, 0 },
++	{ 0x9e, 0x00, 1, 0 },
++	{ 0x80, 0x0b, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x00, 1, 0 },
++	{ 0x83, 0x00, 1, 0 },
++	{ 0x84, 0x00, 1, 0 },
++	{ 0x85, 0x00, 1, 0 },
++	{ 0x86, 0x00, 1, 0 },
++	{ 0x87, 0x00, 1, 0 },
++	{ 0x88, 0x00, 1, 0 },
++	{ 0x89, 0x00, 1, 0 },
++	{ 0x8a, 0x00, 1, 0 },
++	{ 0x8b, 0x00, 1, 0 },
++	{ 0x8c, 0x00, 1, 0 },
++	{ 0x8d, 0x22, 1, 0 },
++	{ 0x8e, 0x00, 1, 0 },
++	{ 0x8f, 0x40, 1, 0 },
++	{ 0x90, 0x00, 1, 0 },
++	{ 0x91, 0x00, 1, 0 },
++	{ 0x92, 0x00, 1, 0 },
++	{ 0x93, 0x00, 1, 0 },
++	{ 0x94, 0x00, 1, 0 },
++	{ 0x95, 0x00, 1, 0 },
++	{ 0x96, 0x00, 1, 0 },
++	{ 0x97, 0x00, 1, 0 },
++	{ 0x98, 0x00, 1, 0 },
++	{ 0x99, 0x00, 1, 0 },
++	{ 0x9a, 0x00, 1, 0 },
++	{ 0x9b, 0x00, 1, 0 },
++	{ 0x9c, 0x00, 1, 0 },
++	{ 0x9d, 0x00, 1, 0 },
++	{ 0x9e, 0x00, 1, 0 },
++	{ 0x80, 0x0c, 1, 0 },
++	{ 0x81, 0x82, 1, 0 },
++	{ 0x82, 0x20, 1, 0 },
++	{ 0x83, 0x80, 1, 0 },
++	{ 0x84, 0x44, 1, 0 },
++	{ 0x85, 0xa1, 1, 0 },
++	{ 0x86, 0x44, 1, 0 },
++	{ 0x87, 0x29, 1, 0 },
++	{ 0x88, 0x6a, 1, 0 },
++	{ 0x89, 0x5d, 1, 0 },
++	{ 0x8a, 0x18, 1, 0 },
++	{ 0x8b, 0x30, 1, 0 },
++	{ 0x8c, 0x0c, 1, 0 },
++	{ 0x8d, 0xc3, 1, 0 },
++	{ 0x8e, 0x30, 1, 0 },
++	{ 0x8f, 0x0c, 1, 0 },
++	{ 0x90, 0x82, 1, 0 },
++	{ 0x91, 0x20, 1, 0 },
++	{ 0x92, 0x80, 1, 0 },
++	{ 0x93, 0x44, 1, 0 },
++	{ 0x94, 0xa1, 1, 0 },
++	{ 0x95, 0x44, 1, 0 },
++	{ 0x96, 0x29, 1, 0 },
++	{ 0x97, 0x6a, 1, 0 },
++	{ 0x98, 0x5d, 1, 0 },
++	{ 0x99, 0x18, 1, 0 },
++	{ 0x9a, 0x30, 1, 0 },
++	{ 0x9b, 0x0c, 1, 0 },
++	{ 0x9c, 0xc3, 1, 0 },
++	{ 0x9d, 0x30, 1, 0 },
++	{ 0x9e, 0x0c, 1, 0 },
++	{ 0x80, 0x0d, 1, 0 },
++	{ 0x81, 0x01, 1, 0 },
++	{ 0x82, 0x05, 1, 0 },
++	{ 0x83, 0xf0, 1, 0 },
++	{ 0x84, 0x10, 1, 0 },
++	{ 0x85, 0x78, 1, 0 },
++	{ 0x86, 0x01, 1, 0 },
++	{ 0x87, 0x0a, 1, 0 },
++	{ 0x88, 0xf0, 1, 0 },
++	{ 0x89, 0x10, 1, 0 },
++	{ 0x8a, 0x05, 1, 0 },
++	{ 0x8b, 0x00, 1, 0 },
++	{ 0x8c, 0x00, 1, 0 },
++	{ 0x8d, 0x00, 1, 0 },
++	{ 0x8e, 0x00, 1, 0 },
++	{ 0x8f, 0x22, 1, 0 },
++	{ 0x90, 0x45, 1, 0 },
++	{ 0x91, 0x00, 1, 0 },
++	{ 0x92, 0x00, 1, 0 },
++	{ 0x93, 0x00, 1, 0 },
++	{ 0x94, 0x00, 1, 0 },
++	{ 0x95, 0x00, 1, 0 },
++	{ 0x96, 0x00, 1, 0 },
++	{ 0x97, 0x00, 1, 0 },
++	{ 0x98, 0x00, 1, 0 },
++	{ 0x80, 0x0e, 1, 0 },
++	{ 0x81, 0x01, 1, 0 },
++	{ 0x82, 0x00, 1, 0 },
++	{ 0x83, 0x00, 1, 0 },
++	{ 0x84, 0x0d, 1, 0 },
++	{ 0x85, 0x42, 1, 0 },
++	{ 0x86, 0x0d, 1, 0 },
++	{ 0x87, 0x42, 1, 0 },
++	{ 0x88, 0x0d, 1, 0 },
++	{ 0x89, 0x42, 1, 0 },
++	{ 0x8a, 0x01, 1, 0 },
++	{ 0x8b, 0x00, 1, 0 },
++	{ 0x8c, 0x00, 1, 0 },
++	{ 0x8d, 0x00, 1, 0 },
++	{ 0x8e, 0x00, 1, 0 },
++	{ 0x8f, 0xa0, 1, 0 },
++	{ 0x90, 0x02, 1, 0 },
++	{ 0x91, 0x40, 1, 0 },
++	{ 0x92, 0x13, 1, 0 },
++	{ 0x93, 0x00, 1, 0 },
++	{ 0x94, 0x00, 1, 0 },
++	{ 0x95, 0x00, 1, 0 },
++	{ 0x96, 0x13, 1, 0 },
++	{ 0x97, 0x00, 1, 0 },
++	{ 0x98, 0x00, 1, 0 },
++	{ 0x99, 0x00, 1, 0 },
++	{ 0x80, 0x0f, 1, 0 },
++	{ 0x81, 0x21, 1, 0 },
++	{ 0x82, 0x0a, 1, 0 },
++	{ 0x83, 0x96, 1, 0 },
++	{ 0x84, 0x26, 1, 0 },
++	{ 0x85, 0x03, 1, 0 },
++	{ 0x86, 0x30, 1, 0 },
++	{ 0x87, 0x00, 1, 0 },
++	{ 0x88, 0x14, 1, 0 },
++	{ 0x89, 0x00, 1, 0 },
++	{ 0x8a, 0x00, 1, 0 },
++	{ 0x8b, 0x00, 1, 0 },
++	{ 0x8c, 0x00, 1, 0 },
++	{ 0x8d, 0x00, 1, 0 },
++	{ 0x8e, 0x0c, 1, 0 },
++	{ 0x8f, 0x00, 1, 0 },
++	{ 0x90, 0x00, 1, 0 },
++	{ 0x91, 0x00, 1, 0 },
++	{ 0x92, 0x00, 1, 0 },
++	{ 0x93, 0x00, 1, 0 },
++	{ 0x80, 0x10, 1, 0 },
++	{ 0x81, 0xf0, 1, 0 },
++	{ 0x82, 0x00, 1, 0 },
++	{ 0x83, 0x00, 1, 0 },
++	{ 0x84, 0x00, 1, 0 },
++	{ 0x85, 0x00, 1, 0 },
++	{ 0x86, 0x00, 1, 0 },
++	{ 0x87, 0xf0, 1, 0 },
++	{ 0x88, 0x00, 1, 0 },
++	{ 0x89, 0x00, 1, 0 },
++	{ 0x8a, 0xff, 1, 0 },
++	{ 0x8b, 0xff, 1, 0 },
++	{ 0x8c, 0xff, 1, 0 },
++	{ 0x8d, 0xff, 1, 0 },
++	{ 0x8e, 0xff, 1, 0 },
++	{ 0x8f, 0x00, 1, 0 },
++	{ 0x90, 0x00, 1, 0 },
++	{ 0x91, 0x00, 1, 0 },
++	{ 0x92, 0x00, 1, 0 },
++	{ 0x93, 0x60, 1, 0 },
++	{ 0x94, 0x00, 1, 0 },
++	{ 0x95, 0x00, 1, 0 },
++	{ 0x96, 0x00, 1, 0 },
++	{ 0x97, 0x00, 1, 0 },
++	{ 0x98, 0x28, 1, 0 },
++	{ 0x99, 0x00, 1, 0 },
++	{ 0x9a, 0x04, 1, 0 },
++	{ 0x9b, 0x30, 1, 0 },
++	{ 0x80, 0x11, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x80, 0x12, 1, 0 },
++	{ 0x81, 0x10, 1, 0 },
++	{ 0x82, 0x2b, 1, 0 },
++	{ 0x83, 0x20, 1, 0 },
++	{ 0x84, 0x05, 1, 0 },
++	{ 0x85, 0x20, 1, 0 },
++	{ 0x86, 0xff, 1, 0 },
++	{ 0x87, 0xff, 1, 0 },
++	{ 0x88, 0x15, 1, 0 },
++	{ 0x89, 0x00, 1, 0 },
++	{ 0x8a, 0x00, 1, 0 },
++	{ 0x8b, 0x00, 1, 0 },
++	{ 0x8c, 0x00, 1, 0 },
++	{ 0x8d, 0x00, 1, 0 },
++	{ 0x8e, 0x00, 1, 0 },
++	{ 0x8f, 0x00, 1, 0 },
++	{ 0x90, 0x00, 1, 0 },
++	{ 0x91, 0x00, 1, 0 },
++	{ 0x92, 0x00, 1, 0 },
++	{ 0x93, 0x00, 1, 0 },
++	{ 0x94, 0x50, 1, 0 },
++	{ 0x95, 0x0c, 1, 0 },
++	{ 0x96, 0x21, 1, 0 },
++	{ 0x97, 0x09, 1, 0 },
++	{ 0x98, 0xec, 1, 0 },
++	{ 0x99, 0x02, 1, 0 },
++	{ 0x9a, 0x02, 1, 0 },
++	{ 0x80, 0x13, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x10, 1, 0 },
++	{ 0x83, 0x14, 1, 0 },
++	{ 0x84, 0x00, 1, 0 },
++	{ 0x85, 0x11, 1, 0 },
++	{ 0x86, 0x02, 1, 0 },
++	{ 0x87, 0x02, 1, 0 },
++	{ 0x88, 0x02, 1, 0 },
++	{ 0x89, 0x02, 1, 0 },
++	{ 0x8a, 0x02, 1, 0 },
++	{ 0x8b, 0x02, 1, 0 },
++	{ 0x8c, 0x55, 1, 0 },
++	{ 0x8d, 0x20, 1, 0 },
++	{ 0x8e, 0x44, 1, 0 },
++	{ 0x8f, 0x02, 1, 0 },
++	{ 0x90, 0x02, 1, 0 },
++	{ 0x91, 0x02, 1, 0 },
++	{ 0x92, 0x02, 1, 0 },
++	{ 0x93, 0x02, 1, 0 },
++	{ 0x94, 0x02, 1, 0 },
++	{ 0x95, 0x03, 1, 0 },
++	{ 0x96, 0x03, 1, 0 },
++	{ 0x97, 0x8d, 1, 0 },
++	{ 0x80, 0x15, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x00, 1, 0 },
++	{ 0x83, 0x00, 1, 0 },
++	{ 0x84, 0x00, 1, 0 },
++	{ 0x85, 0x00, 1, 0 },
++	{ 0x86, 0x00, 1, 0 },
++	{ 0x87, 0x00, 1, 0 },
++	{ 0x88, 0x00, 1, 0 },
++	{ 0x89, 0x00, 1, 0 },
++	{ 0x80, 0x16, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x00, 1, 0 },
++	{ 0x83, 0x00, 1, 0 },
++	{ 0x84, 0x00, 1, 0 },
++	{ 0x80, 0x19, 1, 0 },
++	{ 0x81, 0x80, 1, 0 },
++	{ 0x82, 0x40, 1, 0 },
++	{ 0x83, 0xfe, 1, 0 },
++	{ 0x84, 0x80, 1, 0 },
++	{ 0x85, 0x40, 1, 0 },
++	{ 0x86, 0xfe, 1, 0 },
++	{ 0x87, 0xff, 1, 0 },
++	{ 0x88, 0x1d, 1, 0 },
++	{ 0x89, 0x1d, 1, 0 },
++	{ 0x8a, 0xa3, 1, 0 },
++	{ 0x8b, 0xc0, 1, 0 },
++	{ 0x8c, 0x17, 1, 0 },
++	{ 0x8d, 0x0f, 1, 0 },
++	{ 0x8e, 0xc3, 1, 0 },
++	{ 0x8f, 0xa3, 1, 0 },
++	{ 0x90, 0xc0, 1, 0 },
++	{ 0x91, 0x08, 1, 0 },
++	{ 0x92, 0x0c, 1, 0 },
++	{ 0x80, 0x1c, 1, 0 },
++	{ 0x81, 0x00, 1, 0 },
++	{ 0x82, 0x1e, 1, 0 },
++	{ 0x83, 0xff, 1, 0 },
++	{ 0x84, 0xff, 1, 0 },
++	{ 0x85, 0xff, 1, 0 },
++	{ 0x86, 0xff, 1, 0 },
++	{ 0x11, 0x00, 0, 32 },
++	{ 0x29, 0x00, 0, 40 },
++};
++
++#endif /* _PANEL_QY45043A0_INIT_H */
+--- a/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-dsi.yaml
+@@ -18,6 +18,7 @@
+   using a 464.4 Mbps lane clock and matched internal raster.
+   The ascent-hdmi profile adds CEA-19/31/41/47: 720p50/100/120 and 1080p50.
+   720p50/60 use 464.4 Mbps lanes; all other modes use 928.8 Mbps.
++  The p1-goggle-1080p profile selects the QY45043A0 stock raster and PHY.
+   It relies on early firmware clock and pinmux setup; it does not describe
+   arbitrary modes or guarantee compatibility with another board's sink.
+ 
+@@ -25,12 +26,18 @@
+   compatible:
+     const: artosyn,ar9311-dsi
+ 
++  "#address-cells":
++    const: 1
++
++  "#size-cells":
++    const: 0
++
+   reg:
+     maxItems: 1
+ 
+   artosyn,display-profile:
+     $ref: /schemas/types.yaml#/definitions/string
+-    enum: [ascent-1080p60, ascent-60hz, ascent-hdmi]
++    enum: [ascent-1080p60, ascent-60hz, ascent-hdmi, p1-goggle-1080p]
+     description: Explicit selection of the supported fixed output setup.
+ 
+   clocks:
+@@ -52,6 +59,11 @@
+       - port@0
+       - port@1
+ 
++patternProperties:
++  "^panel@[0-3]$":
++    type: object
++    $ref: /schemas/display/panel/qiyang,qy45043a0.yaml#
++
+ required:
+   - compatible
+   - reg
+--- a/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
++++ b/Documentation/devicetree/bindings/display/artosyn,ar9311-vo.yaml
+@@ -18,6 +18,7 @@
+   using a 464.4 Mbps lane clock and matched internal raster.
+   The ascent-hdmi profile adds CEA-19/31/41/47: 720p50/100/120 and 1080p50.
+   720p50/60 use 464.4 Mbps lanes; all other modes use 928.8 Mbps.
++  The p1-goggle-1080p profile selects the QY45043A0 stock raster and PHY.
+   It relies on early firmware clock and pinmux setup; it does not describe
+   arbitrary modes or guarantee compatibility with another board's sink.
+ 
+@@ -30,7 +31,7 @@
+ 
+   artosyn,display-profile:
+     $ref: /schemas/types.yaml#/definitions/string
+-    enum: [ascent-1080p60, ascent-60hz, ascent-hdmi]
++    enum: [ascent-1080p60, ascent-60hz, ascent-hdmi, p1-goggle-1080p]
+     description: Explicit selection of the supported fixed output setup.
+ 
+   reg-names:
+--- /dev/null
++++ b/Documentation/devicetree/bindings/display/panel/qiyang,qy45043a0.yaml
+@@ -0,0 +1,30 @@
++# SPDX-License-Identifier: (GPL-2.0-only OR BSD-2-Clause)
++%YAML 1.2
++---
++$id: http://devicetree.org/schemas/display/panel/qiyang,qy45043a0.yaml#
++$schema: http://devicetree.org/meta-schemas/core.yaml#
++title: Qiyang QY45043A0 MIPI DSI panel
++maintainers:
++  - mh1412 <mh1412@users.noreply.github.com>
++allOf:
++  - $ref: panel-common.yaml#
++properties:
++  compatible:
++    const: qiyang,qy45043a0
++  reg:
++    maxItems: 1
++  reset-gpios:
++    maxItems: 1
++    description: Active-high panel reset release.
++  enable-gpios:
++    maxItems: 1
++    description: Active-high secondary panel supply enable.
++  backlight: true
++  port: true
++required:
++  - compatible
++  - reg
++  - reset-gpios
++  - enable-gpios
++  - port
++unevaluatedProperties: false

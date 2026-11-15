@@ -133,7 +133,7 @@ static int display_open(struct player *p, int force)
 	con.connector_id = connectors[0];
 	if (ctl(p->fd, DRM_IOCTL_MODE_GETCONNECTOR, &con, "connector")) return -1;
 	if (con.connection != 1 && !force) {
-		fprintf(stderr, "No connected HDMI sink; use --force for fixed mode\n"); return -1;
+		fprintf(stderr, "No connected display sink; use --force for fixed mode\n"); return -1;
 	}
 	p->connector = connectors[0];
 	p->crtc = (struct drm_mode_crtc) {
@@ -230,7 +230,7 @@ int main(int argc, char **argv)
 	if (!frames || (strcmp(argv[1], "h264") && strcmp(argv[1], "hevc"))) goto usage;
 	setbuf(stdout, NULL);
 	signal(SIGINT, stop); signal(SIGTERM, stop);
-	printf("Hardware decode -> shared I420 DMA-BUF -> HDMI; BT.709 limited, %u fps\n", p.fps);
+	printf("Hardware decode -> shared I420 DMA-BUF -> display; BT.709 limited, %u fps\n", p.fps);
 	if (display_open(&p, force)) goto out;
 	if (ar9311_decode_dmabuf("/dev/video0", argv[1], argv[2], frames, &sink, &p)) goto out;
 	printf("presented=%u rate=%.3f fps late=%u pixel_copies=0\n",
