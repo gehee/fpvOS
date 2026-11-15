@@ -3,9 +3,8 @@
 # UBIFS (shared with stock in bank A), under fpvos/kestrel, card or not.
 # Never format, resize or replace it; stock's own files are left alone. The
 # recovery init has already attached usr_data (the updater's boot check).
-# The "persistent" marker is what sends recordings to the SD card
-# (kestrel-native's run): set each boot only while S45ar9311-sd mounted one,
-# beside the settings wherever they are (usr_data, or RAM without it).
+# Recordings go to the SD card whenever S45ar9311-sd mounted it writable;
+# kestrel-native's run decides that, not the "persistent" marker set here.
 set -eu
 umask 077
 root=/persist
@@ -50,13 +49,13 @@ start)
         echo 'Kestrel: usr_data unavailable; settings and pairing are temporary' >&2
     fi
     ln -sfn "$state" /var/lib/kestrel
-    # Recordings go to a mounted card wherever the settings are (the RAM
-    # image has no usr_data attached).
+    # The marker records whether a card with fpvOS data is mounted; the
+    # recording location itself is chosen by kestrel-native's run.
     if mountpoint -q /mnt/sd && [ -d /mnt/sd/fpvos ] && [ ! -L /mnt/sd/fpvos ]; then
         touch "$state/persistent" && echo 'Kestrel: recordings on the SD card'
     else
         rm -f "$state/persistent"
-        echo 'Kestrel: no SD card mounted; recordings stay in RAM'
+        echo 'Kestrel: no SD card with fpvOS data mounted'
     fi
     ;;
 stop)
