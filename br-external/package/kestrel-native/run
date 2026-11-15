@@ -2,10 +2,24 @@
 # All application bits are firmware-owned. Only data lives on removable storage.
 set -eu
 umask 077
+[ ! -r /etc/default/kestrel-native ] || . /etc/default/kestrel-native
 state=/var/lib/kestrel
+mkdir -p "$state"
+set --
+if [ "${KESTREL_NATIVE_NO_RADIO:-0}" = 1 ]; then
+    set -- "$@" --no-radio
+fi
+if [ -n "${KESTREL_NATIVE_BACKLIGHT:-}" ]; then
+    echo "${KESTREL_NATIVE_BRIGHTNESS:-5}" > "$KESTREL_NATIVE_BACKLIGHT"
+    # Brightness alone does not unblank a backlight that probed powered off.
+    echo 0 > "${KESTREL_NATIVE_BACKLIGHT%/*}/bl_power"
+fi
 recordings=/run/kestrel-gnd/no-sd/recordings
-if [ -f "$state/persistent" ]; then
-    if mkdir -p /mnt/sd/fpvos/recordings; then
+# Recording storage is independent of whether settings have been migrated.
+# Never fall back to recording into the RAM rootfs when the card is absent.
+if awk '$2 == "/mnt/sd" && $4 ~ /(^|,)rw(,|$)/ { found=1 } END { exit !found }' /proc/mounts; then
+    if [ ! -L /mnt/sd/fpvos ] && [ ! -L /mnt/sd/fpvos/recordings ] &&
+       mkdir -p /mnt/sd/fpvos/recordings; then
         recordings=/mnt/sd/fpvos/recordings
     else
         echo 'Kestrel: recording directory unavailable; continuing without recording' >&2
@@ -14,4 +28,4 @@ fi
 exec /opt/kestrel/bin/kestrel-gnd --assets /opt/kestrel/ui \
     --control /run/kestrel-gnd/control --preferences "$state/ui.conf" \
     --settings "$state/receiver.conf" --pairing "$state/peer" \
-    --recordings "$recordings"
+    --recordings "$recordings" "$@"

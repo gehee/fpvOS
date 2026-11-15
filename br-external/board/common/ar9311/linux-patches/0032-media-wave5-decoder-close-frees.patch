@@ -69,18 +69,6 @@ decoder module can be reloaded (it failed with -EBUSY until a reboot).
  
 --- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
 +++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.c
-@@ -25,7 +25,10 @@
- 	if (ret)
- 		return ret;
- 
--	if (wave5_vpu_is_init(vpu_dev) && !vpu_dev->artosyn_encoder) {
-+	/* ML (Artosyn): a VPU still running firmware from before (a module reload, or
-+	 * the close path's reload) gets the full reset and download, as on the P1:
-+	 * re_init returned -EBUSY and the codec never probed again until a reboot. */
-+	if (wave5_vpu_is_init(vpu_dev) && !vpu_dev->artosyn) {
- 		wave5_vpu_re_init(dev, (void *)code, size);
- 		ret = -EBUSY;
- 		goto err_out;
 @@ -55,7 +58,7 @@
  	const struct firmware *fw;
  	int ret;

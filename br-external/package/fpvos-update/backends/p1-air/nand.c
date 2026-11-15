@@ -83,11 +83,11 @@ static int transaction(const char *source)
     snprintf(package,sizeof(package),"%s/package.fwu",directory);
     snprintf(images,sizeof(images),"%s/images",directory);
     snprintf(readback,sizeof(readback),"%s/readback.fwu",directory);
-    if (fpvos_bootstrap_copy(source,package,0400) || verify(package,images) || p1_hash(package,before)) goto done;
-    /* Select the untouched stock bank before modifying bank 0. Power loss
+    if (fpvos_bootstrap_copy_limit(source,package,0400,fpvos_board.bundle_limits[0]) || verify(package,images) || p1_hash(package,before)) goto done;
+    /* Select the untouched stock bank before modifying the fpvOS bank. Power loss
      * during installation then boots stock; only verified images reactivate
      * fpvOS. No change to environment/U-Boot selection or factory contents. */
-    if (remove_stock_hook() || p1_select_bank(1)) goto done;
+    if (remove_stock_hook() || p1_select_bank(P1_STOCK_BANK)) goto done;
     for (unsigned i = 0; i < 2; i++) {
         snprintf(path,sizeof(path),"%s/%s",images,fpvos_board.names[i]);
         if (p1_flash_image(i,path,1)) goto done;
@@ -95,7 +95,7 @@ static int transaction(const char *source)
     remove_images(images);
     if (p1_bundle_write(package) || p1_bundle_read(readback) || p1_hash(readback,after) || strcmp(before,after)) goto done;
     int flag = clean_flag(0);
-    if (flag < 0 || p1_select_bank(0)) goto done;
+    if (flag < 0 || p1_select_bank(P1_FPVOS_BANK)) goto done;
     puts("Verified kernel, DTB and UBI root; direct fpvOS bank selected");
     rc = 0;
  done:
@@ -132,7 +132,7 @@ int main(int argc, char **argv)
     int rc = -1;
     if (p1_preflight()) goto done;
     if (!strcmp(argv[1],"preflight") && argc == 2) {
-        puts("P1 NAND layout verified; bank 1 and factory contents preserved"); rc = 0;
+        puts("P1 NAND layout verified; stock bank and factory contents preserved"); rc = 0;
     } else if (!strcmp(argv[1],"install") && argc == 3) {
         if (!regular(P1_WORK "/clean")) goto done;
         const char *starting = "0 3 verifying and installing\n";
@@ -146,7 +146,7 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1],"clean") && argc == 2 && p1_stock() == 0) {
         rc = clean_flag(1);
     } else if (!strcmp(argv[1],"stock") && argc == 2) {
-        rc = remove_stock_hook() || p1_select_bank(1);
+        rc = remove_stock_hook() || p1_select_bank(P1_STOCK_BANK);
     }
  done:
     if (rc && rc != 10) fprintf(stderr,"P1 %s failed\n",argv[1]);

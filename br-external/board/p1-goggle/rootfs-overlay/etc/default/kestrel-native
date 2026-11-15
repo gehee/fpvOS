@@ -1,0 +1,7 @@
+# Keep menus available when radio provisioning or decoder firmware is absent.
+KESTREL_NATIVE_NO_RADIO=1
+if [ -c /dev/arlink0 ] && [ -c /dev/video0 ]; then
+    KESTREL_NATIVE_NO_RADIO=0
+fi
+KESTREL_NATIVE_BACKLIGHT=/sys/class/backlight/backlight/brightness
+KESTREL_NATIVE_BRIGHTNESS=5

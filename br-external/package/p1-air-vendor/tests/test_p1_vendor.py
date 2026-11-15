@@ -13,7 +13,7 @@ ROOT = PACKAGE.parents[2]
 spec = importlib.util.spec_from_file_location("p1_vendor", PACKAGE / "extract.py")
 vendor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(vendor)
-fetch_spec = importlib.util.spec_from_file_location("p1_fetch", PACKAGE / "fetch.py")
+fetch_spec = importlib.util.spec_from_file_location("p1_fetch", PACKAGE.parent / "ar9311-firmware/fetch.py")
 fetcher = importlib.util.module_from_spec(fetch_spec)
 fetch_spec.loader.exec_module(fetcher)
 
@@ -25,7 +25,7 @@ class VendorTests(unittest.TestCase):
             cached.write_bytes(b"corrupted cache")
             with patch.object(fetcher.subprocess, "run") as download:
                 with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
-                    fetcher.fetch(cached)
+                    fetcher.fetch(cached, "https://example.invalid/firmware", vendor.IMAGE_SHA256)
                 download.assert_not_called()
             self.assertEqual(cached.read_bytes(), b"corrupted cache")
 
@@ -38,7 +38,7 @@ class VendorTests(unittest.TestCase):
 
             with patch.object(fetcher.subprocess, "run", side_effect=wrong_response):
                 with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
-                    fetcher.fetch(cached)
+                    fetcher.fetch(cached, "https://example.invalid/firmware", vendor.IMAGE_SHA256)
             self.assertEqual(list(cached.parent.iterdir()), [])
 
     def test_bad_image_rejected_before_decompression(self):

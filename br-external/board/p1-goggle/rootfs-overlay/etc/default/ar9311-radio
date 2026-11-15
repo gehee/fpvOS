@@ -1,0 +1,7 @@
+# Factory offsets are merged into a RAM-only configuration before loading.
+firmware=open8030.img
+config=p1-goggle-radio.json
+calibration_base=/lib/firmware/open8030.json
+calibration_factory=/factory/ar8030_pwr.json
+calibration_mount=/factory
+# Missing calibration leaves the radio stopped.

@@ -23,6 +23,12 @@ config BR2_PACKAGE_AR9311_FIRMWARE_ASCENT_17_5_15
 	  Extract from Caddx's official Ascent_G_Gnd update image.
 	  Its codec binary matches the validated 17.5.8 binary.
 
+config BR2_PACKAGE_AR9311_FIRMWARE_P1_GOGGLE_1_0_36
+	bool "BETAFPV P1 goggles 1.0.36"
+	help
+	  Extract and decompress the decoder from BETAFPV's official
+	  P1_GND release. Matches the hardware-tested goggles firmware.
+
 endchoice
 
 endif

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Mount existing removable-card storage only. Never format or repair a card.
-# Restrict discovery to the Gnd485 SD controller, not an enumeration number.
+# Restrict discovery to the AR9311 removable SD controller, not an enumeration number.
 
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 mount_dir=/mnt/sd

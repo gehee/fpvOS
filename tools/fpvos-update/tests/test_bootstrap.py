@@ -55,6 +55,29 @@ class UnifiedUpdater(base.Tests):
 
 
 class BootstrapArtifact(unittest.TestCase):
+    def test_snapshot_copy_uses_explicit_board_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / 'bundle'
+            source.write_bytes(b'x' * (17 * 1024 * 1024))
+            driver = root / 'copy.c'
+            driver.write_text('#include "bootstrap.h"\n#include <stdlib.h>\n'
+                'const struct fpvos_bootstrap_file fpvos_bootstrap_files[1] = {{0}};\n'
+                'const size_t fpvos_bootstrap_file_count = 0;\n'
+                'const struct fpvos_bootstrap_link fpvos_bootstrap_links[1] = {{0}};\n'
+                'const size_t fpvos_bootstrap_link_count = 0;\n'
+                'int main(int argc,char **argv) { return argc != 4 || '
+                'fpvos_bootstrap_copy_limit(argv[1],argv[2],0400,strtoull(argv[3],0,10)); }\n')
+            exe = root / 'copy'
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-I'+str(SRC),
+                            str(driver), str(SRC/'bootstrap-common.c'), '-o', str(exe)], check=True)
+            target = root / 'snapshot'
+            self.assertNotEqual(subprocess.run([str(exe), str(source), str(target), str(16*1024*1024)]).returncode, 0)
+            self.assertFalse(target.exists())
+            subprocess.run([str(exe), str(source), str(target), str(24*1024*1024)], check=True)
+            self.assertEqual(source.read_bytes(), target.read_bytes())
+            self.assertNotEqual(subprocess.run([str(exe), str(source), str(target), str(24*1024*1024)]).returncode, 0)
+
     def test_static_validation_rejects_wrong_arch_and_dynamic(self):
         for data in (b'not ELF', bytes(64)):
             with self.assertRaises(ValueError): bootstrap.static_aarch64(data)

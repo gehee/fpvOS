@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <stdint.h>
 #include <linux/magic.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -33,12 +34,12 @@ static int write_all(int fd, const unsigned char *data, size_t length)
     return 0;
 }
 
-int fpvos_bootstrap_copy(const char *source, const char *destination, unsigned mode)
+int fpvos_bootstrap_copy_limit(const char *source, const char *destination, unsigned mode, size_t limit)
 {
     int in = open(source, O_RDONLY | O_CLOEXEC);
     if (in < 0) return -1;
     struct stat st;
-    if (fstat(in, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || st.st_size > 16 * 1024 * 1024) {
+    if (fstat(in, &st) || !S_ISREG(st.st_mode) || st.st_size <= 0 || (uintmax_t)st.st_size > limit) {
         close(in);
         return -1;
     }
@@ -54,6 +55,11 @@ int fpvos_bootstrap_copy(const char *source, const char *destination, unsigned m
     if (out >= 0 && close(out)) result = -1;
     close(in);
     return result;
+}
+
+int fpvos_bootstrap_copy(const char *source, const char *destination, unsigned mode)
+{
+    return fpvos_bootstrap_copy_limit(source, destination, mode, 16U * 1024U * 1024U);
 }
 
 /* Kept separate for unprivileged extraction tests; not exposed as a CLI command.
