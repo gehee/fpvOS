@@ -1,4 +1,4 @@
-# Locally computed (Buildroot's git tarball of the pin, both ends)
-sha256  04c9ca9be6ec2bf8dcd7193585a5342af837cad498480c12e17b983a9b1079a1  open8030-8c4a9e98910836f730ce3e454ccd778021822a86-git4.tar.gz
+# Locally computed (Buildroot git archive and packaged license files)
+sha256  a50fc6597eb70cbbfb182d6ff5f991e931f6cc413a3a530c6193b8112e144e25  open8030-3bfc66b088906a495796401f12d8026f0275994e-git4.tar.gz
 sha256  22849c80336e82893adf6191dbc313766162b24c7c551fcacf302a4a8dfea094  LICENSE
-sha256  e7a299b3744e08afb2ed6a48946d4e67d7e7255bcd7402a860bd1d7d16810add  THIRD_PARTY.md
+sha256  e61b16f0f89fbbede0a6dcf4d05bbeb8e7eb0291e7db610a960259998c427fbf  THIRD_PARTY.md
