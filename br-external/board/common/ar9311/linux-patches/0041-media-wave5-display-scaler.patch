@@ -1,0 +1,199 @@
+From: fpvOS contributors
+Subject: [PATCH] media: wave5: the decoder's display scaler (Picture Size)
+
+The AR9311 WAVE521C has a display scaler (VPU_CONFIG0 bit 7): the linear
+(display) output can be written smaller than the picture. Picture Size on
+these receivers is that: each capture buffer keeps the picture's size and
+stride, the firmware writes the picture shrunk and centred in it, and the
+rest of the buffer is black. The screen shows the buffer as before - no
+copy, no pass of its own, no time added; the decoder writes fewer pixels.
+
+A private control, Display Scale (50-100 %, 100 off), set before the
+capture stream starts (the frame buffers are registered then). As the
+vendor driver programs it: the scaled size in W5_PIC_SIZE and bit 29 of
+W5_COMMON_PIC_INFO, for the linear frame buffers only. The margins are
+whole multiples of 32 bytes on every plane (the linear output's plane
+alignment): 64 pixels a side horizontally, the height kept to the
+picture's aspect in multiples of 16. Each capture buffer is filled black
+when it is registered. Not with the display offsets (strips), NV12 or
+4:2:2: those decode as before.
+---
+--- a/drivers/media/platform/chips-media/wave5/wave5-hw.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-hw.c
+@@ -856,13 +856,19 @@
+ 		}
+ 	} else {
+ 		pic_size = (init_info->pic_width << 16) | (init_info->pic_height);
++		/* The display scaler (AR9311 WAVE521C, as the vendor driver
++		 * sets it): the linear output's size, and bit 29 below.
++		 */
++		if (inst->disp_scale_w)
++			pic_size = (inst->disp_scale_w << 16) | inst->disp_scale_h;
+ 
+ 		if (inst->output_format == FORMAT_422)
+ 			color_format = 1;
+ 	}
+ 	vpu_write_reg(inst->dev, W5_PIC_SIZE, pic_size);
+ 
+-	reg_val = (bwb_flag << 28) |
++	reg_val = ((map_type == LINEAR_FRAME_MAP && inst->disp_scale_w) << 29) |
++		  (bwb_flag << 28) |
+ 		  (pixel_order << 23) |
+ 		  (justified << 22) |
+ 		  (format_no << 20) |
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
+@@ -834,6 +834,15 @@
+ 	 * 0 in disp_off[1]: the planes packed from the start, as usual.
+ 	 */
+ 	u32 disp_off[3];
++	/* Decoder: the linear (display) output shrunk to disp_scale % of the
++	 * picture by the firmware's display scaler, centred in each capture
++	 * buffer with black around it (disp_scale_w x disp_scale_h at
++	 * disp_scale_off): a smaller picture on the screen at no cost in time.
++	 * 100: off. Not with disp_off (strips).
++	 */
++	u32 disp_scale;
++	u32 disp_scale_w, disp_scale_h;
++	u32 disp_scale_off[3];
+ 	s32 active_enc_src_idx;
+ 	u32 enc_rate_change_pending;
+ 	bool enc_force_idr; /* FORCE_KEY_FRAME seen; armed on the next start_encode */
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-dec.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-dec.c
+@@ -901,6 +901,8 @@
+ #define V4L2_CID_WAVE5_DISP_OFFSET_Y	(V4L2_CID_CODEC_BASE | 0x1f01)
+ #define V4L2_CID_WAVE5_DISP_OFFSET_CB	(V4L2_CID_CODEC_BASE | 0x1f02)
+ #define V4L2_CID_WAVE5_DISP_OFFSET_CR	(V4L2_CID_CODEC_BASE | 0x1f03)
++/* The display output's size, % of the picture (see disp_scale). */
++#define V4L2_CID_WAVE5_DISP_SCALE	(V4L2_CID_CODEC_BASE | 0x1f04)
+ 
+ static int wave5_vpu_dec_s_ctrl(struct v4l2_ctrl *ctrl)
+ {
+@@ -916,6 +918,9 @@
+ 	case V4L2_CID_WAVE5_DISP_OFFSET_CR:
+ 		inst->disp_off[2] = ctrl->val;
+ 		return 0;
++	case V4L2_CID_WAVE5_DISP_SCALE:
++		inst->disp_scale = ctrl->val;
++		return 0;
+ 	}
+ 	return -EINVAL;
+ }
+@@ -992,6 +997,47 @@
+ 	return 0;
+ }
+ 
++/*
++ * The display scaler's output for disp_scale: the picture shrunk to about
++ * that share of each side, aspect kept, centred in a capture buffer of the
++ * picture's own size and stride. The margins are whole multiples of 32 bytes
++ * on every plane (the linear output's plane alignment): 64 pixels left and
++ * right, an even number of chroma rows above and below. False: no scaling
++ * (100 %, strips, another layout, or nothing smaller fits).
++ */
++static bool wave5_disp_scale_layout(struct vpu_instance *inst)
++{
++	const u32 w = inst->dst_fmt.width, h = inst->dst_fmt.height;
++	u32 margin, sw, sh, mx, my;
++
++	inst->disp_scale_w = 0;
++	inst->disp_scale_h = 0;
++	if (inst->disp_scale >= 100 || inst->disp_off[1] || inst->dst_fmt.num_planes != 1 ||
++	    inst->cbcr_interleave || inst->output_format != FORMAT_420 ||
++	    (w % 64) || (h % 8) || w < 256 || h < 128)
++		return false;
++	margin = DIV_ROUND_CLOSEST(w * (100 - inst->disp_scale), 100 * 128) * 128;
++	if (!margin || margin >= w)
++		return false;
++	sw = w - margin;
++	/* The height for that width, a multiple of 16 that leaves a multiple
++	 * of 8 rows of margin (4 above and below in chroma).
++	 */
++	sh = DIV_ROUND_CLOSEST(h * sw, w * 16) * 16;
++	while (sh >= 16 && ((h - sh) % 8))
++		sh -= 16;
++	if (sh < 16 || sh >= h)
++		return false;
++	mx = (w - sw) / 2;
++	my = (h - sh) / 2;
++	inst->disp_scale_w = sw;
++	inst->disp_scale_h = sh;
++	inst->disp_scale_off[0] = my * w + mx;
++	inst->disp_scale_off[1] = w * h + (my / 2) * (w / 2) + mx / 2;
++	inst->disp_scale_off[2] = w * h + (w / 2) * (h / 2) + (my / 2) * (w / 2) + mx / 2;
++	return true;
++}
++
+ static int wave5_prepare_fb(struct vpu_instance *inst)
+ {
+ 	int linear_num;
+@@ -999,6 +1045,7 @@
+ 	int fb_stride = 0, fb_height = 0;
+ 	int luma_size, chroma_size;
+ 	int ret, i;
++	bool scaled;
+ 	struct v4l2_m2m_buffer *buf, *n;
+ 	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
+ 	u32 bitdepth = inst->codec_info->dec_info.initial_info.luma_bitdepth;
+@@ -1020,6 +1067,11 @@
+ 
+ 	linear_num = v4l2_m2m_num_dst_bufs_ready(m2m_ctx);
+ 	non_linear_num = inst->fbc_buf_count;
++	scaled = wave5_disp_scale_layout(inst);
++	if (scaled)
++		dev_info(inst->dev->dev, "display output %ux%u in %ux%u (%u %%)\n",
++			 inst->disp_scale_w, inst->disp_scale_h, inst->dst_fmt.width,
++			 inst->dst_fmt.height, inst->disp_scale);
+ 
+ 	for (i = 0; i < non_linear_num; i++) {
+ 		struct frame_buffer *frame = &inst->frame_buf[i];
+@@ -1079,7 +1131,27 @@
+ 		else
+ 			chroma_size = fb_stride * inst->dst_fmt.height / 4;
+ 
+-		if (inst->dst_fmt.num_planes == 1 && inst->disp_off[1]) {
++		if (scaled) {
++			/* The scaled picture centred in the buffer, the rest
++			 * black: the firmware writes only the picture.
++			 */
++			const dma_addr_t base = vb2_dma_contig_plane_dma_addr(vb, 0);
++			u8 *pixels = vb2_plane_vaddr(vb, 0);
++
++			buf_size = vb2_plane_size(vb, 0);
++			if ((u64)luma_size + 2 * chroma_size > buf_size) {
++				dev_err(inst->dev->dev, "%s: capture buffer of %u bytes too small\n",
++					__func__, buf_size);
++				return -EINVAL;
++			}
++			if (pixels) {
++				memset(pixels, 16, luma_size);
++				memset(pixels + luma_size, 128, 2 * chroma_size);
++			}
++			buf_addr_y = base + inst->disp_scale_off[0];
++			buf_addr_cb = base + inst->disp_scale_off[1];
++			buf_addr_cr = base + inst->disp_scale_off[2];
++		} else if (inst->dst_fmt.num_planes == 1 && inst->disp_off[1]) {
+ 			/* Each plane where the caller put it in the buffer: its
+ 			 * rows of a larger picture of the same stride (strips).
+ 			 */
+@@ -1895,6 +1967,19 @@
+ 			v4l2_ctrl_new_custom(&inst->v4l2_ctrl_hdl, &c, NULL);
+ 		}
+ 	}
++	{
++		/* Set before the capture stream starts, like the offsets. */
++		static const struct v4l2_ctrl_config c = {
++			.ops = &wave5_vpu_dec_ctrl_ops,
++			.id = V4L2_CID_WAVE5_DISP_SCALE,
++			.name = "Display Scale",
++			.type = V4L2_CTRL_TYPE_INTEGER,
++			.min = 50, .max = 100, .step = 1, .def = 100,
++		};
++
++		v4l2_ctrl_new_custom(&inst->v4l2_ctrl_hdl, &c, NULL);
++		inst->disp_scale = 100;
++	}
+ 
+ 	if (inst->v4l2_ctrl_hdl.error) {
+ 		ret = -ENODEV;
