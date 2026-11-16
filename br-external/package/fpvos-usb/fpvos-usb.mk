@@ -8,7 +8,7 @@
 # FPVOS_USB_OVERRIDE_SRCDIR=/path/to/fpvOS_usb builds a local checkout instead.
 FPVOS_USB_SITE ?= https://github.com/gehee/fpvOS_usb.git
 FPVOS_USB_SITE_METHOD = git
-FPVOS_USB_VERSION ?= 3eabe3f2f90ed4ea144163230a78a7cce2d8ce3f
+FPVOS_USB_VERSION ?= 63395eb7c0c7a577595b7189272b646c1e87600a
 FPVOS_USB_LICENSE = GPL-2.0-or-later
 FPVOS_USB_LICENSE_FILES = LICENSE
 FPVOS_USB_BOARD = $(call qstrip,$(BR2_PACKAGE_FPVOS_USB_BOARD))
@@ -44,6 +44,7 @@ define FPVOS_USB_INSTALL_TARGET_CMDS
 		$(INSTALL) -D -m 0755 $(@D)/boards/$(FPVOS_USB_BOARD)/$$hook \
 			$(TARGET_DIR)/usr/libexec/fpvos-usb/$$hook || exit 1; \
 	done
+	$(INSTALL) -D -m 0755 $(FPVOS_USB_PKGDIR)/S61fpvos-usb $(TARGET_DIR)/etc/init.d/S61fpvos-usb
 endef
 endif
 
