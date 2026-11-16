@@ -55,8 +55,10 @@ case "${1:-}" in
         quiesce
         /usr/sbin/fpvos-update nand stock
         ;;
-    normal)
-        # No bridge mode on this board yet: it is always in normal mode.
+    bridge|normal)
+        # fpvOS_usb's USB modes; bridge is kept across reboots (S61fpvos-usb),
+        # normal clears that.
+        exec /usr/sbin/fpvos-usb mode "$1"
         ;;
     reboot)
         sync

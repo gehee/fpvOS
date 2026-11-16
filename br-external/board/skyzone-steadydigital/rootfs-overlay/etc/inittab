@@ -19,6 +19,7 @@
 ::sysinit:/etc/init.d/S50dropbear start
 ::sysinit:/usr/sbin/ar9311-media-start
 ::sysinit:/bin/sh -c '[ ! -x /etc/init.d/S60kestrel-gnd ] || /etc/init.d/S60kestrel-gnd start'
+::sysinit:/bin/sh -c '[ ! -x /etc/init.d/S61fpvos-usb ] || /etc/init.d/S61fpvos-usb start'
 ::sysinit:/bin/cat /etc/issue
 
 # The NAND image's update service (USB serial): the web flasher and

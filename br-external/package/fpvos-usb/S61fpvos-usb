@@ -1,0 +1,13 @@
+#!/bin/sh
+# The USB mode chosen last, again after a boot: bridge while fpvos-usb's
+# SAVED_MODE says so (a board without one always boots in normal mode).
+# After the radio's client (S60) so bridge mode can take the chip from it.
+case "${1:-}" in
+	start)
+		[ "$(/usr/sbin/fpvos-usb saved 2>/dev/null)" = bridge ] || exit 0
+		echo "fpvos-usb: bridge mode, as saved"
+		/usr/sbin/fpvos-usb mode bridge
+		;;
+	stop|restart|reload) ;;
+	*) echo "Usage: $0 start" >&2; exit 1 ;;
+esac
