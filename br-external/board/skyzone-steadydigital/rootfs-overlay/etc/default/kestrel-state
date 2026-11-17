@@ -1,0 +1,4 @@
+# Existing NAND partition and UBI volume; never create or format them.
+STATE_PARTITION=usr_data
+STATE_SIZE=6291456
+STATE_VOLUMES="usr_data usrdata"

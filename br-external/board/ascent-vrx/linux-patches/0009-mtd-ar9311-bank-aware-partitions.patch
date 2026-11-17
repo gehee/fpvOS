@@ -52,11 +52,11 @@ Invalid metadata leaves the entire master read-only, never a writable fallback.
 +				       struct mtd_partition *parts, unsigned int count)
 +{
 +	static const char * const names[] = {"boot-protected", "kernel", "dtb",
-+		"vendor-rootfs", "fpvos", "vendor-data"};
++		"vendor-rootfs", "fpvos", "vendor-data", "fpv_data", "vendor-tail"};
 +	static const u32 offsets[] = {0, 0xb40000, 0x1140000, 0x11a0000,
-+		0x26a0000, 0x3ba0000};
++		0x26a0000, 0x3ba0000, 0x67a0000, 0x7da0000};
 +	static const u32 sizes[] = {0xb40000, 0x600000, 0x60000, 0x1500000,
-+		0x1500000, 0x4460000};
++		0x1500000, 0x2c00000, 0x1600000, 0x260000};
 +	u8 (*records)[AR9311_GPT_BYTES];
 +	unsigned int bank, i;
 +	size_t length;
