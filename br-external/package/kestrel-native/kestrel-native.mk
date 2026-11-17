@@ -52,6 +52,7 @@ define KESTREL_NATIVE_CHECK_IMAGE
 endef
 
 define KESTREL_NATIVE_INSTALL_TARGET_CMDS
+	$(INSTALL) -D -m 0755 $(KESTREL_NATIVE_PKGDIR)/S46kestrel-state-ubifs $(TARGET_DIR)/etc/init.d/S46kestrel-state
 	$(call KESTREL_NATIVE_CHECK_IMAGE,$(KESTREL_NATIVE_IMAGE))
 	$(INSTALL) -D -m 0644 "$(KESTREL_NATIVE_IMAGE)" $(TARGET_DIR)/usr/share/kestrel/runtime.squashfs
 	$(call KESTREL_NATIVE_CHECK_IMAGE,$(TARGET_DIR)/usr/share/kestrel/runtime.squashfs) && \

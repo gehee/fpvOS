@@ -74,6 +74,11 @@ jobs:
       - name: AR9311 firmware extraction tests
         run: python3 -m unittest discover -s br-external/package/ar9311-firmware/tests -v
 
+      - name: Native receiver persistent state
+        run: |
+          sh -n br-external/package/kestrel-native/S46kestrel-state-ubifs
+          python3 -m unittest discover -s br-external/package/kestrel-native/tests -v
+
       - name: P1 stock-runtime package checks
         run: |
           sh -n br-external/package/ar9311-radio/src/S43factory

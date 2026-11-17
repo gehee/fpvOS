@@ -33,7 +33,8 @@ int main(void)
     struct mtd_partition parts[] = {
         {"boot-protected",0,0xb40000,MTD_WRITEABLE}, {"kernel",0xb40000,0x600000,0},
         {"dtb",0x1140000,0x60000,0}, {"vendor-rootfs",0x11a0000,0x1500000,MTD_WRITEABLE},
-        {"fpvos",0x26a0000,0x1500000,0}, {"vendor-data",0x3ba0000,0x4460000,MTD_WRITEABLE}
+        {"fpvos",0x26a0000,0x1500000,0}, {"vendor-data",0x3ba0000,0x2c00000,MTD_WRITEABLE},
+        {"fpv_data",0x67a0000,0x1600000,0}, {"vendor-tail",0x7da0000,0x260000,MTD_WRITEABLE}
     };
     if (getenv("TEST_BAD_MAP")) parts[3].offset++;
     int result = ar9311_partitions_post_parse(&mtd, parts, ARRAY_SIZE(parts));
@@ -42,6 +43,8 @@ int main(void)
     assert(parts[3].mask_flags & MTD_WRITEABLE);
     assert(!(parts[4].mask_flags & MTD_WRITEABLE));
     assert(parts[5].mask_flags & MTD_WRITEABLE);
+    assert(!(parts[6].mask_flags & MTD_WRITEABLE));
+    assert(parts[7].mask_flags & MTD_WRITEABLE);
     printf("vendor=%llx fpvos=%llx\n", (unsigned long long)parts[3].offset, (unsigned long long)parts[4].offset);
     return 0;
 }
