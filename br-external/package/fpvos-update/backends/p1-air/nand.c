@@ -75,6 +75,30 @@ static int remove_stock_hook(void)
     return rc;
 }
 
+/* The fpvOS bank is ours to write only when it is not what the unit runs:
+ * either the stock bank is the active one, or the fpvOS bank already holds
+ * fpvOS. An active fpvOS bank without an fpvOS bundle is the unit's own stock
+ * (a vendor update put it there; the other bank then holds an older copy
+ * nobody has checked) - writing it would leave the unit without its stock.
+ * The bundle volume is checked here too, so one that cannot take the bundle
+ * is found before the bank selection or the kernel is touched. */
+static int fpvos_bank_free(void)
+{
+    unsigned bank;
+    if (p1_active_bank(&bank)) return -1;
+    int fpvos = p1_bundle_present();
+    if (fpvos < 0) {
+        fprintf(stderr,"P1: bank %d's bundle volume cannot be used; nothing was changed\n",P1_FPVOS_BANK);
+        return -1;
+    }
+    if (bank == P1_FPVOS_BANK && !fpvos) {
+        fprintf(stderr,"P1: bank %d is the active bank and does not hold fpvOS: "
+                       "it is the unit's stock firmware; nothing was changed\n",P1_FPVOS_BANK);
+        return -1;
+    }
+    return 0;
+}
+
 static int transaction(const char *source)
 {
     char directory[] = P1_WORK "/transaction.XXXXXX", package[512], images[512], readback[512], path[1024];
@@ -87,7 +111,7 @@ static int transaction(const char *source)
     /* Select the untouched stock bank before modifying the fpvOS bank. Power loss
      * during installation then boots stock; only verified images reactivate
      * fpvOS. No change to environment/U-Boot selection or factory contents. */
-    if (remove_stock_hook() || p1_select_bank(P1_STOCK_BANK)) goto done;
+    if (fpvos_bank_free() || remove_stock_hook() || p1_select_bank(P1_STOCK_BANK)) goto done;
     for (unsigned i = 0; i < 2; i++) {
         snprintf(path,sizeof(path),"%s/%s",images,fpvos_board.names[i]);
         if (p1_flash_image(i,path,1)) goto done;

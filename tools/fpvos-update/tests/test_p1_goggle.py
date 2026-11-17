@@ -16,6 +16,9 @@ class GoggleTests(unittest.TestCase):
     volume = p1.P1Tests.volume
     test_stock_volume_names = p1.P1Tests.test_stock_volume_names
     transaction = p1.P1Tests.transaction
+    test_bank_and_volume_are_checked_before_anything_changes = p1.P1Tests.test_bank_and_volume_are_checked_before_anything_changes
+    test_live_stock_in_the_fpvos_bank_and_an_unusable_volume_change_nothing = p1.P1Tests.test_live_stock_in_the_fpvos_bank_and_an_unusable_volume_change_nothing
+    test_stock_in_the_stock_bank_leaves_the_fpvos_bank_free = p1.P1Tests.test_stock_in_the_stock_bank_leaves_the_fpvos_bank_free
     flash = p1.P1Tests.flash
     layout = p1.P1Tests.layout
 

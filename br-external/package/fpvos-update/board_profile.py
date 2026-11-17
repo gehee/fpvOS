@@ -29,6 +29,9 @@ def read_profile(path):
     legacy = profile.get('legacy_destination', '')
     if legacy and (not re.fullmatch(r'/tmp/pc/[A-Za-z0-9_.-]+', legacy) or len(legacy) > 110):
         raise ValueError('invalid legacy destination')
+    location = profile.get('location_file', '')
+    if location and not re.fullmatch(r'(/[A-Za-z0-9_.-]+){2,8}', location):
+        raise ValueError('invalid location file')
     sources = profile.get('restore_sources', [])
     if len(sources) != counts[1] or any(not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}', n) for n in sources):
         raise ValueError('invalid restore sources')

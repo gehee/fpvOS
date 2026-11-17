@@ -39,7 +39,7 @@ class P1Tests(unittest.TestCase):
     def setUpClass(cls):
         cls.temp=tempfile.TemporaryDirectory();cls.build=Path(cls.temp.name)
         common=['cc','-O2','-Wall','-Wextra','-Werror','-ffunction-sections','-fdata-sections','-I'+str(SRC),'-DP1_WORK="work"']+getattr(cls,'config_flags',[])
-        renames=['p1_preflight','p1_stock','p1_state_mount','p1_state_unmount','p1_bundle_read','p1_bundle_write','p1_mtd','p1_gpt_read']
+        renames=['p1_preflight','p1_stock','p1_state_mount','p1_state_unmount','p1_bundle_read','p1_bundle_write','p1_bundle_present','p1_active_bank','p1_mtd','p1_gpt_read']
         subprocess.run(common+['-D'+s+'=unused_'+s for s in renames]+['-c',str(BACKEND/'storage.c'),'-o',str(cls.build/'storage.o')],check=True)
         subprocess.run(common+[str(Path(__file__).with_name('p1_transaction_sim.c')),str(cls.build/'storage.o'),str(SRC/'bootstrap-common.c'),'-Wl,--gc-sections','-Wl,--wrap=execlp','-Wl,--wrap=lstat','-o',str(cls.build/'transaction')],check=True)
         subprocess.run(common+[str(Path(__file__).with_name('p1_flash_sim.c')),str(cls.build/'storage.o'),'-Wl,--gc-sections','-Wl,--wrap=open','-Wl,--wrap=ioctl','-Wl,--wrap=pwrite','-Wl,--wrap=pread','-Wl,--wrap=fsync','-o',str(cls.build/'flash')],check=True)
@@ -202,6 +202,27 @@ class P1Tests(unittest.TestCase):
         self.assertLess(events.index('readback'),events.index('activate'))
         self.assertEqual((d/'volume').read_bytes(),b'valid verified snapshot')
         self.assertFalse((d/'work/state/fpvos-boot/disabled').exists())
+
+    def test_bank_and_volume_are_checked_before_anything_changes(self):
+        d,r,events=self.transaction('ok')
+        order=['verify','active-bank','bundle-present','select-stock','kernel','dtb','write','readback','activate']
+        self.assertEqual([e for e in events if e in order],order)
+
+    def test_live_stock_in_the_fpvos_bank_and_an_unusable_volume_change_nothing(self):
+        for fault,said in (('stock-fpvos-bank',b"unit's stock"),('bad-volume',b'cannot be used'),('gpt',b'')):
+            with self.subTest(fault=fault):
+                d,r,events=self.transaction(fault)
+                self.assertNotEqual(r.returncode,0)
+                self.assertIn(said,r.stderr)
+                for touched in ('select-stock','kernel','dtb','write','activate'):
+                    self.assertNotIn(touched,events)
+                self.assertEqual((d/'volume').read_bytes(),b'previous volume')
+                self.assertTrue((d/'work/state/sirius-clean-system-flag').exists())
+
+    def test_stock_in_the_stock_bank_leaves_the_fpvos_bank_free(self):
+        d,r,events=self.transaction('stock-other')
+        self.assertEqual(r.returncode,0,r.stderr)
+        self.assertIn('activate',events)
 
     def test_faults_never_arm_or_overwrite_stock_selection(self):
         for fault in ('verify','gzip','select-stock','kernel','dtb','write','readback','corrupt','foreign'):

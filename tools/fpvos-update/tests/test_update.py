@@ -31,7 +31,7 @@ def compile_framework(destination):
         if name == 'verify':
             files.append(str(BACKEND / 'images.c'))
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
-                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
+                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
 
 
 def load(name):
@@ -85,6 +85,7 @@ class Tests(unittest.TestCase):
         os.close(self.master)
         os.close(self.slave)
         (self.bin / "clean-boot").unlink(missing_ok=True)
+        (self.bin / "location").unlink(missing_ok=True)
         self.temp.cleanup()
 
     def start(self, data, destination=CLIENT.VERIFY_DESTINATION, md5=None):
@@ -242,6 +243,32 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         helper.write_text(f'#!/bin/sh\necho "$1" >> "{self.dir / "calls"}"\n[ "$1" != normal ] || exit 10\n')
         self.assertEqual(self.mode('normal'), 'rebooting into normal mode')
         self.wait_calls('normal\nreboot\n')
+
+    def test_location_kept_for_kestrel_gnd(self):
+        """SET_LOCATION (200), the Flasher's after a goggle's flash, in normal
+        mode: kept in the profile's file as a script reads it, rewritten only
+        when it changes; a field with a character a shell would see, too long or
+        not NUL-padded, or a country that is not two letters, is refused and
+        keeps the file."""
+        def location(tz, zone='', country=''):
+            return tz.encode().ljust(64, b'\0') + zone.encode().ljust(64, b'\0') + country.encode().ljust(8, b'\0')
+        kept = self.bin / 'location'
+        self.client.ack(200, location('CET-1CEST,M3.5.0,M10.5.0/3', 'Europe/Paris', 'FR'))
+        self.assertEqual(kept.read_text(), "TZ='CET-1CEST,M3.5.0,M10.5.0/3'\nZONE='Europe/Paris'\nCOUNTRY='FR'\n")
+        mtime = kept.stat().st_mtime_ns
+        time.sleep(0.02)
+        self.client.ack(200, location('CET-1CEST,M3.5.0,M10.5.0/3', 'Europe/Paris', 'FR'))
+        self.assertEqual(kept.stat().st_mtime_ns, mtime)
+        for bad in (location("UTC0'; reboot; '"), location('UTC0', 'Europe/Paris', 'FRA'),
+                    location('UTC0', 'Europe/$(x)'), location('UTC'), location('UTC0', country='fr'),
+                    location('UTC0')[:-1], b'UTC0'.ljust(64, b'\0') + b'x' * 64 + bytes(8),
+                    location('UTC0')[:60] + b'\0\0\0x' + location('UTC0')[64:]):
+            with self.assertRaisesRegex(ValueError, 'invalid location'):
+                self.client.ack(200, bad)
+        self.assertIn("Europe/Paris", kept.read_text())
+        out = subprocess.run(['sh', '-c', '. "$1"; echo "$ZONE $COUNTRY"', 'sh', str(kept)],
+                             capture_output=True, text=True, check=True).stdout.strip()
+        self.assertEqual(out, 'Europe/Paris FR')
 
     def test_normal_in_normal_mode_is_ok(self):
         self.assertEqual(self.mode('normal'), 'OK')

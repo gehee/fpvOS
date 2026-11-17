@@ -27,6 +27,12 @@
 #ifndef CLEAN_BOOT_MARKER
 #define CLEAN_BOOT_MARKER "/run/fpvos-clean-boot"
 #endif
+/* The profile's location file; a test build puts it elsewhere. */
+#ifdef LOCATION_FILE
+#define location_file() LOCATION_FILE
+#else
+#define location_file() fpvos_board.location_file
+#endif
 /* fpvos-usb (fpvOS_usb) keeps the USB mode here: normal or bridge. */
 #ifndef USB_MODE_FILE
 #define USB_MODE_FILE "/run/fpvos-usb/mode"
@@ -276,6 +282,67 @@ static int usb_mode(const unsigned char *h, const char *name)
 		snprintf(detail, sizeof(detail), "bridge mode");
 	return ack(h, 0, "OK");
 }
+/* SET_LOCATION's payload: three NUL-terminated ASCII fields of 64, 64 and 8
+ * bytes, each only of the characters its kind uses (so a file of them is
+ * safe to read from a shell script). */
+#define LOCATION_LEN 136
+static const char *location_field(unsigned off, unsigned size, const char *allowed, unsigned min)
+{
+	const char *s = (const char *)payload + off;
+	size_t len = strnlen(s, size);
+	if (len == size || len < min || strspn(s, allowed) != len)
+		return NULL;
+	for (size_t i = len; i < size; i++)
+		if (payload[off + i]) return NULL;
+	return s;
+}
+/* SET_LOCATION (200), from the Flasher after a flash: where its computer is
+ * (TZ a POSIX TZ string, ZONE its tzdata name, COUNTRY its ISO 3166 code;
+ * ZONE and COUNTRY may be empty). A goggle's profile names the file it is kept
+ * in, for kestrel-gnd, which takes the zone when none is set and removes the
+ * file. The fields hold no quote or shell character, so a script may read it
+ * with ".". Written only when it changes. */
+static int keep_location(const char *tz, const char *zone, const char *country)
+{
+	char line[256], old[256] = {0}, tmp[512];
+	snprintf(line, sizeof(line), "TZ='%s'\nZONE='%s'\nCOUNTRY='%s'\n", tz, zone, country);
+	FILE *f = fopen(location_file(), "r");
+	if (f) {
+		size_t got = fread(old, 1, sizeof(old) - 1, f);
+		old[got] = 0;
+		fclose(f);
+		if (!strcmp(old, line))
+			return 0;
+	}
+	snprintf(tmp, sizeof(tmp), "%s.new", location_file());
+	if (!(f = fopen(tmp, "w")))
+		return -1;
+	if (fputs(line, f) < 0 || fflush(f) || fsync(fileno(f)) || fclose(f) ||
+	    rename(tmp, location_file())) {
+		unlink(tmp);
+		return -1;
+	}
+	sync();
+	return 0;
+}
+static int set_location(const unsigned char *h, uint32_t n)
+{
+	static const char alnum[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+	char tz_chars[80], zone_chars[80];
+	snprintf(tz_chars, sizeof(tz_chars), "%s+-,.:/<>", alnum);
+	snprintf(zone_chars, sizeof(zone_chars), "%s+-_/", alnum);
+	if (!location_file() || !location_file()[0])
+		return ack(h, -1, "location not kept on this unit");
+	const char *tz = n == LOCATION_LEN ? location_field(0, 64, tz_chars, 4) : NULL;
+	const char *zone = tz ? location_field(64, 64, zone_chars, 0) : NULL;
+	const char *country = zone ? location_field(128, 8, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", 0) : NULL;
+	if (!country || (country[0] && strlen(country) != 2))
+		return ack(h, -1, "invalid location");
+	if (keep_location(tz, zone, country))
+		return ack(h, -1, "location not saved");
+	return ack(h, 0, "OK");
+}
+
 static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 {
 	uint32_t cmd = fpvos_get_le32(h + 12), seq = fpvos_get_le32(h + 24);
@@ -344,6 +411,11 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		if (!result)
 			fpvos_board_network(cmd == 0x3b, clean);
 		return result;
+	}
+	if (cmd == 0xc8) {
+		if (file >= 0)
+			return ack(h, -1, "transfer active");
+		return set_location(h, n);
 	}
 	if (cmd == 3 && (named(n, "normal") || named(n, "bridge")))
 		return usb_mode(h, (const char *)payload);
