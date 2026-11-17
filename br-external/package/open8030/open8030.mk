@@ -6,8 +6,8 @@
 
 # Radio-chip firmware, independent of the Linux host SoC or application.
 # Board defconfigs select profile, transport, role and factory-data policy.
-OPEN8030_VERSION ?= 3bfc66b088906a495796401f12d8026f0275994e
-OPEN8030_SITE ?= https://github.com/mh1412/Open8030.git
+OPEN8030_VERSION ?= 61f4dc7093f61049491fa8732141c7b1a8f32ad5
+OPEN8030_SITE ?= https://github.com/gehee/Open8030.git
 OPEN8030_SITE_METHOD = git
 OPEN8030_CONFIG ?= $(call qstrip,$(BR2_PACKAGE_OPEN8030_CONFIG))
 
