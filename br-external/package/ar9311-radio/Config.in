@@ -3,7 +3,7 @@ config BR2_PACKAGE_AR9311_RADIO
 	depends on BR2_FPVOS_SOC_AR9311
 	depends on BR2_LINUX_KERNEL
 	depends on BR2_TOOLCHAIN_HAS_THREADS
-	depends on BR2_HOSTARCH = "x86_64"
+	depends on BR2_HOSTARCH = "x86_64" || BR2_HOSTARCH = "aarch64" # open8030's prebuilt RISC-V compiler
 	select BR2_PACKAGE_AR9311_MMC
 	select BR2_PACKAGE_AR_LIBRE
 	select BR2_PACKAGE_OPEN8030

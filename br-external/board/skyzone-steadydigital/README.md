@@ -9,18 +9,15 @@ image, which writes nothing to flash, and a flashable one for NAND bank B
 
 ```sh
 ./build.sh skyzone-steadydigital config
-OPEN8030_PRIVATE_DIR=$PWD/.local/open8030-private OPEN8030_CONFIG_DIR= \
 KESTREL_NATIVE_IMAGE=/abs/path/runtime.squashfs ./build.sh skyzone-steadydigital
 ```
 
-`OPEN8030_PRIVATE_DIR` holds `skyzone-steadydigital.c` (the board profile
-recovered from the box's own firmware: 20 pin records, I/O domain bank 2, its
-FCH key table) and Open8030's `bb_defaults.inc`. Open8030's own profile for
-this box (`profiles/steadyview-vrx.c`) is an older 10-record one that does not
-link on this board. Leave
-`OPEN8030_CONFIG_DIR` empty so the ground configuration is made from the stock
-VRX Pro one as usual. The Kestrel runtime is kestrel-gnd's native `ar9311`
-build packaged by `tools/package_ascent.py`.
+The board profile is Open8030's `profiles/skyzone-steadydigital.c` (recovered
+from the box's own firmware: 20 pin records, I/O domain bank 2, its FCH key
+table); its older `profiles/steadyview-vrx.c` (10 records) does not link on
+this board. The ground configuration is made from the stock VRX Pro one as
+usual. The Kestrel runtime is kestrel-gnd's native `ar9311` build packaged by
+`tools/package_ascent.py`.
 
 ## RAM boot
 
@@ -67,9 +64,8 @@ writable for the updater.
 
 ## Flashable image (bank B)
 
-`./build.sh skyzone-steadydigital-flash` (with the same `OPEN8030_PRIVATE_DIR`,
-`OPEN8030_CONFIG_DIR=` and `KESTREL_NATIVE_IMAGE` as the RAM build: the board's
-Open8030 profile is not in the Open8030 repository) builds a NAND image instead
+`./build.sh skyzone-steadydigital-flash` (with the same `KESTREL_NATIVE_IMAGE`
+as the RAM build) builds a NAND image instead
 of the RAM one: `kernel.img` is a recovery kernel (a small fpvOS recovery initramfs, from
 `package/fpvos-recovery`) and `fpvos-steadydigital.fwu` bundles it with the board
 DTB and the main root (`rootfs.squashfs`). The updater backend
