@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 290" width="1200" height="290" role="img" aria-labelledby="t d">
   <title id="t">Install fpvOS in three steps</title>
-  <desc id="d">Flash a microSD card, put it in the goggle and power on, then fly. Pull the card to go back to stock.</desc>
+  <desc id="d">Flash a microSD card, put it in the VRX Pro and power on, then fly. Pull the card to go back to stock.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0" stop-color="#0f1b28"/>
@@ -40,7 +40,7 @@
   <!-- arrow -->
   <path class="ln" d="M392 145 L404 145 M398 138 L405 145 L398 152"/>
 
-  <!-- step 2: goggle -->
+  <!-- step 2: receiver -->
   <g transform="translate(424 24)">
     <rect width="352" height="242" rx="16" fill="url(#card)" stroke="#233a50"/>
     <circle cx="36" cy="38" r="17" fill="#4fd1e8"/><text class="n" x="36" y="44.5" text-anchor="middle">2</text>
@@ -53,7 +53,7 @@
     </g>
     <text class="t" x="28" y="148">Insert it, power on</text>
     <text class="s" x="28" y="178">The VRX Pro boots fpvOS from the card.</text>
-    <text class="s" x="28" y="201">Nothing is written to the goggle itself.</text>
+    <text class="s" x="28" y="201">Nothing is written to the receiver itself.</text>
     <text class="f" x="28" y="227">PULL THE CARD: STOCK AGAIN</text>
   </g>
 
