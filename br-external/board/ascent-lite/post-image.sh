@@ -31,7 +31,8 @@ cat "$WORK/run.new" > "$run"
 # The unit's name on USB, in place of stock's "Vendor SerialGadget" and
 # "Vendor Ethernet": "Ascent Lite+ Air Unit - fpvOS" (or Lite) by Caddx in
 # normal mode, with " [update]" in the clean system (which runs a copy from
-# /tmp) and " [network]" for RNDIS. The IDs and serial number stay stock's:
+# /tmp) and " [network]" for the USB network (config_ether.sh, below). The
+# IDs and serial number stay stock's:
 # the PC tool and the flasher go by them, never by the name. fpvOS_usb names
 # bridge mode the same way, " [bridge]" (PRODUCT in its board settings).
 name='case $1 in 472) PRODUCT="Ascent Lite+ Air Unit - fpvOS" ;; 482) PRODUCT="Ascent Lite Air Unit - fpvOS" ;; *) PRODUCT="Ascent Air Unit - fpvOS" ;; esac'
@@ -43,9 +44,6 @@ rename() { # script, sed program
 f=$WORK/fpv/fpv/config_serial.sh
 rename "$f" '^export PRODUCT="SerialGadget"$'
 sed -i "s|^export PRODUCT=\"SerialGadget\"\$|set -- \"\$board_type\"; $name\ncase \$0 in /tmp/*) PRODUCT=\"\$PRODUCT [update]\" ;; esac\nexport PRODUCT|" "$f"
-f=$WORK/fpv/fpv/config_ether.sh
-rename "$f" '^PRODUCT="Ethernet"$'
-sed -i "s|^PRODUCT=\"Ethernet\"\$|set -- \"\$(cat /usrdata/fpv/fpv_board_type /tmp/fpv_board_type 2>/dev/null \| head -n 1)\" \"\$@\"; $name\nshift\nPRODUCT=\"\$PRODUCT [network]\"|" "$f"
 
 # fpvOS's updater (fpvos-update) takes the stock one's path: the stock rootfs
 # starts whatever is there, in the normal and the clean system. Stock's stays
@@ -54,8 +52,13 @@ if [ -f "$TARGET_DIR/usrdata/fpv/ar_fpvhs_upgrade" ]; then
 	mv "$WORK/fpv/fpv/ar_fpvhs_upgrade" "$WORK/fpv/fpv/ar_fpvhs_upgrade.stock"
 fi
 cp -a "$TARGET_DIR/usrdata/." "$WORK/fpv/"
-# The USB network: our address and a DHCP server, in place of stock's usb_ip.sh.
-install -m 0755 "$BOARD/usb_ip.sh" "$WORK/fpv/fpv/usb_ip.sh"
+# The USB network: CDC-NCM in place of stock's RNDIS (config_ether.sh and
+# disable_config_ether.sh), our address and a DHCP server in place of stock's
+# usb_ip.sh. Stock's clean system copies all three to /tmp by these names.
+for f in config_ether.sh disable_config_ether.sh usb_ip.sh; do
+	[ -f "$WORK/fpv/fpv/$f" ] || { echo "app volume: no stock $f to replace" >&2; exit 1; }
+	install -m 0755 "$BOARD/$f" "$WORK/fpv/fpv/$f"
+done
 
 # SSH keys from FPVOS_AIR_SSH_KEYS, a public-key file, at build time. They are
 # personal: never committed, and an image built with them is not for sharing.

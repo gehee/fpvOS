@@ -16,8 +16,8 @@ air=/usrdata/fpv/air
 echo "air: fpvOS $(cat $air/VERSION) board_type=$board_type board_ver=$board_ver hw=$HW_VER rf=$rf_board"
 
 # The USB network (192.168.2.1 and a DHCP server) is set up by our
-# usb_ip.sh, which the stock config_ether.sh runs when the link is switched to
-# network.
+# usb_ip.sh, which our config_ether.sh (CDC-NCM) runs when the link is
+# switched to network.
 
 # SSH when the image carries keys (FPVOS_AIR_SSH_KEYS at build time) or a root
 # password (FPVOS_AIR_ROOT_PASSWORD, root by default); reachable once the USB link is switched to

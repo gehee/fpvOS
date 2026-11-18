@@ -1,7 +1,7 @@
 config BR2_PACKAGE_AIR_BUSYBOX
 	bool "air-busybox"
 	help
-	  A DHCP server for the air unit's USB network (RNDIS): Buildroot's
+	  A DHCP server for the air unit's USB network (NCM): Buildroot's
 	  busybox, statically linked, with udhcpd only, in the app volume
 	  (/usrdata/fpv/air/bin/udhcpd). The stock busybox has none.
 	  usb_ip.sh starts it once the USB link is switched to network.

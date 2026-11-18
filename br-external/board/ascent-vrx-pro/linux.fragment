@@ -46,3 +46,7 @@ CONFIG_ROCKCHIP_CPUINFO=y
 # fan_gpio_control nodes - vendor drivers stock built in and never published,
 # redone in linux-patches/0002-misc-rpdzkj-board.patch.
 CONFIG_RPDZKJ_BOARD=y
+
+# The USB network: CDC-NCM (S30usbgadget), which Windows, macOS and Linux all
+# take without a driver. Stock has ECM only, which Windows has no driver for.
+CONFIG_USB_CONFIGFS_NCM=y

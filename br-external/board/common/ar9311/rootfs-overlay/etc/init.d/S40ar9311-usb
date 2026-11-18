@@ -1,5 +1,6 @@
 #!/bin/sh
-# CDC-ECM development link plus vendor-framed CDC-ACM updates. All state lives in the RAM filesystem/configfs.
+# CDC-NCM network plus vendor-framed CDC-ACM updates. All state lives in the RAM filesystem/configfs.
+# NCM: Windows 10 (1903 and later), Windows 11, macOS and Linux take it without a driver; ECM has none on Windows.
 set -eu
 
 . /etc/default/ar9311-usb
@@ -11,13 +12,17 @@ g=/sys/kernel/config/usb_gadget/fpvos
 start() {
 	modprobe dwc2
 	modprobe libcomposite
-	modprobe usb_f_ecm
+	modprobe usb_f_ncm
 	modprobe usb_f_acm
 	mountpoint -q /sys/kernel/config || mount -t configfs none /sys/kernel/config
 	if [ ! -d "$g" ]; then
 		mkdir "$g"
 		echo 0x1d6b > "$g/idVendor"
 		echo 0x0104 > "$g/idProduct"
+		# Composite with interface associations (NCM, ACM): what Windows needs to split it.
+		echo 0xef > "$g/bDeviceClass"
+		echo 0x02 > "$g/bDeviceSubClass"
+		echo 0x01 > "$g/bDeviceProtocol"
 		mkdir "$g/strings/0x409"
 		echo "$USB_SERIAL" > "$g/strings/0x409/serialnumber"
 		echo "${USB_MANUFACTURER:-fpvOS}" > "$g/strings/0x409/manufacturer"
@@ -27,10 +32,19 @@ start() {
 		echo 'USB Ethernet + firmware transfer' > "$g/configs/c.1/strings/0x409/configuration"
 		echo 0xc0 > "$g/configs/c.1/bmAttributes"
 		echo 2 > "$g/configs/c.1/MaxPower"
-		mkdir "$g/functions/ecm.usb0"
-		echo "$USB_DEVICE_MAC" > "$g/functions/ecm.usb0/dev_addr"
-		echo "$USB_HOST_MAC" > "$g/functions/ecm.usb0/host_addr"
-		ln -s "$g/functions/ecm.usb0" "$g/configs/c.1/ecm.usb0"
+		mkdir "$g/functions/ncm.usb0"
+		echo "$USB_DEVICE_MAC" > "$g/functions/ncm.usb0/dev_addr"
+		echo "$USB_HOST_MAC" > "$g/functions/ncm.usb0/host_addr"
+		ln -s "$g/functions/ncm.usb0" "$g/configs/c.1/ncm.usb0"
+		# Microsoft OS descriptors: Windows 10 binds its NCM driver by them.
+		# Optional: USB recovery must come up without them.
+		if [ -d "$g/functions/ncm.usb0/os_desc/interface.ncm" ]; then
+			echo 1 > "$g/os_desc/use"
+			echo 0xcd > "$g/os_desc/b_vendor_code"
+			echo MSFT100 > "$g/os_desc/qw_sign"
+			echo WINNCM > "$g/functions/ncm.usb0/os_desc/interface.ncm/compatible_id"
+			ln -s "$g/configs/c.1" "$g/os_desc/c.1"
+		fi
 		mkdir "$g/functions/acm.usb0"
 		ln -s "$g/functions/acm.usb0" "$g/configs/c.1/acm.usb0"
 	fi
@@ -39,18 +53,53 @@ start() {
 		test -d /sys/class/udc/8000000.usb
 		echo 8000000.usb > "$g/UDC"
 	fi
-	# ECM registers its netdev when the gadget is bound to the controller.
+	# NCM registers its netdev when the gadget is bound to the controller.
 	ip address replace "$USB_ADDRESS" dev usb0
 	ip link set usb0 up
 	echo "USB Ethernet ready: $USB_ADDRESS"
+	dhcp_start
+}
+
+# A DHCP server on usb0, so the computer gets an address on the unit's subnet
+# by itself and reaches it (SSH) with no manual setup. .200-.209: clear of the
+# units' own addresses (.102-.104) and of the VRX Pro's pool (.100-.150). No
+# router or DNS: the computer keeps its own routes. Skipped where the applet
+# is missing (USB recovery).
+dhcp=/run/ar9311-usb-udhcpd
+dhcp_start() {
+	command -v udhcpd >/dev/null || return 0
+	dhcp_stop
+	net=${USB_ADDRESS%/*}
+	net=${net%.*}
+	mkdir -p "$dhcp"
+	: > "$dhcp/leases"
+	cat > "$dhcp/conf" <<-EOF
+	interface usb0
+	start $net.200
+	end $net.209
+	max_leases 10
+	lease_file $dhcp/leases
+	pidfile $dhcp/pid
+	option subnet 255.255.255.0
+	option lease 86400
+	EOF
+	udhcpd "$dhcp/conf" && echo "USB DHCP: $net.200-$net.209"
+}
+
+dhcp_stop() {
+	[ -s "$dhcp/pid" ] || return 0
+	kill "$(cat "$dhcp/pid")" 2>/dev/null || :
+	rm -f "$dhcp/pid"
 }
 
 stop() {
+	dhcp_stop
 	[ -d "$g" ] || return 0
 	printf '\n' > "$g/UDC"
 	ip link set usb0 down
-	rm "$g/configs/c.1/ecm.usb0" "$g/configs/c.1/acm.usb0"
-	rmdir "$g/functions/acm.usb0" "$g/functions/ecm.usb0" "$g/configs/c.1/strings/0x409" \
+	rm -f "$g/os_desc/c.1"
+	rm "$g/configs/c.1/ncm.usb0" "$g/configs/c.1/acm.usb0"
+	rmdir "$g/functions/acm.usb0" "$g/functions/ncm.usb0" "$g/configs/c.1/strings/0x409" \
 		"$g/configs/c.1" "$g/strings/0x409" "$g"
 }
 
