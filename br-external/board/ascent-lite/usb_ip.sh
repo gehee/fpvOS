@@ -1,6 +1,6 @@
 #!/bin/sh
-# fpvOS: the unit's USB network, in place of the stock usb_ip.sh. The stock
-# config_ether.sh runs it once the USB gadget is switched to network (RNDIS),
+# fpvOS: the unit's USB network, in place of the stock usb_ip.sh. fpvOS's
+# config_ether.sh runs it once the USB gadget is switched to network (NCM),
 # at boot (/factory/run_rndis_flag) or live (enable_rndis).
 #
 # 192.168.2.1: stock's 192.168.3.104 shares the goggle's subnet (USB 3.1, WiFi

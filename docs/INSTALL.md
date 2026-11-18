@@ -164,6 +164,9 @@ next boot.
 You don't need this to fly. It is how you pull logs, or hot-swap a freshly built
 `kestrel-gnd` while iterating.
 
+Every fpvOS device's USB network is **CDC-NCM**, which Windows 10 (1903 and
+later), Windows 11, macOS and Linux all take without installing a driver.
+
 **The goggle** exposes a USB network device. Plug it into a computer and it
 comes up as a network interface; the goggle answers on **192.168.3.1**:
 

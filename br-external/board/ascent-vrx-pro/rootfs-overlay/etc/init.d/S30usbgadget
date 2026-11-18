@@ -1,4 +1,7 @@
 #!/bin/sh
+# The goggle's USB: CDC-NCM network (192.168.3.1) and a CDC-ACM serial port.
+# NCM: Windows 10 (1903 and later), Windows 11, macOS and Linux take it without
+# a driver; ECM has none on Windows.
 G=/sys/kernel/config/usb_gadget/vrx
 start(){
   modprobe libcomposite 2>/dev/null
@@ -7,23 +10,31 @@ start(){
   mkdir -p "$G"; cd "$G" || exit 1
   echo 0x1d77 > idVendor; echo 0xa4a2 > idProduct
   echo 0x0100 > bcdDevice; echo 0x0200 > bcdUSB
+  # Composite with interface associations (NCM, ACM): what Windows needs to split it.
+  echo 0xef > bDeviceClass; echo 0x02 > bDeviceSubClass; echo 0x01 > bDeviceProtocol
   mkdir -p strings/0x409
   echo 2020 > strings/0x409/serialnumber
   echo Caddx > strings/0x409/manufacturer
   echo "Ascent VRX Pro - fpvOS" > strings/0x409/product
   mkdir -p configs/c.1/strings/0x409
-  echo "ECM+ACM" > configs/c.1/strings/0x409/configuration
+  echo "NCM+ACM" > configs/c.1/strings/0x409/configuration
   echo 500 > configs/c.1/MaxPower
-  mkdir -p functions/ecm.usb0
-  echo 02:00:de:ad:be:ef > functions/ecm.usb0/dev_addr
-  echo 02:00:de:ad:be:ed > functions/ecm.usb0/host_addr
-  ln -s functions/ecm.usb0 configs/c.1/ 2>/dev/null
+  mkdir -p functions/ncm.usb0
+  echo 02:00:de:ad:be:ef > functions/ncm.usb0/dev_addr
+  echo 02:00:de:ad:be:ed > functions/ncm.usb0/host_addr
+  ln -s functions/ncm.usb0 configs/c.1/ 2>/dev/null
+  # Microsoft OS descriptors: Windows 10 binds its NCM driver by them.
+  if [ -d functions/ncm.usb0/os_desc/interface.ncm ]; then
+    echo 1 > os_desc/use; echo 0xcd > os_desc/b_vendor_code; echo MSFT100 > os_desc/qw_sign
+    echo WINNCM > functions/ncm.usb0/os_desc/interface.ncm/compatible_id
+    ln -s configs/c.1 os_desc/ 2>/dev/null
+  fi
   mkdir -p functions/acm.usb0
   ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
   ls /sys/class/udc | head -n1 > UDC
   sleep 1
   for i in 1 2 3 4 5 6 7 8; do ifconfig usb0 192.168.3.1 netmask 255.255.255.0 up 2>/dev/null && break; sleep 1; done
-  echo "usbgadget: ECM+ACM up, usb0=192.168.3.1"
+  echo "usbgadget: NCM+ACM up, usb0=192.168.3.1"
 }
 stop(){ [ -d "$G" ] && { echo "" > "$G/UDC" 2>/dev/null; rm -rf "$G"; }; }
 case "$1" in start|"") start;; stop) stop;; restart) stop; start;; esac
