@@ -6,6 +6,7 @@
 |---|---|
 | [Installing](INSTALL.md) | You have a VRX Pro and want fpvOS on it, from download to first flight. Also updating, and going back to stock. |
 | [User guide](GUIDE.md) | You're on fpvOS and want to know what the buttons, the menu, the DVR, the stats screen and the WiFi view do. |
+| [Hardware](HARDWARE.md) | What fpvOS does on each device, and each device's specs: SoC, RAM, decoder, decode time, sensor, video modes. |
 | [FAQ](FAQ.md) | Will it brick it, do I need the air image, does it work with my gear, is it legal. |
 | [Latency](LATENCY.md) | What each display setting costs in latency and smoothness, measured glass to glass, and which to pick. |
 | [Troubleshooting](TROUBLESHOOTING.md) | Something doesn't look right. Symptom, cause, fix, and the known issues. |

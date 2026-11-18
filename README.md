@@ -9,7 +9,7 @@
 [![Download](https://img.shields.io/badge/Download-latest%20release-8be36f)](https://github.com/gehee/fpvOS/releases/latest)
 [![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/CXhNKYFF2v)
 
-[Why fly it](#why-fly-it) · [Install](#install-in-three-steps) · [FAQ](docs/FAQ.md) · [Compatibility](#compatibility) · [Help and docs](#help-and-docs)
+[Why fly it](#why-fly-it) · [Install](#install-in-three-steps) · [FAQ](docs/FAQ.md) · [Hardware support](#hardware-support) · [Help and docs](#help-and-docs)
 
 `GPLv3` · `status: beta, flies today`
 
@@ -23,7 +23,7 @@
 ---
 
 fpvOS replaces the stock firmware on the **Caddx Ascent VRX Pro** with an open
-one, drawn on the goggle's GPU. The fpvOS air image opens up the Ascent Lite and
+one, drawn on the receiver's GPU. The fpvOS air image opens up the Ascent Lite and
 Lite+ too, and the radio between them runs an open firmware on both ends,
 [Open8030](https://github.com/gehee/Open8030) by [mh1412](https://github.com/mh1412).
 
@@ -43,8 +43,8 @@ Lite+ too, and the radio between them runs an open firmware on both ends,
 <td align="center"><img src="assets/spectator-live.webp" alt="The spectator view's LIVE tab in a phone browser" height="300">&nbsp;&nbsp;<img src="assets/spectator-gallery.webp" alt="The spectator view's GALLERY tab in a phone browser" height="300"></td>
 </tr>
 <tr>
-<td width="40%"><b>Record and play back on the goggle.</b><br><br><b>FPV</b> keeps the camera's stream, <b>SCREEN</b> records video and HUD together at up to 100 fps, and the gallery plays, seeks and deletes without a computer.</td>
-<td align="center"><img src="assets/gallery.webp" alt="The DVR gallery on the goggle" width="440"></td>
+<td width="40%"><b>Record and play back on the receiver.</b><br><br><b>FPV</b> keeps the camera's stream, <b>SCREEN</b> records video and HUD together at up to 100 fps, and the gallery plays, seeks and deletes without a computer.</td>
+<td align="center"><img src="assets/gallery.webp" alt="The DVR gallery on the receiver" width="440"></td>
 </tr>
 <tr>
 <td width="40%"><b>Yours.</b><br><br>Five themes, settings for camera, video, radio and display, and every pixel on screen is code you can read and change.</td>
@@ -58,17 +58,17 @@ tour is in the [user guide](docs/GUIDE.md); questions in the [FAQ](docs/FAQ.md).
 ## Install in three steps
 
 <div align="center">
-<img src="assets/install-steps.svg" alt="1. Flash a microSD card. 2. Put it in the goggle and power on. 3. Link up and fly." width="1000">
+<img src="assets/install-steps.svg" alt="1. Flash a microSD card. 2. Put it in the VRX Pro and power on. 3. Link up and fly." width="1000">
 </div>
 
 1. **Write** [`fpvOS-vrxpro-<version>.img.xz`](https://github.com/gehee/fpvOS/releases/latest)
    from the latest release to a microSD card (2 GB or more) with
    [balenaEtcher](https://etcher.balena.io/), as it is: no unpacking.
-2. **Put the card in the goggle and power it on.** The fpvOS idle screen means
+2. **Put the card in the VRX Pro and power it on.** The fpvOS idle screen means
    you're on fpvOS.
 3. **Fly.** A stock Ascent air unit links right away, and stays bound.
 
-Nothing is written to the goggle itself: **pull the card and it boots exactly
+Nothing is written to the receiver itself: **pull the card and it boots exactly
 as before.** Step by step: **[docs/INSTALL.md](docs/INSTALL.md)**.
 
 **Optional, the air unit:** the fpvOS air image (Lite and Lite+) makes the
@@ -78,25 +78,60 @@ controller telemetry. Flash it from Chrome or Edge with the
 update takes it back. Read [the air unit guide](docs/INSTALL.md#flash-the-air-unit-optional)
 first: it's the one step that writes to your hardware.
 
-## Compatibility
+## Hardware support
 
-| Device | Stock firmware | fpvOS |
-|---|---|---|
-| **Caddx Ascent VRX Pro** (goggle) | — | ✅ boots from the SD card |
-| **Caddx Ascent Lite** (air, CV2004, IMU) | ✅ links to fpvOS | ✅ fpvOS air image |
-| **Caddx Ascent Lite+** (air, OS02K10) | ✅ links to fpvOS | ✅ fpvOS air image |
-| **Caddx Ascent VRX / Gnd485** (AR9311 receiver) | — | Experimental platform support; see below |
-| **BETAFPV P1 goggles** (AR9311 receiver) | — | [Initial RAM-boot platform](br-external/board/p1-goggle/README.md); display/radio integration pending |
+Where each device stands. **Released** devices (rated ★ out of 5) have images
+on the [releases page](https://github.com/gehee/fpvOS/releases/latest) and are
+what the install steps above cover. **In development** devices (🚧) build from
+this tree, run on the bench, and are for people who can recover a unit by hand.
 
-[What the fpvOS air image adds](docs/FAQ.md#what-the-fpvos-air-image-adds) over a stock air unit.
+| Brand | Device | Role | [Flasher](https://gehee.github.io/fpvOS_flasher/) | Tested | Experience |
+|---|---|---|---|---|---|
+| Caddx | **Ascent Lite** | air | ✅ | yes | ★★★★☆ |
+| Caddx | **Ascent Lite+** | air | ✅ | yes | ★★★★★ |
+| BetaFPV | **P1 Air** | air | ✅ | yes | 🚧 |
+| Caddx | **Ascent VRX Pro** | receiver | not needed (microSD card) | yes | ★★★★★ |
+| Caddx | **Ascent VRX** (Gnd485) | receiver | 🚧 | yes | 🚧 |
+| BetaFPV | **P1 goggles** | goggles | ❌ | yes | 🚧 |
+| Skyzone | **SteadyDigital** | receiver | 🚧 | yes | 🚧 |
 
-**AR9311 development:** the Gnd485 profile builds Linux 6.18 with hardware
-decoding, fixed-mode HDMI and an SDIO radio interface. It provides bench tools,
-not the integrated Kestrel ground application. Installed systems boot from NAND
-and run their root filesystem in RAM. Initial bring-up and recovery use the
-existing U-Boot USB RAM loader; NAND installation is an explicit operation.
-The SD-card installation instructions above do not apply to this receiver.
-See [building and testing AR9311](docs/AR9311.md).
+**Experience** is how close a device is to just flying it: ★★★★★ is the
+reference, flown every day; 🚧 is in development, not released yet.
+
+A stock Lite or Lite+ links to an fpvOS VRX Pro as it is. The fpvOS air image
+is optional ([what it adds](docs/FAQ.md#what-the-fpvos-air-image-adds)), and
+Caddx's own update takes it back.
+
+**The devices in development** are the AR9311 boards. They run fpvOS's own
+Linux 6.18 on Artosyn's AR9311 SoC, with Wave5 hardware decoding, the AR8030
+radio over SDIO on [Open8030](https://github.com/gehee/Open8030) and, on the
+receivers, the same Kestrel UI as the VRX Pro. They **install to internal
+NAND**, into the bank stock doesn't run from, and keep stock in the other one.
+No release images are published yet: you build them
+([building AR9311](docs/AR9311.md)). **Back up the flash first.**
+
+What is not there yet, per board:
+
+- **P1 Air:** 1080p60 is the only camera mode. The stock install is qualified
+  from stock 1.0.44 on Linux Chromium; other stock versions, Windows and macOS
+  aren't. [Board notes](br-external/board/p1-air/README.md).
+- **Ascent VRX:** flying on it isn't qualified; range and packet loss haven't
+  been compared with stock. HDMI audio and broad hotplug are missing.
+  [Board notes](docs/AR9311.md).
+- **P1 goggles:** settings and pairing don't persist yet, the stock decoder
+  firmware can't be redistributed, and the NAND install and recovery need more
+  testing. [Board notes](br-external/board/p1-goggle/README.md).
+- **SteadyDigital:** no install from stock over USB yet (the first install
+  needs its UART for a RAM boot). Keep the screen at 60 Hz; no 1080p100/120
+  output. [Board notes and known issues](br-external/board/skyzone-steadydigital/README.md).
+
+The features fpvOS has on each device, and each device's specs (SoC, RAM,
+kernel, decoder and decode time, sensor, video modes), are in
+**[docs/HARDWARE.md](docs/HARDWARE.md)**.
+
+The SD-card steps in [Install](#install-in-three-steps) are for the VRX Pro
+only; use neither another board's image nor another board's Flasher profile on
+these units.
 
 ## Before you fly
 
@@ -116,7 +151,7 @@ fpvOS is **beta** software, and it runs the video link you fly by.
 
 | | |
 |---|---|
-| [Install](docs/INSTALL.md) · [User guide](docs/GUIDE.md) · [FAQ](docs/FAQ.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) | flying it, and the known issues |
+| [Install](docs/INSTALL.md) · [User guide](docs/GUIDE.md) · [Hardware](docs/HARDWARE.md) · [FAQ](docs/FAQ.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) | flying it, and the known issues |
 | [Discord](https://discord.gg/CXhNKYFF2v) · [Report a bug](https://github.com/gehee/fpvOS/issues/new/choose) · [Releases](https://github.com/gehee/fpvOS/releases) | questions, bugs, what changed ([SUPPORT.md](SUPPORT.md)) |
 | [About](docs/ABOUT.md) · [Building](docs/BUILD.md) · [Architecture](docs/ARCHITECTURE.md) · [Kernel](docs/KERNEL.md) · [Contributing](CONTRIBUTING.md) | how it's made, and changing it |
 
@@ -124,6 +159,6 @@ fpvOS is **beta** software, and it runs the video link you fly by.
 
 Built on Artosyn's AR8030 and Caddx's Ascent, with thanks. Thank you to [mh1412](https://github.com/mh1412) for [Open8030](https://github.com/gehee/Open8030), the open radio firmware fpvOS runs on both ends. [GPLv3](LICENSE), details in [About](docs/ABOUT.md#license).
 
-**fpvOS**: the goggle is open now.
+**fpvOS**: the receiver is open now.
 
 </div>
