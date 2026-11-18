@@ -1,0 +1,164 @@
+From: fpvOS developers
+Subject: [PATCH] ae: exposure in the sensor's mode, not only 1080p60's lines
+
+The exposure table counts 1080p60 lines (14.8 us). The sensor's subdevice
+now gives the mode: the line from its width, horizontal blanking and pixel
+rate (unless --line-ns is given), and the longest exposure from its exposure
+control's range. Table lines become the same exposure time in the mode's
+lines, and an exposure longer than the mode's frame is held at its longest,
+the gain making up the rest as under --max-exposure-us. At 1080p60 the line
+is the table's own and the limit stays 1114: nothing changes.
+
+Upstream: not submitted
+
+diff --git a/ml-aed/ml-aed.c b/ml-aed/ml-aed.c
+index d9a5b12..f31f3eb 100644
+--- a/ml-aed/ml-aed.c
++++ b/ml-aed/ml-aed.c
+@@ -8,6 +8,7 @@
+  */
+ #include <errno.h>
+ #include <linux/videodev2.h>
++#include <linux/v4l2-subdev.h>
+ #include <sys/ioctl.h>
+ #include "gains.h"
+ #include <fcntl.h>
+@@ -92,6 +93,7 @@ struct ae_opts {
+     int tone;                   /* drive gamma, DRC, cm, cm2 from the trigger scalar (default) */
+     int banding;                /* mains anti-flicker: 0 off, 50 or 60 Hz */
+     unsigned int line_ns;       /* sensor line time, for the anti-flicker snap */
++    unsigned int exp_max;       /* fpvOS: the sensor's longest exposure in its mode, lines */
+     unsigned int cap_lines;     /* fpvOS: the exposure cap in lines, 0 = the table's own */
+     long cap_us;                /* fpvOS: the same in us, as asked */
+     int cap_ceil;               /* fpvOS: the last index the capped sensor still reaches, 0 = none */
+@@ -182,6 +184,55 @@ static uint32_t ae_cap_exposure(uint32_t cap_lines, uint32_t lines, uint32_t *ga
+  * climb indices that no longer brighten the picture (and would have to come
+  * back down through them, unseen, when the light returns).
+  */
++/*
++ * fpvOS: the table's line counts are 1080p60 lines (ML_AED_LINE_NS). A mode with
++ * another line (the SC231AI's 720p window: 11.1 us at 120 fps) takes the same
++ * exposure time, in its own lines.
++ */
++static uint32_t ae_mode_lines(const struct ae_opts *opts, uint32_t table_lines)
++{
++    if (!opts->line_ns || opts->line_ns == ML_AED_LINE_NS) {
++        return table_lines;
++    }
++    uint64_t lines = ((uint64_t)table_lines * ML_AED_LINE_NS + opts->line_ns / 2) / opts->line_ns;
++    return lines ? (uint32_t)lines : 1;
++}
++
++/*
++ * fpvOS: the sensor's line and longest exposure in the mode it runs, from its
++ * subdevice: a line is the width and the horizontal blanking at the pixel rate.
++ * --line-ns, when given, keeps its value. 0, or -errno when it cannot be read.
++ */
++static int ae_sensor_mode(struct ae_opts *opts, int line_given)
++{
++    int fd = open(opts->sensor_device, O_RDONLY | O_CLOEXEC);
++    if (fd < 0) {
++        return -errno;
++    }
++    struct v4l2_subdev_format f = { .which = V4L2_SUBDEV_FORMAT_ACTIVE, .pad = 0 };
++    struct v4l2_ext_control c[2] = { { .id = V4L2_CID_PIXEL_RATE }, { .id = V4L2_CID_HBLANK } };
++    struct v4l2_ext_controls cs = { .which = V4L2_CTRL_WHICH_CUR_VAL, .count = 2, .controls = c };
++    struct v4l2_queryctrl q = { .id = V4L2_CID_EXPOSURE };
++    int ok = !ioctl(fd, VIDIOC_SUBDEV_G_FMT, &f) && !ioctl(fd, VIDIOC_G_EXT_CTRLS, &cs) &&
++             !ioctl(fd, VIDIOC_QUERYCTRL, &q) && c[0].value64 > 0 && c[1].value >= 0 &&
++             q.maximum > 0;
++    int e = errno;
++    close(fd);
++    if (!ok) {
++        return -e;
++    }
++    if (!line_given) {
++        /* Rounded: 1080p60's 2240 / 151.2 MHz is the table's own 14815. */
++        opts->line_ns = (unsigned int)(((f.format.width + (uint64_t)c[1].value) * 1000000000ull +
++                                        (uint64_t)c[0].value64 / 2) / (uint64_t)c[0].value64);
++    }
++    opts->exp_max = (unsigned int)q.maximum;
++    printf("ml-aed: sensor %ux%u, line %u ns, exposure up to %u lines\n",
++           f.format.width, f.format.height, opts->line_ns, opts->exp_max);
++    fflush(stdout);
++    return 0;
++}
++
+ static void ae_set_cap(struct ae_opts *opts, const struct ae_tuning *tune, long us)
+ {
+     opts->cap_us = us;
+@@ -193,7 +244,7 @@ static void ae_set_cap(struct ae_opts *opts, const struct ae_tuning *tune, long
+ 
+         opts->cap_lines = lines ? (uint32_t)lines : 1;
+         while (top > tune->index_min &&
+-               (uint64_t)tune->table[top].gain_q8 * tune->table[top].line_count >
++               (uint64_t)tune->table[top].gain_q8 * ae_mode_lines(opts, tune->table[top].line_count) >
+                (uint64_t)ae_gain_q8_max() * opts->cap_lines) {
+             top--;
+         }
+@@ -238,7 +289,7 @@ static int ae_actuate(const struct ae_tuning *tune, const struct ae_opts *opts,
+               int exp_index)
+ {
+     const struct mlaed_exp_entry *e = &tune->table[exp_index];
+-    uint32_t lines = e->line_count;
++    uint32_t lines = ae_mode_lines(opts, e->line_count);
+     uint32_t gain_q8 = e->gain_q8;
+     /* fpvOS: under the exposure cap the ladders take the gain the sensor
+      * really runs at, the gain the vendor's table would have had there. */
+@@ -255,8 +306,13 @@ static int ae_actuate(const struct ae_tuning *tune, const struct ae_opts *opts,
+      * exposure to whole mains half-periods, so it stays within the cap; capping after it cut a
+      * snapped exposure back to the cap, which is no whole number of them (banding again).
+      */
+-    lines = ae_cap_exposure(opts->cap_lines, lines, &gain_q8);
+-    (void)ae_cap_exposure(opts->cap_lines, e->line_count, &ladder_q8);
++    /* fpvOS: and the mode's own longest exposure, the gain making up the rest likewise. */
++    uint32_t cap = opts->cap_lines;
++    if (opts->exp_max && (!cap || cap > opts->exp_max)) {
++        cap = opts->exp_max;
++    }
++    (void)ae_cap_exposure(cap, lines, &ladder_q8);
++    lines = ae_cap_exposure(cap, lines, &gain_q8);
+ 
+     /*
+      * Anti-flicker rewrites the sensor-bound pair only. The ladder abscissa below stays on the
+@@ -279,7 +335,7 @@ static int ae_actuate(const struct ae_tuning *tune, const struct ae_opts *opts,
+     while(ai+1<sizeof(analog)/sizeof(analog[0]) && analog[ai+1]<=gain_q8*4U) ai++;
+     unsigned int residual = (unsigned long long)gain_q8 * 4096 / analog[ai];
+     while(di+1<sizeof(digital)/sizeof(digital[0]) && digital[di+1]<=residual) di++;
+-    if (lines > 1114) lines = 1114;
++    if (opts->exp_max ? lines > opts->exp_max : lines > 1114) lines = opts->exp_max ? opts->exp_max : 1114;
+     int sensor=open(opts->sensor_device,O_RDWR|O_CLOEXEC);
+     if(sensor<0) return -errno;
+     struct v4l2_ext_control controls[3]={{.id=V4L2_CID_EXPOSURE,.value=lines},
+@@ -703,7 +759,7 @@ int main(int argc, char **argv)
+     const char *tuning_path = ML_AED_TUNING_FALLBACK;
+     long max_exposure_us = 0;
+     struct ae_tuning tune;
+-    int c, ret;
++    int c, ret, line_given = 0;
+ 
+     while ((c = getopt_long(argc, argv, "", longopts, NULL)) != -1) {
+         switch (c) {
+@@ -750,6 +806,7 @@ int main(int argc, char **argv)
+ 
+         case 'B' + 128: {
+             opts.line_ns = (unsigned int)atoi(optarg);
++            line_given = 1;
+         } break;
+ 
+         case 'L': {
+@@ -810,6 +867,14 @@ int main(int argc, char **argv)
+         fprintf(stderr, "--sensor-device is required (SC231AI V4L2 subdevice)\n");
+         return 2;
+     }
++    if (!opts.dry_run) {
++        ret = ae_sensor_mode(&opts, line_given);
++        if (ret) {
++            fprintf(stderr, "ml-aed: %s: the sensor's mode: %s\n", opts.sensor_device, strerror(-ret));
++
++            return 1;
++        }
++    }
+     ret = ae_tuning_load(&tune, tuning_path);
+     if (ret) {
+         fprintf(stderr, "ml-aed: %s: %s\n", tuning_path,
