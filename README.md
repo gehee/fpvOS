@@ -112,7 +112,7 @@ No release images are published yet: you build them
 
 What is not there yet, per board:
 
-- **P1 Air:** 1080p60 is the only camera mode. The stock install is qualified
+- **P1 Air:** the camera runs 1080p60 and 720p90, nothing faster. The stock install is qualified
   from stock 1.0.44 on Linux Chromium; other stock versions, Windows and macOS
   aren't. [Board notes](br-external/board/p1-air/README.md).
 - **Ascent VRX:** flying on it isn't qualified; range and packet loss haven't

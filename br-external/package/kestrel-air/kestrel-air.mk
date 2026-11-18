@@ -9,7 +9,7 @@
 # KESTREL_AIR_SITE another copy of the repository.
 KESTREL_AIR_SITE ?= https://github.com/gehee/kestrel-air.git
 KESTREL_AIR_SITE_METHOD = git
-KESTREL_AIR_VERSION ?= 9263b1d2d0bc64935fdf81e46b5424d6170bbbf7
+KESTREL_AIR_VERSION ?= fe4b612b6f2d8f78fa17e8816a0898e6d86a2c41
 KESTREL_AIR_LICENSE = GPL-3.0 with an additional permission
 KESTREL_AIR_LICENSE_FILES = LICENSE LICENSE.exception
 KESTREL_AIR_DEPENDENCIES = ar-libre
@@ -53,6 +53,7 @@ endef
 ifeq ($(BR2_PACKAGE_KESTREL_AIR_AR9311),y)
 define KESTREL_AIR_INSTALL_LAUNCHER
 	$(INSTALL) -D -m 0755 $(KESTREL_AIR_PKGDIR)/ar9311-run $(TARGET_DIR)/usr/bin/kestrel-air-run
+	$(INSTALL) -D -m 0755 $(KESTREL_AIR_PKGDIR)/ar9311-camera-load $(TARGET_DIR)/usr/bin/ar9311-camera-load
 	$(INSTALL) -D -m 0755 $(@D)/kestrel-air-supervise $(TARGET_DIR)/usr/sbin/kestrel-air-supervise
 	$(INSTALL) -D -m 0755 $(KESTREL_AIR_PKGDIR)/S60kestrel-air $(TARGET_DIR)/etc/init.d/S60kestrel-air
 endef

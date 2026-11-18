@@ -93,9 +93,46 @@ select or flash it. Do not use the Ascent updater for P1.
 
 The source target builds the SC231AI sensor driver, CSI receiver, VIF, ISP,
 CVISP capture and Wave5 encoder. The sensor uses standard I2C, GPIO, clock,
-runtime PM and V4L2 controls. Its mode is fixed 1920x1080 at 60 fps, RAW10,
-with grouped exposure and analogue/digital gain updates. Board timing, wiring
-and the tuning filename live in the P1 device tree.
+runtime PM and V4L2 controls, RAW10, with grouped exposure and
+analogue/digital gain updates. Board timing, wiring and the tuning filename
+live in the P1 device tree.
+
+Two sensor modes, chosen by the V4L2 format and frame interval or by the
+module's `mode` parameter (`1080p60`, `1080p50`, `1080p30`, `720p90`,
+`720p60`):
+
+| Mode | Sensor readout | Measured on the P1 |
+|---|---|---|
+| 1080p60 | 1920x1080, line 2240, frame 1125 | 60.02 fps |
+| 720p90 | 1920x720 (rows 180-907), line 2240, frame 750 | 90.03 fps captured, ~90 fps encoded, no drops |
+| 720p60 | 1920x720, frame 1125 | 59.98 fps |
+
+Stock P1 firmware (1.0.44, 2.0.5, 2.0.6) has one sensor table, 1080p60, and
+only lowers the frame rate by lengthening the frame. The 720p rows are that
+table with a shorter row window and frame, in the SmartSens register layout
+the table itself uses. The lines stay 1920 wide: the sensor's column window
+does shorten them, but the VIF front end then never measures a frame
+(VIF 0x1ec/0x1f0 read 0) and nothing reaches the ISP, at every width and
+padding tried. A 1920-pixel RAW10 line takes 12.7 us on the two 756 Mbit/s
+lanes, so 720 rows top out near 90 fps. The receiver is not the cause: it
+takes a gated MIPI clock (full-width lines of 3200 gate it and still capture),
+and the cropped sensor still sends a packet per line, which the VIF never
+accepts as a frame. The sibling SmartSens drivers narrow their output by
+binning or skipping (Rockchip sc200ai 960x540, sc230ai 640x480), not by a
+column window; a faster mode would be that, not 720p. kestrel-air codes the centre 1280 columns (the encoder reads from an
+offset into each line), so 720p is the centre of the 1080p picture.
+
+The ISP and CVISP replays were recorded at 1080p. `0011-frame-from-the-sensor`
+rewrites the registers the provenance audit attributes to the frame for the
+sensor's frame size, in the spellings the audit recognises. It takes fewer
+rows of the 1920 line only, which is the line de3d's recovered delay is for.
+The AE (`0005-exposure-in-the-sensor-mode`) reads the mode's line and longest
+exposure from the sensor's subdevice.
+
+The capture chain is brought up once per driver load. Another mode is another
+load: `ar9311-camera-load MODE` reloads the camera drivers in it, with nothing
+holding them open. kestrel-air does this itself when the receiver asks for
+another mode.
 
 `p1-air-camera-firmware` extracts and verifies the SC231 tuning and P1's
 low-memory codec microcode from the pinned official firmware. These remain
@@ -158,13 +195,22 @@ The source profile selects Kestrel's AR9311 backend and native SDIO radio
 transport. It uses the same source camera drivers and DMA-BUF encoder path as
 the recorder, with Kestrel owning encoded frame packetization, bitrate control,
 receiver commands and AE/AWB lifecycle. No vendor media libraries are linked.
-The initial mode is HEVC at 1920x1080 and 60 fps, sent as 4 slices, with intra
-refresh: a band of CTU rows sweeps the picture every 17 frames, so keyframes
+HEVC goes out at 1920x1080 and 60 fps, or 1280x720 at 90 or 60, sent as 4
+slices, with intra refresh: a band of CTU rows sweeps the picture every 17 frames, so keyframes
 come only when the receiver asks for one (the Wave5 control of
 `0019-media-wave5-hevc-intra-refresh.patch`, its band kept at 2 rows or more by
 `0027-media-wave5-intra-refresh-band.patch`; strips refresh by columns,
-`0028-media-wave5-intra-refresh-columns.patch`). Other camera modes are not
-implemented yet.
+`0028-media-wave5-intra-refresh-columns.patch`). A receiver's 720p request
+above 60 fps runs 720p90 (the Ascent goggles' "720p100", sent as 120);
+everything else runs 1080p60, a 720p60 request too. The sensor's 720p60 is a
+crop of what 1080p60 shows, and nothing before the encoder scales: the
+CVISP's output size, set to 1280x720 with its input at 1080p, writes the
+top-left 1280x720 of the picture unscaled (tried 2026-11-18). It stores and
+reports the mode that runs (a 720p100 request: 1280x720@90, a 720p60 one:
+1920x1080@60). kestrel-air says `720p90=1` and
+`modes=1920x1080@60,1280x720@90` in its info: a kestrel-gnd that knows them
+offers those two alone and asks for 720p90 at 90 (not 720p60, 720p100 or
+1080p100, which would run as 1080p60, at 90 and at 60).
 
 Until the backend is published and the package revision is updated, use a local
 Kestrel checkout containing the AR9311 backend. After configuring the source

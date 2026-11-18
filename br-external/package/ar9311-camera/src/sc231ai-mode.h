@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-only */
 /* P1_SKY 1.0.44 SC231AI 1080p60 RAW10 mode, 24 MHz input.
+ * Every mode starts from this table; see sc231ai_720p below.
  * Register data recovered in order from libsns_sc231ai.so, SHA256
  * a51a9a67ff5343c1c8bc5868094d5850b5c7d4ddac58749833e4dc83d4a5dc63.
  * The final 0x0100=1 belongs to stream-on, after control setup.
@@ -165,6 +166,31 @@ static const struct sc231ai_reg sc231ai_1080p60[] = {
 	{ 0x57ad, 0x00 },
 	{ 0x36e9, 0x23 },
 	{ 0x37f9, 0x23 },
+};
+
+/* fpvOS's 720p rows. Stock has no other mode, so this is not a vendor table:
+ * it keeps the whole 1080p60 table (PLL, 2 lanes at 756 Mbit/s, RAW10,
+ * analogue timing, line length) and reads only rows 180-907 of the array
+ * (0x3202/0x3203, 0x3206/0x3207), output 720 rows at the same 4-row offset
+ * (0x320a/0x320b, 0x3212/0x3213). This is the SmartSens register layout the
+ * 1080p table itself uses. The driver writes the frame length, 0x320e/0x320f,
+ * for the rate: 750 lines is 90 fps at the stock line.
+ *
+ * The lines stay 1920 wide. On the P1 (bench, 2026-11-17) the column window
+ * (0x3200/0x3201, 0x3204/0x3205, 0x3208/0x3209) does shorten the lines, but
+ * the VIF front end never recognises a frame from it, whatever the width (1280,
+ * 1296) or padding. A 1920-pixel line takes 12.7 us on the two lanes, so at
+ * 720 rows the frame tops out near 90 fps. Lines of 2016 and 1960 cycles sent
+ * nothing. The consumer crops the 1280 centre columns: kestrel-air's encoder
+ * reads from an offset into each line.
+ */
+static const struct sc231ai_reg sc231ai_720p[] = {
+	{ 0x3202, 0x00 },
+	{ 0x3203, 0xb4 },
+	{ 0x3206, 0x03 },
+	{ 0x3207, 0x8b },
+	{ 0x320a, 0x02 },
+	{ 0x320b, 0xd0 },
 };
 
 #endif

@@ -1,0 +1,33 @@
+#!/bin/sh
+# Load the source-camera drivers with the sensor in MODE (<height>p<fps>, the
+# sc231ai mode parameter: 1080p60, 720p90, 720p60, ...), or reload them when
+# they are loaded in another mode. The capture chain is brought up once per
+# load and never torn down (ar-cvisp), so another mode is another load.
+# Without MODE: the mode loaded now, else 1080p60.
+# Nothing may hold the camera nodes open: stop the encoder and the AE/AWB
+# services first. kestrel-air does, through its camera pipeline.
+set -eu
+. /etc/default/ar9311-camera
+: "${SENSOR_MODULE:?}"
+param=/sys/module/$SENSOR_MODULE/parameters/mode
+mode=${1:-$(cat "$param" 2>/dev/null || echo 1080p60)}
+if [ -r "$param" ] && [ "$(cat "$param")" != "$mode" ]; then
+    # Users first: the encoder's imported buffers go with ar-cvisp.
+    modprobe -r ar-cvisp ar-isp ar-vif ar-csi2 "$SENSOR_MODULE"
+fi
+grep -q ' /sys/kernel/debug debugfs ' /proc/mounts || mount -t debugfs debugfs /sys/kernel/debug
+modprobe artosyn_gpio
+modprobe clk-ar9311-cgu
+modprobe "$SENSOR_MODULE" mode="$mode"
+modprobe ar-csi2
+modprobe ar-vif
+modprobe ar-isp gates=1 seed=0
+# depth 2: each buffer reaches the encoder one frame (16.7 ms) sooner than at
+# the default 3. With an exposure toggled every 100 ms, 600 pictures at 2 and
+# at 3 came out whole, while at 1 half of them mixed two frames.
+modprobe ar-cvisp assert_clk=1 depth=2
+# kestrel-air reads a frame's rows as they land (KA_EARLY_ROW): depth 1 for its
+# streams, 5.5 ms sooner again (0008-depth-per-stream.patch; read at stream start).
+echo 1 > /sys/module/ar_cvisp/parameters/depth
+modprobe wave5
+[ "$(cat "$param")" = "$mode" ] || { echo "$SENSOR_MODULE is not in $mode" >&2; exit 1; }

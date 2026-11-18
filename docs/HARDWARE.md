@@ -12,7 +12,7 @@ device stands, released or in development, and how it installs is in the
 
 | Feature | Ascent Lite | Ascent Lite+ | P1 Air |
 |---|---|---|---|
-| Video to an fpvOS receiver | ✅ | ✅ | ✅ 1080p60 only |
+| Video to an fpvOS receiver | ✅ | ✅ | ✅ 1080p60, 720p90 |
 | Steady latency: intra refresh instead of keyframe bursts | ✅ | ✅ | ✅ |
 | Latency measured end to end, capture to screen | ✅ | ✅ | ? |
 | Camera settings (EV, white balance, 3D DNR, rotation, video modes) | ✅ | ✅ | ? |
@@ -49,7 +49,7 @@ below are what fpvOS measured on the bench, not the vendor's figures.
 |---|---|---|---|---|---|---|---|---|
 | Caddx | **Ascent Lite** | HiSilicon Hi3516CV610, 2× Cortex-A7 | 128 MiB (64 Linux, 64 media) | CV2004 | H.265, sent slice by slice, intra refresh | 720p and 1080p up to 100 fps, 864p120 | camera IMU | SDIO |
 | Caddx | **Ascent Lite+** | HiSilicon Hi3516CV610, 2× Cortex-A7 | 128 MiB (64 Linux, 64 media) | OS02K10 | H.265, sent slice by slice, intra refresh | 720p and 1080p up to 100 fps, 864p120, 864p144 | — | SDIO |
-| BetaFPV | **P1 Air** | Artosyn AR9311, 2× Cortex-A53 | 256 MiB | SC231AI | Wave5 HEVC, 4 slices a picture, intra refresh | 1080p60 | — | SDIO |
+| BetaFPV | **P1 Air** | Artosyn AR9311, 2× Cortex-A53 | 256 MiB | SC231AI | Wave5 HEVC, 4 slices a picture, intra refresh | 1080p60, 720p90 | — | SDIO |
 
 **Receivers and goggles**
 
