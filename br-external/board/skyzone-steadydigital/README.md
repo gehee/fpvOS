@@ -37,8 +37,8 @@ Ctrl-C on the UART, then `bootm 0x24400000 0x26000000 0x22080000`. The image
 with Kestrel exceeds the Gnd485's 8 MiB initramfs window; `--board skyzone-steadydigital`
 allows up to 0x29000000, below this board's ramoops and media pool.
 The host loader device is U-Boot's `1d6b:0100`; non-root access needs a udev
-rule. SSH is root:root at 192.168.3.104 (host side 192.168.3.10/32 with a route
-to .104).
+rule. SSH is root:root at 192.168.3.1, as every fpvOS goggle; the computer gets
+an address from .200-.209.
 
 ## Wiring
 

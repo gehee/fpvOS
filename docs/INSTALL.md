@@ -168,17 +168,18 @@ Every fpvOS device's USB network is **CDC-NCM**, which Windows 10 (1903 and
 later), Windows 11, macOS and Linux all take without installing a driver.
 
 **The goggle** exposes a USB network device. Plug it into a computer and it
-comes up as a network interface; the goggle answers on **192.168.3.1**:
+comes up as a network interface; every fpvOS goggle answers on **192.168.3.1**
+and gives your computer an address from 192.168.3.200-209:
 
 ```sh
-ssh root@192.168.3.1      # password: fpvos
+ssh root@192.168.3.1      # password: fpvos on the VRX Pro, root on the others
 ```
 
 SSH is only on the USB link. It does not answer over the goggle's WiFi access
 point, so the default password is not reachable by anyone nearby.
 
-**The air unit** (fpvOS image) does the same at **192.168.2.1** with a DHCP
-server for your computer. The login is `root` / `root` by default; see
+**The air unit** (fpvOS image) does the same at **192.168.2.1**, every fpvOS
+air unit, with 192.168.2.200-209 for your computer. The login is `root` / `root` by default; see
 [BUILD.md](BUILD.md#the-air-unit) to set your own.
 
 ## Settings files

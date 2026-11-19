@@ -50,7 +50,7 @@ else
 fi
 mountpoint -q /sys/fs/pstore && pass 'persistent crash store mounted' || fail 'pstore missing'
 if [ "$(cat /sys/kernel/config/usb_gadget/fpvos/UDC 2>/dev/null)" = 8000000.usb ] &&
-	ip -4 addr show dev usb0 | grep -q '192.168.3.102/24'; then
+	ip -4 addr show dev usb0 | grep -q '192.168.3.1/24'; then
 	pass 'native USB NCM configured (host reachability needs a host test)'
 else
 	fail 'USB NCM configuration'

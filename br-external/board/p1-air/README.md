@@ -84,7 +84,8 @@ bundle; see persistent installation below.
 The source DT uses P1's measured memory layout and SPL `ar-spin-table` CPU
 handoff. USB gadget code is shared with Ascent VRX; identity, addresses and
 MACs are board configuration. The source image provides root:root SSH at
-192.168.3.103 (the Ascent VRX is .102, and its setup gives the host PC .100).
+192.168.2.1, the address of every fpvOS air unit, and gives the host PC an
+address from .200-.209 (a goggle is 192.168.3.1).
 Persistent boot uses the P1 SPL directly; development can load the same
 kernel and DTB into RAM through U-Boot USB. Booting a test image does not
 select or flash it. Do not use the Ascent updater for P1.
@@ -425,7 +426,7 @@ The source profile carries fpvOS_usb (`fpvos-usb` package). The serial port
 (CDC-ACM) is there in every mode, and the updater on it changes the mode
 (command 3 `normal`, `bridge` or `update`; fpvOS_usb `docs/protocol.md`):
 
-- normal: USB Ethernet at 192.168.3.103 and SSH, as booted.
+- normal: USB Ethernet at 192.168.2.1 and SSH, as booted.
 - update: the updater's clean mode, in RAM, for flashing.
 - bridge: Kestrel stops and the USB network becomes the unit's AR8030, as an
   AR8030 on USB, for a host running ar_libre's `arlink.ko`. The host's

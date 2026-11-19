@@ -19,7 +19,7 @@ The board has 256 MiB DRAM. The initial configuration preserves stock's
 148 MiB Linux / 108 MiB reserved split. Of the reserved range, 107 MiB
 is codec DMA memory and the top 1 MiB remains reserved for the RAM loader. The two CPUs use the AR9311 SPL handshake;
 a diagnostic loader that parks the second CPU must supply `maxcpus=1`.
-USB Ethernet uses `192.168.3.103/24` with SSH `root:root`. The USB identity is
+USB Ethernet uses `192.168.3.1/24`, as every fpvOS goggle, with SSH `root:root`; the computer gets an address from .200-.209. The USB identity is
 `fpvos-p1-goggle`, distinct from Ascent VRX and P1 Air.
 
 The NAND layout preserves stock bank 0 and installs fpvOS into kernel1,
