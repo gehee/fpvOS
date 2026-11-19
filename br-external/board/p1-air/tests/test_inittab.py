@@ -22,5 +22,20 @@ class Shutdown(unittest.TestCase):
         self.assertLess(bridge, usb)
 
 
+class RecoveryShutdown(unittest.TestCase):
+    """The embedded recovery (fpvos-recovery): its reboot ends the updater's
+    install, and the computer has to see the unit leave first."""
+    def setUp(self):
+        text = (BOARD.parents[1]/'package/fpvos-recovery/src/inittab').read_text()
+        self.steps = [line.split(':', 3)[3] for line in text.splitlines()
+                      if line.startswith('::shutdown:')]
+
+    def test_usb_gadget_unbound_before_the_reset(self):
+        usb = self.steps.index('/etc/init.d/S40ar9311-usb stop')
+        pause = self.steps.index('/bin/sleep 1')
+        self.assertLess(usb, pause)
+        self.assertLess(pause, self.steps.index('/bin/umount -a -r'))
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -1,0 +1,72 @@
+#!/bin/sh
+# Bench diagnostics for the USB link (off unless /persist/fpvos/usb-diag/enabled
+# exists): every 3 s for the first 3 minutes of a boot, the gadget's and the
+# controller's state, usb0's counters, the services behind them and the USB
+# stack's new kernel messages, appended to boot-1.log on the persistent
+# volume. The last five boots are kept (boot-1 the latest), so a boot whose
+# USB link stalled can be read after the cable has been pulled and put back.
+# With them the DWC2 controller's registers and endpoint states (debugfs): once
+# ~25 s in, and again the first time usb0 has received nothing for 15 s. A
+# hook.sh beside them, if there, runs in the background at each such boot.
+dir=/persist/fpvos/usb-diag
+udc=/sys/class/udc/8000000.usb
+gadget=/sys/kernel/config/usb_gadget/fpvos
+net=/sys/class/net/usb0
+dbg=/sys/kernel/debug/usb/8000000.usb
+
+running() { pidof "$1" >/dev/null 2>&1 && echo up || echo down; }
+read1() { cat "$1" 2>/dev/null || echo -; }
+dwc2_dump() {
+	echo "## dwc2 $1 at $(cut -d' ' -f1 /proc/uptime)s"
+	for f in state regdump ep0 ep1in ep1out ep2in ep2out ep3in ep3out ep4in ep4out; do
+		[ -e "$dbg/$f" ] || continue
+		echo "### $f"; cat "$dbg/$f" 2>/dev/null
+	done
+}
+
+record() {
+	i=5
+	while [ "$i" -gt 1 ]; do
+		j=$((i - 1))
+		[ ! -e "$dir/boot-$j.log" ] || mv -f "$dir/boot-$j.log" "$dir/boot-$i.log"
+		i=$j
+	done
+	log=$dir/boot-1.log
+	{
+		echo "== boot $(cat /proc/sys/kernel/random/boot_id 2>/dev/null) $(uname -r) $(cat /usrdata/fpv/air/kestrel-air.version 2>/dev/null)"
+		dmesg | grep -i -E 'dwc2|gadget|udc|usb0|ncm|acm|configfs' | tail -40
+	} > "$log"
+	seen=$(dmesg | wc -l)
+	[ ! -f "$dir/hook.sh" ] || sh "$dir/hook.sh" >> "$dir/hook.log" 2>&1 &
+	n=0 last_rx= still=0 dumped=0
+	while [ "$n" -lt 60 ]; do
+		{
+			echo "-- $(cut -d' ' -f1 /proc/uptime)s udc=$(read1 $udc/state) speed=$(read1 $udc/current_speed)" \
+				"bound=$(read1 $gadget/UDC) usb0=$(read1 $net/operstate)" \
+				"rx=$(read1 $net/statistics/rx_packets)/$(read1 $net/statistics/rx_errors)" \
+				"tx=$(read1 $net/statistics/tx_packets)/$(read1 $net/statistics/tx_errors)" \
+				"udhcpd=$(running udhcpd) update=$(running fpvos-update-service)" \
+				"ttyGS0=$(fuser /dev/ttyGS0 2>/dev/null | wc -w)"
+			now=$(dmesg | wc -l)
+			[ "$now" -le "$seen" ] || dmesg | tail -n $((now - seen)) | grep -i -E 'dwc2|gadget|udc|usb|ncm|acm'
+			seen=$now
+			rx=$(read1 $net/statistics/rx_packets)
+			[ "$rx" = "$last_rx" ] && still=$((still + 1)) || still=0
+			last_rx=$rx
+			[ "$n" -ne 8 ] || dwc2_dump baseline
+			[ "$dumped" = 1 ] || [ "$still" -lt 5 ] || { dwc2_dump "rx still for 15 s"; dumped=1; }
+		} >> "$log" 2>/dev/null
+		n=$((n + 1))
+		sleep 3
+	done
+	sync
+}
+
+case "${1:-}" in
+	start)
+		[ -e "$dir/enabled" ] || exit 0
+		record </dev/null >/dev/null 2>&1 &
+		;;
+	stop) ;;
+	*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

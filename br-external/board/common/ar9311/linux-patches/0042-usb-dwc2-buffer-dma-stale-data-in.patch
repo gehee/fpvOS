@@ -1,0 +1,84 @@
+From: fpvOS contributors
+Subject: [PATCH] usb: dwc2: gadget: buffer DMA ends a stale EP0 data IN stage on the next SETUP too
+
+0033 watches the shared RxFIFO while an EP0 Status IN is pending, so a SETUP
+the host sends after it has ended the transfer is not left at the FIFO's head
+with EP0 OUT disarmed. A data IN stage can be left the same way: its last
+packet is a ZLP (send_zlp: the data a multiple of wMaxPacketSize and shorter
+than wLength) armed while ep0_state is still DATA_IN, and a host that has all
+it asked for moves on without collecting it. The watch was then off, and the
+handler turned it off for any state but STATUS_IN.
+
+Seen on the P1 Air (core v4.00a, buffer DMA) after warm reboots - the
+updater's last step, recovery's - with macOS as the host: usb0 and the ACM
+port stopped some seconds after enumeration, 3 boots in 3, the controller
+then: GINTSTS RxFLvl, GRXSTSR an 8-byte EP0 SETUP, DIEPCTL0 EPEna with a
+one-packet ZLP (DIEPTSIZ0 0x00080000), DOEPCTL0 disabled, RxFLvl masked.
+
+The watch now covers EP0 IN in both the data and the status stage, and a
+SETUP behind either ends the transfer (USB 2.0 8.5.3) as 0033 does.
+---
+--- a/drivers/usb/dwc2/gadget.c
++++ b/drivers/usb/dwc2/gadget.c
+@@ -1053,6 +1053,16 @@
+  * disarmed: no OUT endpoint is served again. While a Status IN is pending,
+  * watch RxFLvl so such a SETUP ends the stale transfer (USB 2.0 8.5.3).
+  */
++/* The EP0 IN stages the watch covers: a Status IN, and a data IN stage (whose
++ * last packet can be a ZLP the host never collects when it has all it asked
++ * for and moves on).
++ */
++static bool dwc2_hsotg_ep0_in_stage(struct dwc2_hsotg *hsotg)
++{
++	return hsotg->ep0_state == DWC2_EP0_STATUS_IN ||
++	       hsotg->ep0_state == DWC2_EP0_DATA_IN;
++}
++
+ static void dwc2_hsotg_ep0_status_watch(struct dwc2_hsotg *hsotg, bool on)
+ {
+ 	if (!using_dma(hsotg) || using_desc_dma(hsotg) ||
+@@ -1234,7 +1244,7 @@
+ 
+ 	dev_dbg(hsotg->dev, "%s: DxEPCTL=0x%08x\n", __func__, ctrl);
+ 	dwc2_writel(hsotg, ctrl, epctrl_reg);
+-	if (index == 0 && dir_in && hsotg->ep0_state == DWC2_EP0_STATUS_IN)
++	if (index == 0 && dir_in && dwc2_hsotg_ep0_in_stage(hsotg))
+ 		dwc2_hsotg_ep0_status_watch(hsotg, true);
+ 
+ 	/*
+@@ -2123,8 +2133,7 @@
+ 	ctrl |= DXEPCTL_EPENA; /* ensure ep enabled */
+ 	ctrl |= DXEPCTL_USBACTEP;
+ 	dwc2_writel(hsotg, ctrl, epctl_reg);
+-	if (!index && hs_ep->dir_in &&
+-	    hsotg->ep0_state == DWC2_EP0_STATUS_IN)
++	if (!index && hs_ep->dir_in && dwc2_hsotg_ep0_in_stage(hsotg))
+ 		dwc2_hsotg_ep0_status_watch(hsotg, true);
+ }
+ 
+@@ -3747,13 +3756,13 @@
+ 	    (dwc2_readl(hsotg, DOEPCTL0) & DXEPCTL_EPENA))
+ 		return;	/* traffic the DMA drains */
+ 
+-	if (hsotg->ep0_state != DWC2_EP0_STATUS_IN) {
++	if (!dwc2_hsotg_ep0_in_stage(hsotg)) {
+ 		/* Not the case handled here: never hold a level interrupt. */
+ 		dwc2_hsotg_ep0_status_watch(hsotg, false);
+ 		return;
+ 	}
+ 
+-	/* The Status IN went out and only its completion is still to be
++	/* The IN packet went out and only its completion is still to be
+ 	 * serviced (the host's next SETUP beat this handler): not stale. That
+ 	 * completion, later in this pass, arms EP0 OUT itself; ending the
+ 	 * transfer here would complete it twice and lose a request.
+@@ -3761,7 +3770,8 @@
+ 	if (dwc2_readl(hsotg, DIEPINT(0)) & DXEPINT_XFERCOMPL)
+ 		return;
+ 
+-	dev_dbg(hsotg->dev, "%s: SETUP during a stale Status IN\n", __func__);
++	dev_dbg(hsotg->dev, "%s: SETUP during a stale EP0 IN (state %d)\n", __func__,
++		hsotg->ep0_state);
+ 	if (dwc2_readl(hsotg, DIEPCTL0) & DXEPCTL_EPENA) {
+ 		dwc2_set_bit(hsotg, DIEPCTL0, DXEPCTL_SNAK);
+ 		dwc2_hsotg_wait_bit_set(hsotg, DIEPINT(0), DXEPINT_INEPNAKEFF, 100);

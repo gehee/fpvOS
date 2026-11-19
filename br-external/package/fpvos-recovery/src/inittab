@@ -8,4 +8,11 @@
 ttyS0::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
 ::shutdown:/bin/sync
+# The USB gadget unbound before the reset, as normal mode's shutdown does: the
+# computer then sees the unit leave, and takes it afresh when it comes back.
+# Without it a reboot out of recovery (the updater's last step) left macOS on
+# the old session - neither the network nor the update port answered until
+# the cable was pulled.
+::shutdown:/etc/init.d/S40ar9311-usb stop
+::shutdown:/bin/sleep 1
 ::shutdown:/bin/umount -a -r
