@@ -31,4 +31,6 @@ export KA_CONFIG="$STATE_DIR/settings.json"
 export KA_PEER_CONFIG="$STATE_DIR/peer.json"
 export KA_READY_FILE=/run/kestrel-air/ready
 rm -f "$KA_READY_FILE"
-exec /usrdata/fpv/air/kestrel-air ${MAX_EXPOSURE_US:+--max-exposure-us "$MAX_EXPOSURE_US"} "$@"
+# --imu: no IMU on the P1's camera, so the flight controller's, polled over
+# MSP for the goggle's reactive HUD (none without the FC's UART).
+exec /usrdata/fpv/air/kestrel-air --imu ${MAX_EXPOSURE_US:+--max-exposure-us "$MAX_EXPOSURE_US"} "$@"

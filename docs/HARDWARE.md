@@ -16,7 +16,7 @@ device stands, released or in development, and how it installs is in the
 | Steady latency: intra refresh instead of keyframe bursts | ✅ | ✅ | ✅ |
 | Latency measured end to end, capture to screen | ✅ | ✅ | ? |
 | Camera settings (EV, white balance, 3D DNR, rotation, video modes) | ✅ | ✅ | ? |
-| Reactive HUD | ✅ camera IMU | ✅ flight controller gyro | ? |
+| Reactive HUD | ✅ camera IMU | ✅ flight controller gyro | ? flight controller gyro |
 | Flight controller telemetry over MSP (battery, altitude, GPS, modes) | ✅ | ✅ | ? |
 | A cap on the video bitrate | ✅ | ✅ | ? |
 | USB network (CDC-NCM) and SSH | ✅ | ✅ | ✅ |
