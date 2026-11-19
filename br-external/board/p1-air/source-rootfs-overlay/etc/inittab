@@ -13,6 +13,8 @@
 ::sysinit:/etc/init.d/S43factory start
 ::sysinit:/etc/init.d/S44ar9311-radio start
 ::sysinit:/etc/init.d/S45settings start
+# Bench only: the USB link's state logged when /persist/fpvos/usb-diag/enabled exists.
+::sysinit:/etc/init.d/S46usb-diag start
 ::sysinit:/etc/init.d/S60kestrel-air start
 ::sysinit:/bin/cat /etc/issue
 
