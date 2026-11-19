@@ -121,10 +121,11 @@ applies the setting, then asks *Keep it?*. If you do nothing it goes back after
 |---|---|---|
 | **VIDEO** (only while linked) | Video Mode | 720p60 · 720p100 · 1080p60 · 1080p100, and with an fpvOS air unit whose camera has them 864p120 · 864p144 (1536x864). An air unit that runs others offers only its own: the P1 Air 720p90 · 1080p60 |
 | | Max Bitrate | AUTO · 6 · 8 · 10 · 12 · 15 · 18 · 20 · 22 · 25 · 30 · 35 · 40 Mbps. The air unit goes above 20 Mbps only when the link carries it. With a stock air unit the row is dimmed and reads *FPVOS AIR ONLY*: the stock app ignores the cap |
+| | Max Exposure | 1 · 2 · 3 · 4 · 5 · 6 · 8 · 10 ms · OFF (4 ms at first): the longest exposure the camera's auto exposure may use, the gain making up the rest - less motion blur, more grain in the dark. OFF is the camera's own. Only with an fpvOS air unit, which takes it as it runs |
 | | Rotate | 0 · 180 |
 | | Scene | Race · Standard |
 | | EV | -1.0 to +1.0 |
-| | White Balance | Auto, or 4000K to 7000K in steps of 100K |
+| | White Balance | Auto, or 4000K to 7000K in steps of 100K. With an fpvOS air unit also Lock current: it holds the colour balance it has now, kept across restarts |
 | | Saturation, Contrast, Sharpness | Auto, or 1 to 10 |
 | | 3D DNR | Off · Low · Mid · High · Auto |
 | | Focus Mode | On · Off |
