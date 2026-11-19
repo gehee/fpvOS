@@ -268,7 +268,17 @@
 			};
 			partition@3ba0000 {
 				label = "vendor-data";
-				reg = <0x3ba0000 0x4460000>;
+				reg = <0x3ba0000 0x2c00000>;
+				read-only;
+			};
+			/* Existing stock UBIFS data; shared settings only, no reformat. */
+			partition@67a0000 {
+				label = "fpv_data";
+				reg = <0x67a0000 0x1600000>;
+			};
+			partition@7da0000 {
+				label = "vendor-tail";
+				reg = <0x7da0000 0x260000>;
 				read-only;
 			};
 		};

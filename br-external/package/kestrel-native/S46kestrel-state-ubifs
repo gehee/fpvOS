@@ -1,0 +1,121 @@
+#!/bin/sh
+# Shared receiver settings in an existing, board-defined UBIFS volume.
+# No SD migration: internal settings are authoritative.
+# Never format, resize or replace it; stock's own files are left alone. The
+# recovery may already have attached it; otherwise attach only existing UBI.
+# Recordings go to the SD card whenever S45ar9311-sd mounted it writable;
+# kestrel-native's run decides that, not the "persistent" marker set here.
+set -eu
+umask 077
+. /etc/default/kestrel-state
+: "${STATE_PARTITION:?}" "${STATE_SIZE:?}" "${STATE_VOLUMES:?}"
+root=/persist
+dir=$root/fpvos/kestrel
+ram=/run/kestrel-state
+mounted() { awk -v point="$1" '$2 == point { found=1 } END { exit !found }' /proc/mounts; }
+partition() {
+    found=
+    for m in /sys/class/mtd/mtd[0-9]*; do
+        [ -f "$m/name" ] && [ "$(cat "$m/name")" = "$STATE_PARTITION" ] || continue
+        [ -z "$found" ] || return 1
+        [ "$(cat "$m/size")" = "$STATE_SIZE" ] || return 1
+        found=${m##*mtd}
+    done
+    [ -n "$found" ]
+}
+volume() {
+    partition || return 1
+    device=
+    for u in /sys/class/ubi/ubi[0-9]*; do
+        [ -f "$u/mtd_num" ] || continue
+        [ "$(cat "$u/mtd_num")" = "$found" ] || continue
+        device=${u##*/}
+    done
+    if [ -z "$device" ]; then
+        # Do not let UBI initialize blank storage. A missing/bad first EC
+        # header falls back safely; it is not an invitation to format.
+        [ "$(dd if="/dev/mtd$found" bs=4 count=1 2>/dev/null)" = 'UBI#' ] || return 1
+        ubiattach -m "$found" /dev/ubi_ctrl >/dev/null || return 1
+        echo "$found" > /run/kestrel-state-attached
+        for u in /sys/class/ubi/ubi[0-9]*; do
+            [ -f "$u/mtd_num" ] || continue
+            [ "$(cat "$u/mtd_num")" = "$found" ] && device=${u##*/}
+        done
+    fi
+    [ -n "$device" ] && [ "$(cat "/sys/class/ubi/$device/ro_mode")" = 0 ] || return 1
+    for p in /sys/class/ubi/"${device}"_[0-9]*; do
+        [ -f "$p/name" ] || continue
+        for name in $STATE_VOLUMES; do
+            [ "$(cat "$p/name")" = "$name" ] || continue
+            echo "/dev/${p##*/}"
+            return 0
+        done
+    done
+    return 1
+}
+detach_owned() {
+    if [ -f /run/kestrel-state-attached ]; then
+        attached=$(cat /run/kestrel-state-attached)
+        for u in /sys/class/ubi/ubi[0-9]*; do
+            [ -f "$u/mtd_num" ] || continue
+            [ "$(cat "$u/mtd_num")" = "$attached" ] || continue
+            ubidetach -d "${u##*ubi}" /dev/ubi_ctrl || return 1
+        done
+        rm -f /run/kestrel-state-attached
+    fi
+}
+persist() {
+    node=$(volume) || return 1
+    if ! mounted "$root"; then
+        [ ! -L "$root" ] || return 1
+        mkdir -p "$root"
+        mount -t ubifs -o rw,nodev,nosuid,noexec "$node" "$root" || return 1
+    fi
+    awk -v d="$node" -v p="$root" '$1 == d && $2 == p && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { ok=1 } END { exit !ok }' /proc/mounts || return 1
+    for d in "$root/fpvos" "$dir"; do
+        [ ! -L "$d" ] || return 1
+        [ -d "$d" ] || mkdir -m 0700 "$d" || return 1
+    done
+    sync
+}
+case "${1:-}" in
+start)
+    mkdir -p "$ram" /var/lib
+    if persist; then
+        state=$dir
+        echo 'Kestrel: settings and pairing saved in internal storage'
+    else
+        if mounted "$root"; then umount "$root" || exit 1; fi
+        detach_owned || exit 1
+        state=$ram
+        echo 'Kestrel: internal storage unavailable; settings and pairing are temporary' >&2
+    fi
+    # A real directory would make ln create a link *inside* it instead.
+    # Do not discard state if this is invoked on an already-running image.
+    if [ -d /var/lib/kestrel ] && [ ! -L /var/lib/kestrel ]; then
+        echo 'Kestrel: migrate existing RAM state before enabling persistence' >&2
+        exit 1
+    fi
+    ln -sfn "$state" /var/lib/kestrel
+    mkdir -p "$state/ssh"
+    [ ! -L /etc/dropbear ] || ln -sfn "$state/ssh" /etc/dropbear
+    # The marker records whether a card with fpvOS data is mounted; the
+    # recording location itself is chosen by kestrel-native's run.
+    if mountpoint -q /mnt/sd && [ -d /mnt/sd/fpvos ] && [ ! -L /mnt/sd/fpvos ]; then
+        touch "$state/persistent" && echo 'Kestrel: recordings on the SD card'
+    else
+        rm -f "$state/persistent"
+        echo 'Kestrel: no SD card with fpvOS data mounted'
+    fi
+    ;;
+stop)
+    # The updater stops Kestrel first, then needs every UBIFS unmounted.
+    sync
+    mkdir -p "$ram/ssh"
+    ln -sfn "$ram" /var/lib/kestrel
+    [ ! -L /etc/dropbear ] || ln -sfn "$ram/ssh" /etc/dropbear
+    if mounted "$root"; then umount "$root"; fi
+    detach_owned
+    ;;
+*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

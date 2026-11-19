@@ -29,6 +29,9 @@ fi
 case "${1:-}" in
     clean)
         if [ "$stock" = 0 ] && [ -f /etc/fpvos-nand-boot ] && [ ! -f /run/fpvos-clean-boot ]; then
+            [ ! -x /etc/init.d/S60kestrel-gnd ] || /etc/init.d/S60kestrel-gnd stop
+            [ ! -x /etc/init.d/S46kestrel-state ] || /etc/init.d/S46kestrel-state stop
+            [ ! -x /etc/init.d/S45ar9311-sd ] || /etc/init.d/S45ar9311-sd stop
             /usr/sbin/ar9311-nandctl clean
             exit 10
         fi
@@ -50,6 +53,7 @@ case "${1:-}" in
                     exit 1 ;;
             esac
         done
+        [ ! -x /etc/init.d/S46kestrel-state ] || /etc/init.d/S46kestrel-state stop
         sync
         [ ! -x /etc/init.d/S45ar9311-sd ] || /etc/init.d/S45ar9311-sd stop
         # Allow only RAM and virtual filesystems. This is stronger than merely

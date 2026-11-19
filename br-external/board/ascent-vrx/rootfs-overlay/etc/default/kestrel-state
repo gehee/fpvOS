@@ -1,0 +1,4 @@
+# Existing NAND partition and UBI volume; never create or format them.
+STATE_PARTITION=fpv_data
+STATE_SIZE=23068672
+STATE_VOLUMES="fpv_data"
