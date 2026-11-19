@@ -18,9 +18,9 @@ air=/usrdata/fpv/air
 if [ -x $air/bin/udhcpd ]; then
 	cat > /tmp/udhcpd.conf <<CONF
 interface usb0
-start 192.168.2.100
-end 192.168.2.150
-max_leases 51
+start 192.168.2.200
+end 192.168.2.209
+max_leases 10
 lease_file /tmp/udhcpd.leases
 option subnet 255.255.255.0
 option lease 86400
@@ -31,5 +31,5 @@ CONF
 	for p in $(pidof udhcpd); do
 		grep -q /tmp/udhcpd.conf /proc/$p/cmdline 2>/dev/null && kill $p && sleep 1
 	done
-	$air/bin/udhcpd /tmp/udhcpd.conf && echo "air: DHCP on usb0, 192.168.2.100-150"
+	$air/bin/udhcpd /tmp/udhcpd.conf && echo "air: DHCP on usb0, 192.168.2.200-209"
 fi

@@ -61,10 +61,10 @@ start() {
 }
 
 # A DHCP server on usb0, so the computer gets an address on the unit's subnet
-# by itself and reaches it (SSH) with no manual setup. .200-.209: clear of the
-# units' own addresses (.102-.104) and of the VRX Pro's pool (.100-.150). No
-# router or DNS: the computer keeps its own routes. Skipped where the applet
-# is missing (USB recovery).
+# by itself and reaches it (SSH) with no manual setup. Every fpvOS unit is .1
+# on its subnet - 192.168.2.1 an air unit, 192.168.3.1 a goggle - and hands out
+# .200-.209 there. No router or DNS: the computer keeps its own routes.
+# Skipped where the applet is missing (USB recovery).
 dhcp=/run/ar9311-usb-udhcpd
 dhcp_start() {
 	command -v udhcpd >/dev/null || return 0
