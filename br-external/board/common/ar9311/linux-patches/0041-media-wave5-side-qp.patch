@@ -1,0 +1,189 @@
+From: fpvOS contributors
+Subject: [PATCH] media: wave5: the picture's sides coarser than its centre
+
+A private control, "Side QP Offset" (V4L2_CID_CODEC_BASE | 0x1f01, 0-25,
+settable while streaming): the picture's outer quarters coded that many QP
+over its centre, through the firmware's per-picture custom map (one 64-bit
+entry a 64x64 CTU, the QP of each 32x32 sub-CTU at bits 8 + 6k), so a poor
+link spends its bits where the pilot looks. The map is made when the control
+is set (the encode only points the firmware at it) and freed with the
+instance. ENC_SEQ_RC_PARAM bit 13 enables ROI in the rate control for HEVC:
+without it the firmware ignored the map; with it and no map, pictures code
+as before. The rate control keeps the picture's size: the map's ROI average
+is its centre's QP.
+
+Measured on WAVE521C (the P1 Air, 1920x1080 in 2 strips at 19.4 Mbit/s):
+at an offset of 20 the outer quarters went visibly coarse at x 480 and 1440,
+the centre sharp; at 6 (kestrel-air's Focus Mode) the bitrate held and 600
+strips decoded every 5 s without an error; off, the picture unchanged.
+
+--- a/drivers/media/platform/chips-media/wave5/wave5-hw.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-hw.c
+@@ -1849,7 +1849,7 @@
+ 	if (inst->std == W_AVC_ENC)
+ 		reg_val |= (p_param->mb_level_rc_enable << 1);
+ 	else if (inst->std == W_HEVC_ENC)
+-		reg_val |= (p_param->cu_level_rc_enable << 1);
++		reg_val |= (p_param->cu_level_rc_enable << 1) | WAVE5_RC_ROI_ENABLE;
+ 	vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_RC_PARAM, reg_val);
+ 
+ 	vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_RC_WEIGHT_PARAM,
+@@ -1988,7 +1988,7 @@
+ 		if (inst->std == W_AVC_ENC)
+ 			rc_param |= p_param->mb_level_rc_enable << 1;
+ 		else if (inst->std == W_HEVC_ENC)
+-			rc_param |= p_param->cu_level_rc_enable << 1;
++			rc_param |= p_param->cu_level_rc_enable << 1 | WAVE5_RC_ROI_ENABLE;
+ 
+ 		vpu_write_reg(inst->dev, W5_CMD_ENC_SEQ_RC_PARAM, rc_param);
+ 	}
+@@ -2477,8 +2477,19 @@
+ 	vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_SRC_FORMAT, src_frame_format |
+ 		      (format_no << 3) | (justified << 5) | (PIC_SRC_ENDIANNESS_BIG_ENDIAN << 6));
+ 
+-	vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_CUSTOM_MAP_OPTION_ADDR, 0);
+-	vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_CUSTOM_MAP_OPTION_PARAM, 0);
++	/* fpvOS: the side QP map (wave5_side_map_fill), where it is on and made
++	 * for this picture: bit 0 the ROI map, bits 6:1 its average QP. */
++	if (READ_ONCE(inst->side_qp) && inst->side_map.vaddr &&
++	    inst->side_map_w == p_open_param->pic_width &&
++	    inst->side_map_h == p_open_param->pic_height) {
++		vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_CUSTOM_MAP_OPTION_ADDR,
++			      inst->side_map.daddr);
++		vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_CUSTOM_MAP_OPTION_PARAM,
++			      1 | (WAVE5_SIDE_AVG_QP << 1));
++	} else {
++		vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_CUSTOM_MAP_OPTION_ADDR, 0);
++		vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_CUSTOM_MAP_OPTION_PARAM, 0);
++	}
+ 	vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_LONGTERM_PIC, 0);
+ 	vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_WP_PIXEL_SIGMA_Y, 0);
+ 	vpu_write_reg(inst->dev, W5_CMD_ENC_PIC_WP_PIXEL_SIGMA_C, 0);
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpu-enc.c
+@@ -1008,7 +1008,59 @@
+  * the direction.
+  */
+ #define V4L2_CID_WAVE5_INTRA_REFRESH_COLUMNS (V4L2_CID_CODEC_BASE | 0x1f00)
++
++/*
++ * fpvOS: the picture's outer quarters coded coarser than its centre, by
++ * "Side QP Offset" QP (0: not), through the firmware's per-picture custom map
++ * (ROI QP per 32x32 sub-CTU, the rate control keeping the picture's size: its
++ * average is the map's ROI average QP). Settable while streaming.
++ */
++#define V4L2_CID_WAVE5_SIDE_QP (V4L2_CID_CODEC_BASE | 0x1f01)
++
++/* The custom map for the picture inst encodes, as wave5_vpu_encode() hands it to the
++ * firmware. Process context (the control): it may allocate. */
++static int wave5_side_map_fill(struct vpu_instance *inst, u32 side_qp)
++{
++	const u32 w = inst->dst_fmt.width, h = inst->dst_fmt.height;
++	const u32 cols = ALIGN(w, 64) / 64, rows = ALIGN(h, 64) / 64;
++	const size_t size = (size_t)cols * rows * 8;
++	u64 *e;
++	u32 r, c, k;
++
++	if (!w || !h)
++		return -EINVAL;
++	if (inst->side_map.size != size) {
++		if (inst->side_map.size)
++			wave5_vdi_free_dma_memory(inst->dev, &inst->side_map);
++		inst->side_map.size = size;
++		if (wave5_vdi_allocate_dma_memory(inst->dev, &inst->side_map)) {
++			memset(&inst->side_map, 0, sizeof(inst->side_map));
++			return -ENOMEM;
++		}
++	}
++	e = inst->side_map.vaddr;
++	for (r = 0; r < rows; r++)
++		for (c = 0; c < cols; c++) {
++			u64 v = 0;
+ 
++			/* Sub-CTUs 0..3: top left, top right, bottom left, bottom
++			 * right; QP at bits 8 + 6k; force mode, coefficient drop
++			 * and the lambdas left 0 (the encoder's own). */
++			for (k = 0; k < 4; k++) {
++				const u32 x = c * 64 + (k & 1) * 32 + 16;
++				const bool side = x < w / 4 || x >= w - w / 4;
++				const u32 qp = side ? min_t(u32, 51, WAVE5_SIDE_AVG_QP + side_qp) :
++						      WAVE5_SIDE_AVG_QP;
++
++				v |= (u64)qp << (8 + 6 * k);
++			}
++			e[r * cols + c] = v;
++		}
++	inst->side_map_w = w;
++	inst->side_map_h = h;
++	return 0;
++}
++
+ static int wave5_vpu_enc_s_ctrl(struct v4l2_ctrl *ctrl)
+ {
+ 	struct vpu_instance *inst = wave5_ctrl_to_vpu_inst(ctrl);
+@@ -1030,6 +1082,20 @@
+ 		if (inst->state != VPU_INST_STATE_NONE)
+ 			return -EBUSY;
+ 		inst->ir_columns = ctrl->val;
++		break;
++	case V4L2_CID_WAVE5_SIDE_QP:
++		if (inst->std != W_HEVC_ENC && ctrl->val)
++			return -EINVAL;
++		/* Off while the map is made, then on: the encode reads
++		 * side_qp before the map. */
++		WRITE_ONCE(inst->side_qp, 0);
++		if (ctrl->val) {
++			int ret = wave5_side_map_fill(inst, ctrl->val);
++
++			if (ret)
++				return ret;
++			WRITE_ONCE(inst->side_qp, ctrl->val);
++		}
+ 		break;
+ 	case V4L2_CID_MPEG_VIDEO_AU_DELIMITER:
+ 		inst->encode_aud = ctrl->val;
+@@ -2026,6 +2092,17 @@
+ 		};
+ 
+ 		v4l2_ctrl_new_custom(v4l2_ctrl_hdl, &ir_columns, NULL);
++	}
++	{
++		static const struct v4l2_ctrl_config side_qp = {
++			.ops = &wave5_vpu_enc_ctrl_ops,
++			.id = V4L2_CID_WAVE5_SIDE_QP,
++			.name = "Side QP Offset",
++			.type = V4L2_CTRL_TYPE_INTEGER,
++			.min = 0, .max = 25, .step = 1, .def = 0,
++		};
++
++		v4l2_ctrl_new_custom(v4l2_ctrl_hdl, &side_qp, NULL);
+ 	}
+ 	v4l2_ctrl_new_std_menu(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
+ 			       V4L2_CID_MPEG_VIDEO_HEVC_PROFILE,
+--- a/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
++++ b/drivers/media/platform/chips-media/wave5/wave5-vpuapi.h
+@@ -838,6 +838,13 @@
+ 	u32 enc_rate_change_pending;
+ 	bool enc_force_idr; /* FORCE_KEY_FRAME seen; armed on the next start_encode */
+ 	bool ir_columns; /* intra refresh sweeps CTU columns, not rows */
++	u32 side_qp; /* fpvOS: QP over the rest for the outer quarters, 0 none */
++#define WAVE5_SIDE_AVG_QP 30 /* the centre's map QP, the map's ROI average */
++/* fpvOS: ROI in the rate control (ENC_SEQ_RC_PARAM bit 13), so a picture's
++ * custom map can set its sub-CTU QPs; without a map it changes nothing. */
++#define WAVE5_RC_ROI_ENABLE BIT(13)
++	struct vpu_buf side_map; /* its custom map: 8 bytes a 64x64 CTU */
++	u32 side_map_w, side_map_h; /* the picture the map was made for */
+ 	bool enc_idr_restore; /* the forced intra_period 1 is live and must be put back */
+ 	u32 enc_idr_saved_period; /* intra_period as configured, saved across a forced keyframe */
+ 	struct vpu_buf bitstream_vbuf;
+--- a/drivers/media/platform/chips-media/wave5/wave5-helper.c
++++ b/drivers/media/platform/chips-media/wave5/wave5-helper.c
+@@ -64,6 +64,8 @@
+ 			wave5_vpu_dec_reset_framebuffer(inst, i);
+ 
+ 		wave5_vdi_free_dma_memory(inst->dev, &inst->bitstream_vbuf);
++		if (inst->side_map.size)
++			wave5_vdi_free_dma_memory(inst->dev, &inst->side_map);
+ 	}
+ 	v4l2_ctrl_handler_free(&inst->v4l2_ctrl_hdl);
+ 	if (inst->v4l2_fh.vdev) {
