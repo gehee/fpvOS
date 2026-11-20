@@ -26,3 +26,21 @@ Manual initial RF tuning is still required. Subsequent announced channel and
 bandwidth changes are followed by LST2-capable radio firmware. Video-carried announcements are not a
 common-channel RF discovery beacon, and automatic RF acquisition is not yet
 implemented.
+
+## Review revisions
+
+This draft pins the matching Open8030 revision and Kestrel review commits.
+Kestrel sources temporarily use their public forks until the companion changes
+are merged upstream. Restore the upstream source URLs and update pins when
+merging; do not use moving branch names for release builds.
+
+Native receivers still consume `KESTREL_NATIVE_IMAGE`: build the pinned ground
+revision for the selected board and package it with `tools/package_ascent.py`.
+The ordinary `kestrel` pin also supplies the default ground revision to the
+release script; it does not add spectator UI support to the legacy VRX Pro
+frontend.
+
+The current implementation was hardware-tested on P1 Air, P1 goggles (pilot)
+and Ascent VRX (spectator). The latest-upstream review revisions require another
+combined hardware regression before release; HiSilicon air backends and the
+legacy ground frontend are not hardware-validated for this feature.

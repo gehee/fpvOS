@@ -28,13 +28,13 @@
 #                              opt-in only. Releases are tags, not a branch
 #   KESTREL_SITE=<url>         a fork or a mirror
 #   KESTREL_OVERRIDE_SRCDIR=   a local checkout; the download is skipped
-KESTREL_SITE ?= https://github.com/gehee/kestrel-gnd.git
+KESTREL_SITE ?= https://github.com/mh1412/kestrel-gnd.git
 KESTREL_SITE_METHOD = git
 KESTREL_LICENSE = GPL-3.0
 KESTREL_LICENSE_FILES = LICENSE
 
 # The pin. Written by scripts/release.sh at release time - a tag from then on.
-KESTREL_PIN = 3bd50d1200a46cdad6077ffa1d2e97a2de96573c
+KESTREL_PIN = 68049b0abc1113a976d1fe31fe4f7ceda99290b4
 
 # Precedence: an explicit KESTREL_VERSION, then a requested branch, then the pin.
 ifeq ($(origin KESTREL_VERSION),undefined)
