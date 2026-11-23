@@ -16,6 +16,10 @@
 # Bench only: the USB link's state logged when /persist/fpvos/usb-diag/enabled exists.
 ::sysinit:/etc/init.d/S46usb-diag start
 ::sysinit:/etc/init.d/S60kestrel-air start
+# Bridge mode again if it was the mode last chosen (fpvOS_usb's SAVED_MODE, on
+# /persist): after the settings volume (S45) and the radio's client (S60), which
+# bridge mode stops to take the chip.
+::sysinit:/etc/init.d/S61fpvos-usb start
 ::sysinit:/bin/cat /etc/issue
 
 ::respawn:/usr/sbin/fpvos-update-service

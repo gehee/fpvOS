@@ -1,0 +1,24 @@
+From: Gee <gehee@users.noreply.github.com>
+Subject: [PATCH] boards/p1-air: keep bridge mode across reboots
+
+The P1 Air named no SAVED_MODE, so it always booted in normal mode and a host
+had to switch it to bridge again after every power cycle - on a Steam Frame,
+which has no CDC-ACM driver, by hand. As the Lite+ does: a file on persistent
+storage, here the data volume S45settings mounts at /persist (stock's usr_data,
+its fpvos/ directory made at every boot), which S61fpvos-usb boots into.
+
+---
+ boards/p1-air/fpvos-usb.conf | 4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/boards/p1-air/fpvos-usb.conf b/boards/p1-air/fpvos-usb.conf
+--- a/boards/p1-air/fpvos-usb.conf
++++ b/boards/p1-air/fpvos-usb.conf
+@@ -6,3 +6,7 @@ KEEP=acm.usb0
+ CHIP_DEV=/dev/arlink0
+ # The board id the bridge shows the host (docs/protocol.md, "Board ids").
+ BOARD=p1-air
++# Bridge mode kept across reboots until switched back (S61fpvos-usb boots into
++# it): on the data volume S45settings mounts at /persist (stock's usr_data), in
++# the fpvos/ directory it makes at every boot.
++SAVED_MODE=/persist/fpvos/usb-saved-mode
