@@ -102,20 +102,21 @@ bundle in two steps: their recovery accepts only gzip roots, so first a bridge
 bundle in the old format carrying the new kernel (whose recovery then stays in
 USB recovery: there is no install record yet), then the squashfs bundle. Installing from the running fpvOS
 recovery over USB is `fpvos-update`'s normal `clean` → `verify` → `install`
-flow; `ar9311-nandctl stock` flips the active bank back to A.
+flow; `ar9311-nandctl stock` selects the bank without fpvOS (stock).
 
 **No-UART entry — open.** The stock Skyzone runtime has the Sirius
 clean-system hook (`start_clean_system.sh`, `web:/usrdata/<script>` in
 `/usrdata/sirius-clean-system-flag`), so dropping `fpvos-update` on `/usrdata`
 over stock SSH and setting that flag can reboot into our RAM recovery with no
 UART; that step is not built yet. Stock exposes the whole GPT as MTDs (the boot
-chain rewrites dtb0's flat `mtdparts` and passes `ubi.mtd=17` for bank A), and
-the updater recognises stock only while it runs from bank A.
+chain rewrites the DTB's flat `mtdparts` and passes `ubi.mtd=17` for bank A,
+`ubi.mtd=18` for bank B), and the updater recognises stock running from either.
 
-An install writes bank B only when bank B is not what the unit runs: bank A is
-the active one, or bank B already holds fpvOS. A unit whose own stock runs
-from bank B (a vendor update moved it there) is refused before anything is
-selected or written; so is a bank B bundle volume that cannot take the bundle.
+No bank is fpvOS's or stock's for good. An install writes the bank that already
+holds an fpvOS bundle (an update), else the bank the unit does not boot, so
+booted stock is never written whichever bank a vendor update left it on. A
+target whose bundle volume cannot take the bundle is refused before anything is
+selected or written.
 
 ## Status
 

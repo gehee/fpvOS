@@ -10,10 +10,10 @@
 #   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
 #   ./build.sh p1-goggle [config|kernel|all] # P1 goggles RAM bring-up
 #   ./build.sh skyzone-steadydigital [config|kernel|all] # Skyzone SteadyDigital (RAM)
-#   ./build.sh skyzone-steadydigital-flash [config|kernel|all] # Skyzone SteadyDigital flashable NAND image (.fwu)
+#   ./build.sh skyzone-steadydigital-flash [config|kernel|all|recovery] # Skyzone SteadyDigital flashable NAND image (.fwu); recovery = slim HID-upload kernel
 #   ./build.sh p1-air [config|all] # P1 stock-runtime development bundle
 #
-#   ./build.sh p1-air-source [config|all] # experimental source kernel, RAM rootfs
+#   ./build.sh p1-air-source [config|all|recovery] # experimental source kernel, RAM rootfs; recovery = slim HID-upload kernel
 #
 # Prerequisites:
 #   - the Buildroot submodule is checked out (git clone --recurse-submodules,
@@ -67,7 +67,10 @@ case "${1:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_SOURCE_OUT" p1air_source_defconfig ;;
       all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_AIR_SOURCE_OUT" p1air_source_defconfig
               make -C "$P1_AIR_SOURCE_OUT" ;;
-      *) echo "usage: $0 p1-air-source [config|all]" >&2; exit 1 ;;
+      # The slim upload recovery kernel the HID loader boots
+      # (images/kernel-recovery.img), from a copy of the source build's kernel.
+      recovery) "$EXT/board/p1-air/recovery-kernel.sh" "$P1_AIR_SOURCE_OUT" ;;
+      *) echo "usage: $0 p1-air-source [config|all|recovery]" >&2; exit 1 ;;
     esac ;;
   p1-air)
     case "${2:-all}" in
@@ -87,14 +90,21 @@ case "${1:-all}" in
       *) echo "usage: $0 skyzone-steadydigital [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   skyzone-steadydigital-flash)
-    # Flashable NAND image: recovery kernel.img for bank B + packaged .fwu.
+    # Flashable NAND image: the installed kernel.img for bank B + packaged .fwu.
+    # `recovery` then builds the slim upload recovery kernel the flasher boots
+    # through the HID loader (images/kernel-recovery.img) from a copy of it.
     case "${2:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig ;;
+      # A reconfigured kernel needs its out-of-tree modules rebuilt too, or they
+      # are rejected at load (struct module layout differs): no GPIO, no display.
       kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig
-              make -C "$STEADYDIGITAL_FLASH_OUT" linux-reconfigure ;;
+              make -C "$STEADYDIGITAL_FLASH_OUT" linux-reconfigure
+              for p in $(make -s -C "$STEADYDIGITAL_FLASH_OUT" linux-show-rdepends); do
+                  make -C "$STEADYDIGITAL_FLASH_OUT" "$p-rebuild"; done ;;
       all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig
               make -C "$STEADYDIGITAL_FLASH_OUT" ;;
-      *) echo "usage: $0 skyzone-steadydigital-flash [config|kernel|all]" >&2; exit 1 ;;
+      recovery) "$EXT/board/skyzone-steadydigital/recovery-kernel.sh" "$STEADYDIGITAL_FLASH_OUT" ;;
+      *) echo "usage: $0 skyzone-steadydigital-flash [config|kernel|all|recovery]" >&2; exit 1 ;;
     esac ;;
   ascent-vrx)
     # Kernel, board DTB and initramfs for RAM boot through the existing U-Boot.
@@ -127,5 +137,5 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" ascentvrxpro_defconfig
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT"
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-goggle [config|kernel|all]|p1-air [config|all]|p1-air-source [config|all]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-goggle [config|kernel|all]|p1-air [config|all]|p1-air-source [config|all|recovery]}" >&2; exit 1 ;;
 esac

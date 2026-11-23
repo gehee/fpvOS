@@ -368,11 +368,12 @@
 	no-sdio;
 };
 
-/* Stock A/B layout: bank A = kernel0/dtb0/userapp0 (stock, never written,
- * read-only here), bank B = kernel1/dtb1/userapp1 (fpvOS). The updater writes
- * bank B, flips the GPT at the start of boot-state (gpt0) and keeps
- * settings/pairing in usr_data, so those are writable; factory stays
- * read-only.
+/* Stock A/B layout: kernel0/dtb0/userapp0 and kernel1/dtb1/userapp1. Neither
+ * bank is fpvOS's or stock's for good: the updater writes the bank holding
+ * fpvOS, else the one not booted, so both are writable here and its checks,
+ * not the DT, keep the stock bank unwritten. It flips the GPT at the start of
+ * boot-state (gpt0) and keeps settings/pairing in usr_data, so those are
+ * writable too; factory stays read-only.
  */
 &qspi_clock {
 	status = "okay";
@@ -405,7 +406,6 @@
 			partition@a40000 {
 				label = "kernel0";
 				reg = <0xa40000 0x600000>;
-				read-only;
 			};
 			partition@1040000 {
 				label = "kernel1";
@@ -414,7 +414,6 @@
 			partition@1640000 {
 				label = "dtb0";
 				reg = <0x1640000 0x60000>;
-				read-only;
 			};
 			partition@16a0000 {
 				label = "dtb1";
@@ -423,7 +422,6 @@
 			partition@1700000 {
 				label = "userapp0";
 				reg = <0x1700000 0x2d00000>;
-				read-only;
 			};
 			partition@4400000 {
 				label = "userapp1";

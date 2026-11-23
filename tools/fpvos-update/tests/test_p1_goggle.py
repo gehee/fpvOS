@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Goggles bank orientation and write faults exercise the shared P1 backend."""
+"""Goggles config (bank-0 U-Boot pair, larger root) and write faults exercise
+the shared P1 backend; the install bank is chosen per unit, as on the P1 Air."""
 from pathlib import Path
 import subprocess
 import tempfile
@@ -16,9 +17,12 @@ class GoggleTests(unittest.TestCase):
     volume = p1.P1Tests.volume
     test_stock_volume_names = p1.P1Tests.test_stock_volume_names
     transaction = p1.P1Tests.transaction
+    TARGETS = p1.P1Tests.TARGETS
     test_bank_and_volume_are_checked_before_anything_changes = p1.P1Tests.test_bank_and_volume_are_checked_before_anything_changes
-    test_live_stock_in_the_fpvos_bank_and_an_unusable_volume_change_nothing = p1.P1Tests.test_live_stock_in_the_fpvos_bank_and_an_unusable_volume_change_nothing
-    test_stock_in_the_stock_bank_leaves_the_fpvos_bank_free = p1.P1Tests.test_stock_in_the_stock_bank_leaves_the_fpvos_bank_free
+    test_the_target_bank_is_chosen_from_what_each_bank_holds = p1.P1Tests.test_the_target_bank_is_chosen_from_what_each_bank_holds
+    test_booted_stock_is_never_written = p1.P1Tests.test_booted_stock_is_never_written
+    test_an_unusable_target_volume_or_gpt_changes_nothing = p1.P1Tests.test_an_unusable_target_volume_or_gpt_changes_nothing
+    test_stock_selects_the_bank_without_fpvos = p1.P1Tests.test_stock_selects_the_bank_without_fpvos
     flash = p1.P1Tests.flash
     layout = p1.P1Tests.layout
 
@@ -54,9 +58,9 @@ class GoggleTests(unittest.TestCase):
                 self.assertEqual(after[:0x40000],before[:0x40000])
                 self.assertTrue(self.layout(after[:0x4400],after[0x40000:0x44400]))
 
-    def test_kernel_write_targets_bank_one(self):
+    def test_kernel_write_to_bank_one_leaves_its_dtb(self):
         d=self.directory();image=bytes(range(256))*1200;(d/'image').write_bytes(image)
-        self.assertEqual(self.flash(d,'write','image'),0)
+        self.assertEqual(self.flash(d,'write','image',bank=1),0)
         self.assertEqual((d/'kernel1').read_bytes()[:len(image)],image)
         self.assertEqual((d/'dtb1').read_bytes(),b'\x55'*0x60000)
 

@@ -14,52 +14,68 @@ const struct fpvos_bootstrap_file fpvos_bootstrap_files[] = {
     {"root/usr/share/fpvos-update/clean.sh",(const unsigned char *)"clean",5,0600}
 };
 const size_t fpvos_bootstrap_file_count = 2;
-static const char *fault;
+/* argv: FAULT BANKS. BANKS is the booted bank and what each bank's volume holds,
+ * e.g. "0fs": booted bank 0, bank 0 fpvOS, bank 1 stock ('s' stock, 'f' fpvOS,
+ * 'b' an unusable volume). Each bank's volume is the file volume<N>. */
+static const char *fault, *scenario;
+static int wrote;
 static void event(const char *name) { FILE *f=fopen("events","a"); assert(f); fprintf(f,"%s\n",name); fclose(f); }
+static void eventf(const char *name,unsigned bank) { char line[64]; snprintf(line,sizeof(line),"%s@%u",name,bank); event(line); }
+/* The bank selected while the target is written; nothing may be written to it. */
+static int selected(void) { FILE *f=fopen("selected-stock","r"); if (!f) return -1; int b=fgetc(f)-'0'; fclose(f); return b; }
+static void volume_name(unsigned bank,char path[16]) { snprintf(path,16,"volume%u",bank); }
 int p1_state_mount(void) { event("mount"); return 0; }
 int p1_state_unmount(void) { event("unmount"); return 0; }
-int p1_bundle_write(const char *source) {
-    event("write");
+int p1_bundle_write(unsigned bank,const char *source) {
+    event("write"); eventf("write",bank);
     assert(access(P1_FLAG,F_OK));
-    assert(!access("selected-stock",F_OK));
+    assert(selected() >= 0 && (unsigned)selected() != bank);
+    char path[16]; volume_name(bank,path);
+    wrote = 1;
     if (!strcmp(fault,"write")) {
-        int fd=open("volume",O_WRONLY|O_TRUNC); assert(fd>=0);
+        int fd=open(path,O_WRONLY|O_TRUNC); assert(fd>=0);
         assert(write(fd,"torn update",11)==11); close(fd); return -1;
     }
-    unlink("volume"); return fpvos_bootstrap_copy(source,"volume",0600);
+    unlink(path); return fpvos_bootstrap_copy(source,path,0600);
 }
-int p1_bundle_read(const char *destination) {
-    event("readback");
+int p1_bundle_read(unsigned bank,const char *destination) {
+    event("readback"); eventf("readback",bank);
     if (!strcmp(fault,"readback")) return -1;
-    int rc=fpvos_bootstrap_copy("volume",destination,0600);
+    char path[16]; volume_name(bank,path);
+    int rc=fpvos_bootstrap_copy(path,destination,0600);
     if (!rc && !strcmp(fault,"corrupt")) { int fd=open(destination,O_WRONLY); assert(fd>=0); assert(write(fd,"!",1)==1); close(fd); }
     return rc;
 }
-/* What the unit runs and what the fpvOS bank's volume holds. "stock-fpvos-bank"
- * is a unit whose own stock runs from the bank fpvOS installs to, "stock-other"
- * one running stock from the stock bank (a first install), "bad-volume" one
- * whose bundle volume cannot be used. Anything else: fpvOS already installed. */
 int p1_active_bank(unsigned *bank) {
     event("active-bank");
     if (!strcmp(fault,"gpt")) return -1;
-    *bank = strcmp(fault,"stock-other") ? P1_FPVOS_BANK : P1_STOCK_BANK;
+    *bank = scenario[0]-'0';
     return 0;
 }
-int p1_bundle_present(void) {
-    event("bundle-present");
-    if (!strcmp(fault,"bad-volume")) return -1;
-    return strcmp(fault,"stock-fpvos-bank") && strcmp(fault,"stock-other");
+int p1_bundle_present(unsigned bank) {
+    event("bundle-present"); eventf("bundle-present",bank);
+    char held = scenario[1+bank];
+    return held == 'b' ? -1 : held == 'f';
 }
 int p1_select_bank(unsigned bank) {
-    event(bank == P1_STOCK_BANK ? "select-stock" : "activate");
-    if ((bank == P1_STOCK_BANK && !strcmp(fault,"select-stock")) || (bank == P1_FPVOS_BANK && !strcmp(fault,"activate"))) return -1;
-    if (bank == P1_STOCK_BANK) { int fd=open("selected-stock",O_CREAT|O_WRONLY,0600); assert(fd>=0); close(fd); }
-    else { assert(!access("selected-stock",F_OK)); unlink("selected-stock"); }
+    if (!wrote) {
+        /* Before any write: the bank kept as it is, booted if power is cut. */
+        event("select-stock"); eventf("select-stock",bank);
+        if (!strcmp(fault,"select-stock")) return -1;
+        FILE *f=fopen("selected-stock","w"); assert(f); fprintf(f,"%u",bank); fclose(f);
+    } else {
+        event("activate"); eventf("activate",bank);
+        if (!strcmp(fault,"activate")) return -1;
+        assert(selected() >= 0 && (unsigned)selected() != bank);
+        unlink("selected-stock");
+    }
     return 0;
 }
-int p1_flash_image(unsigned index,const char *path,int writing) {
-    (void)path;assert(writing);assert(!access("selected-stock",F_OK));
-    event(index ? "dtb" : "kernel");
+int p1_flash_image(unsigned bank,unsigned index,const char *path,int writing) {
+    (void)path;assert(writing);
+    assert(selected() >= 0 && (unsigned)selected() != bank);
+    event(index ? "dtb" : "kernel"); eventf(index ? "dtb" : "kernel",bank);
+    wrote = 1;
     return !strcmp(fault,index ? "dtb" : "kernel") ? -1 : 0;
 }
 int __wrap_execlp(const char *program,const char *arg,...) {
@@ -77,8 +93,16 @@ int __wrap_execlp(const char *program,const char *arg,...) {
     if (!strcmp(program,"gzip")) _exit(!strcmp(fault,"gzip"));
     execl("/usr/bin/sha256sum","sha256sum",a,(char *)NULL);_exit(127);
 }
+/* FAULT [BANKS]: an install; "stock" as FAULT runs the stock command instead. */
 int main(int argc,char **argv) {
-    assert(argc==2);fault=argv[1];
+    assert(argc==2 || argc==3);fault=argv[1];scenario=argc==3 ? argv[2] : "0fs";
+    assert(strlen(scenario)==3 && (scenario[0]=='0' || scenario[0]=='1'));
+    if (!strcmp(fault,"stock")) {
+        unsigned bank;
+        if (stock_bank(&bank)) return 1;
+        printf("stock bank %u\n",bank);
+        return 0;
+    }
     int rc=transaction("upload");
     return rc ? 1 : 0;
 }

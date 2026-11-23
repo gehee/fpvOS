@@ -12,18 +12,22 @@ ssize_t __real_pwrite(int,const void *,size_t,off_t);
 int __wrap_open(const char *path,int flags,...) {
     mode_t mode=0;
     if (flags&O_CREAT) { va_list ap;va_start(ap,flags);mode=va_arg(ap,int);va_end(ap); }
-    if (!strcmp(path,"/dev/mtd0")) path="boot-state";
-    else if (!strcmp(path,"/dev/mtd1")) path=P1_KERNEL_PART;
-    else if (!strcmp(path,"/dev/mtd2")) path=P1_DTB_PART;
+    /* mtd0 boot-state; 1/2 bank 0 kernel/DTB; 3/4 bank 1 kernel/DTB. */
+    static const char *const node[] = {"boot-state","kernel0","dtb0","kernel1","dtb1"};
+    unsigned n;
+    if (sscanf(path,"/dev/mtd%u",&n) == 1) { assert(n < 5); path=node[n]; }
     else assert(strncmp(path,"/dev/mtd",8));
     return __real_open(path,flags,mode);
 }
 int p1_stock(void) { return 0; }
 int p1_mtd(const char *name,unsigned offset,unsigned size,unsigned *number) {
     if (!strcmp(name,"boot-state")) { assert(offset==0x100000 && size==0x80000);*number=0; }
-    else if (!strcmp(name,P1_KERNEL_PART)) { assert(offset==P1_KERNEL_OFFSET && size==0x600000);*number=1; }
-    else if (!strcmp(name,P1_DTB_PART)) { assert(offset==P1_DTB_OFFSET && size==0x60000);*number=2; }
-    else assert(0);
+    else {
+        unsigned bank = name[strlen(name)-1]=='1';
+        if (!strcmp(name,p1_kernel_part(bank))) { assert(offset==p1_kernel_offset(bank) && size==0x600000);*number=1+2*bank; }
+        else if (!strcmp(name,p1_dtb_part(bank))) { assert(offset==p1_dtb_offset(bank) && size==0x60000);*number=2+2*bank; }
+        else assert(0);
+    }
     return open(name,O_RDONLY);
 }
 int p1_gpt_read(unsigned char g[2][AR9311_GPT_BYTES]) {
@@ -63,9 +67,11 @@ int __wrap_ioctl(int fd,unsigned long request,...) {
     if (fault==4) {errno=EIO;return -1;}
     unsigned char b[0x20000];memset(b,0xff,sizeof(b));assert(__real_pwrite(fd,b,sizeof(b),e->start)==sizeof(b));return 0;
 }
+/* select BANK FAULT | write|compare IMAGE FAULT [BANK]: the kernel image of BANK (0). */
 int main(int argc,char **argv) {
-    assert(argc==4);fault=atoi(argv[3]);
+    assert(argc==4 || argc==5);fault=atoi(argv[3]);
+    unsigned bank = argc==5 ? (unsigned)atoi(argv[4]) : 0;
     int rc=!strcmp(argv[1],"select") ? p1_select_bank(atoi(argv[2])) :
-           p1_flash_image(0,argv[2],strcmp(argv[1],"compare")!=0);
+           p1_flash_image(bank,0,argv[2],strcmp(argv[1],"compare")!=0);
     return rc ? 1 : 0;
 }

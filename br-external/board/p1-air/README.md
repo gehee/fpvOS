@@ -306,8 +306,10 @@ The source profile builds the shared Artosyn QSPI driver and mainline SPI-NAND,
 UBI and UBIFS into the recovery kernel. Its device tree exposes the existing 6 MiB factory partition at offset 2 MiB,
 marked read-only, and the existing 6 MiB `usr_data` partition at `0x7100000`,
 writable. The partitioned master device and command-line partition overrides
-are disabled. Bootloader, environment and stock rootfs banks are not exposed for writes.
-The updater exposes bank-0 kernel/DTB/rootfs and the two GPT records.
+are disabled. Bootloader and environment are not exposed for writes. Both
+banks' kernel/DTB/rootfs (`kernel0/1`, `dtb0/1`, `userapp0/1`) and the two GPT
+records are exposed: no bank is fpvOS's or stock's for good, and the updater's
+checks, not the DT, keep the stock bank unwritten.
 
 `S43factory` runs after USB/SSH startup. It checks the factory partition name,
 offset, size, erase/page geometry and write protection, attaches UBI in read-only
@@ -324,7 +326,7 @@ Host guard tests run with
 The hardware test compares every factory byte before/after attach and remount,
 checks calibration hashes against stock and verifies that writable opens of
 MTD and factory files are rejected. The factory path remains read-only;
-the firmware updater preserves factory and stock bank 1.
+the firmware updater preserves factory and the stock bank.
 
 ### Persistent application settings
 
@@ -445,11 +447,15 @@ original SPL/U-Boot. It does not boot stock Linux or need a stock userspace hook
 for normal operation or updates. The kernel embeds a small fpvOS recovery
 root with USB Ethernet, SSH and the shared CDC-ACM update service.
 
-The fixed P1_SKY 1.0.44 partition geometry is validated before writes. The
-updater first selects preserved stock bank 1, writes and reads back bank-0
-kernel and DTB, then updates the existing `userapp0` UBI volume with the full
-`FPVOSUP1` bundle. Only a successful full readback permits GPT activation of
-bank 0. GPT updates erase the nonselected copy, increment its generation,
+The fixed P1_SKY partition geometry is validated before writes. The updater
+picks the target bank at install time: the bank that already holds an fpvOS
+bundle (an update), else the bank the unit does not boot - stock, on
+whichever bank a vendor update left it (1.0.44 runs from bank 1, a 2.x update
+from bank 0), is never written. It first selects the other bank, writes and
+reads back the target's kernel and DTB, then updates the target's `userapp`
+UBI volume with the full `FPVOSUP1` bundle. Only a successful full readback
+permits GPT activation of the target. `fpvos-update nand stock` selects the
+bank without fpvOS. GPT updates erase the nonselected copy, increment its generation,
 recompute CRCs and verify the new record. Every readback that decides or
 verifies a write (both GPT records, kernel0, dtb0) also checks the partition's
 ECC failure count, since a read returns the data even when ECC could not
@@ -496,6 +502,13 @@ during installation leaves stock selected until activation completes.
 - `fpvos-p1-air.fwu`: kernel, board DTB and compressed root filesystem.
 - `fpvos-update-p1-air`: standalone initial installer for stock clean mode.
 - `fpvos-p1-air-bootstrap.sh`: one-time stock clean-mode launcher.
+
+`./build.sh p1-air-source recovery` then adds `kernel-recovery.img`: the slim
+kernel a stock unit boots from RAM through the Artosyn HID loader (the browser
+flasher's and the fpvOS Recovery app's `kernel.img`). It is built from a copy of
+the kernel tree with `linux-recovery.fragment` (no camera, encoder, input or
+debug; XZ initramfs), 5.33 -> 4.19 MB, ~6.1 -> ~4.7 min over the loader;
+`kernel.img` in the .fwu keeps the full driver set.
 
 For initial installation, back up the device first. On the supported stock
 release, copy the standalone installer to `/usrdata/fpvos-update` and launcher

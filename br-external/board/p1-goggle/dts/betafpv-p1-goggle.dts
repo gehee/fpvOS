@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 /* P1 goggles wiring from the stock device tree and VR04 platform research.
- * Independent NAND recovery; stock bank 0 and factory are preserved.
+ * Independent NAND recovery; the stock bank and factory are preserved.
  */
 /dts-v1/;
 #include "ar9311.dtsi"
@@ -124,11 +124,14 @@
 			partition@180000 { label = "stock-vendor"; reg = <0x180000 0x80000>; read-only; };
 			partition@200000 { label = "factory"; reg = <0x200000 0x600000>; read-only; };
 			partition@800000 { label = "stock-bootloaders"; reg = <0x800000 0x240000>; read-only; };
-			partition@a40000 { label = "stock-kernel"; reg = <0xa40000 0x600000>; read-only; };
+			/* Both banks, under the stock names: an install picks the bank
+			 * (fpvos-update: the one holding fpvOS, else the one not booted)
+			 * and its checks, not the DT, keep the stock bank unwritten. */
+			partition@a40000 { label = "kernel0"; reg = <0xa40000 0x600000>; };
 			partition@1040000 { label = "kernel1"; reg = <0x1040000 0x600000>; };
-			partition@1640000 { label = "stock-dtb"; reg = <0x1640000 0x60000>; read-only; };
+			partition@1640000 { label = "dtb0"; reg = <0x1640000 0x60000>; };
 			partition@16a0000 { label = "dtb1"; reg = <0x16a0000 0x60000>; };
-			partition@1700000 { label = "stock-rootfs"; reg = <0x1700000 0x2d00000>; read-only; };
+			partition@1700000 { label = "userapp0"; reg = <0x1700000 0x2d00000>; };
 			partition@4400000 { label = "userapp1"; reg = <0x4400000 0x2d00000>; };
 			partition@7100000 { label = "usr_data"; reg = <0x7100000 0x600000>; };
 		};

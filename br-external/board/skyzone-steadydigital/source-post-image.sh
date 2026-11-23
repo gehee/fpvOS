@@ -1,14 +1,36 @@
 #!/bin/sh
-# Flashable SteadyDigital image: a recovery kernel.img for NAND bank B and a
-# packaged .fwu (kernel.img + board DTB + main root). The kernel's initramfs is
-# the fpvOS recovery (set by external.mk when fpvos-recovery is enabled); the
+# Flashable SteadyDigital image: the installed kernel.img for NAND bank B and a
+# packaged .fwu (kernel.img + board DTB + main root). This kernel runs the
+# goggle, so it has the full driver set (display, decoder, HDMI). Its initramfs
+# is the fpvOS recovery (set by external.mk when fpvos-recovery is enabled); the
 # main root is rootfs.squashfs, written to userapp1 by the updater and mounted
-# from there by the recovery.
+# from there by the recovery. The slim kernel the flasher uploads over the HID
+# loader is a separate build: recovery-kernel.sh.
 set -eu
 
 board_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 repo_dir=$(CDPATH= cd -- "$board_dir/../../.." && pwd)
 images=$1
+
+# The installed kernel must be the full one: a kernel tree left configured with
+# the slim recovery fragment (Buildroot does not reconfigure a configured kernel
+# when the fragment list changes - run `./build.sh skyzone-steadydigital-flash
+# kernel`) would install a goggle with no display or decoder.
+kconfig="$BUILD_DIR/linux-custom/.config"
+for sym in CONFIG_DRM CONFIG_DRM_ARTOSYN CONFIG_DRM_LONTIUM_LT9611; do
+    grep -qx "$sym=y" "$kconfig" || {
+        echo "installed kernel lacks $sym=y ($kconfig): refusing to package the .fwu;" \
+             "reconfigure with ./build.sh skyzone-steadydigital-flash kernel" >&2
+        exit 1; }
+done
+# ...and its out-of-tree modules must be built against it: one built before the
+# kernel was last rebuilt (another config) is rejected at load - artosyn_gpio
+# missing leaves the LT9611 without its reset GPIO, so no display at all.
+stale=$(find "$TARGET_DIR/lib/modules" -name '*.ko' ! -newer "$BUILD_DIR/linux-custom/vmlinux" 2>/dev/null)
+[ -z "$stale" ] || {
+    echo "kernel modules older than the kernel, refusing to package the .fwu:" $stale >&2
+    echo "rebuild them with ./build.sh skyzone-steadydigital-flash kernel" >&2
+    exit 1; }
 
 # Independent 4 MiB LZ4 blocks match the vendor U-Boot decompressor.
 "$HOST_DIR/bin/lz4" -f -q -9 -B7 -BI "$images/Image" "$images/Image.lz4"

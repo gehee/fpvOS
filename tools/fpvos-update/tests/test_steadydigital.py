@@ -1,5 +1,6 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""SteadyDigital install: what is checked before bank B is touched, and the order after."""
+"""SteadyDigital install: which bank it writes, what is checked before that bank is
+touched, and the order after; a boot reads the root of the bank SPL booted."""
 from pathlib import Path
 import hashlib
 import os
@@ -55,33 +56,74 @@ class SteadyDigitalTests(unittest.TestCase):
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()
 
-    def transaction(self, mode, prepare=None):
+    def transaction(self, mode, prepare=None, banks='1sf'):
+        """MODE: an install fault, "boot..." or "stock". BANKS: the booted bank,
+        then what bank 0 and bank 1 hold ('f' fpvOS, 's' stock, 'b' unusable)."""
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); d = Path(temp.name)
         (d / 'work/state').mkdir(parents=True, mode=0o700)
-        (d / 'volume').write_bytes(b'previous volume')
+        for bank in (0, 1): (d / f'volume{bank}').write_bytes(b'previous volume %d' % bank)
         (d / 'upload').write_bytes(b'v' * 600)
         if prepare:
             prepare(d)
-        r = subprocess.run([str(self.build / 'transaction'), mode], cwd=d, capture_output=True)
+        r = subprocess.run([str(self.build / 'transaction'), mode, banks], cwd=d, capture_output=True)
         events = (d / 'events').read_text().splitlines() if (d / 'events').exists() else []
         return d, r, events
 
-    def test_bank_b_is_checked_before_anything_is_selected_or_written(self):
+    def test_both_banks_are_checked_before_anything_is_selected_or_written(self):
         d, r, events = self.transaction('ok')
         self.assertEqual(r.returncode, 0, r.stderr)
-        order = ['verify', 'active-bank', 'bundle-present', 'select-stock', 'kernel', 'dtb', 'write', 'readback', 'activate']
+        order = ['verify', 'active-bank', 'bundle-present', 'bundle-present', 'select-stock', 'kernel', 'dtb',
+                 'write', 'readback', 'activate']
         self.assertEqual([e for e in events if e in order], order)
-        self.assertEqual((d / 'volume').read_bytes(), b'v' * 600)
+        self.assertEqual((d / 'volume1').read_bytes(), b'v' * 600)
 
-    def test_live_stock_in_bank_b_and_an_unusable_volume_change_nothing(self):
-        for fault, said in (('stock-b', b"unit's stock"), ('bad-volume', b'cannot be used'), ('gpt', b'')):
-            with self.subTest(fault=fault):
-                d, r, events = self.transaction(fault)
+    # Booted bank + contents -> the bank written (as for the P1).
+    TARGETS = {'1sf': 1, '0fs': 0, '0ss': 1, '1ss': 0, '0sf': 1, '1fs': 0,
+               '0ff': 1, '1ff': 0, '1bf': 1, '0fb': 0, '0bs': 1, '1sb': 0}
+
+    def test_the_target_bank_is_chosen_from_what_each_bank_holds(self):
+        for banks, target in self.TARGETS.items():
+            with self.subTest(banks=banks):
+                d, r, events = self.transaction('ok', banks=banks)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                for written in ('kernel', 'dtb', 'write', 'readback', 'activate'):
+                    self.assertIn(f'{written}@{target}', events)
+                self.assertIn(f'select-stock@{1 - target}', events)
+                self.assertEqual((d / f'volume{target}').read_bytes(), b'v' * 600)
+                self.assertEqual((d / f'volume{1 - target}').read_bytes(), b'previous volume %d' % (1 - target))
+
+    def test_booted_stock_is_never_written(self):
+        for banks, target in self.TARGETS.items():
+            if banks[1 + int(banks[0])] == 'f':
+                continue
+            with self.subTest(banks=banks):
+                d, r, events = self.transaction('ok', banks=banks)
+                self.assertNotEqual(target, int(banks[0]))
+                self.assertFalse([e for e in events if e.endswith('@' + banks[0])
+                                  and not e.startswith(('bundle-present', 'select-stock'))])
+
+    def test_an_unusable_target_volume_or_gpt_changes_nothing(self):
+        for fault, banks, said in (('ok', '1bs', b'cannot be used'), ('ok', '0sb', b'cannot be used'),
+                                   ('gpt', '1sf', b'')):
+            with self.subTest(fault=fault, banks=banks):
+                d, r, events = self.transaction(fault, banks=banks)
                 self.assertNotEqual(r.returncode, 0)
                 self.assertIn(said, r.stderr)
                 for touched in ('mount', 'select-stock', 'kernel', 'dtb', 'write', 'activate'):
                     self.assertNotIn(touched, events)
-                self.assertEqual((d / 'volume').read_bytes(), b'previous volume')
+                for bank in (0, 1):
+                    self.assertEqual((d / f'volume{bank}').read_bytes(), b'previous volume %d' % bank)
+
+    def test_stock_selects_the_bank_without_fpvos(self):
+        for banks, expected in (('1sf', 0), ('0fs', 1), ('0sf', 0), ('1ss', 1), ('0ff', None)):
+            with self.subTest(banks=banks):
+                d, r, events = self.transaction('stock', banks=banks)
+                if expected is None:
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertIn(b'no stock bank', r.stderr)
+                else:
+                    self.assertEqual(r.returncode, 0, r.stderr)
+                    self.assertEqual(r.stdout.strip(), b'stock bank %d' % expected)
 
     def test_an_install_records_the_bundle_it_wrote(self):
         d, r, events = self.transaction('ok')
@@ -93,9 +135,9 @@ class SteadyDigitalTests(unittest.TestCase):
         self.assertLess(events.index('readback'), events.index('activate'))
         self.assertNotIn('gzip', events)
 
-    def installed(self, data, record=True, crc_delta=0):
+    def installed(self, data, record=True, crc_delta=0, bank=1):
         def prepare(d):
-            (d / 'volume').write_bytes(data)
+            (d / f'volume{bank}').write_bytes(data)
             if record:
                 crc = (struct.unpack_from('<I', data, 508)[0] + crc_delta) & 0xffffffff
                 (d / 'work/state/fpvos-installed').write_text(f'{hashlib.sha256(data).hexdigest()} {crc:08x}\n')
@@ -106,7 +148,7 @@ class SteadyDigitalTests(unittest.TestCase):
             data = bundle(Path(temp))
         d, r, events = self.transaction('boot', self.installed(data))
         self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertEqual([e for e in events if e.startswith('compare')], ['compare-kernel', 'compare-dtb'])
+        self.assertEqual([e for e in events if e.startswith('compare') and '@' not in e], ['compare-kernel', 'compare-dtb'])
         self.assertNotIn('readback', events)
         self.assertNotIn('verify', events)
         offset = 512 + 10240 + 300
@@ -114,6 +156,18 @@ class SteadyDigitalTests(unittest.TestCase):
         self.assertEqual(os.readlink(d / 'work/root/rootfs.squashfs'), '/dev/loop7')
         self.assertEqual((d / 'work/root/installed-sha256').read_text(), hashlib.sha256(data).hexdigest() + '\n')
         self.assertFalse((d / 'work/root/kernel-head').exists())
+
+    def test_a_boot_reads_the_root_and_checks_the_kernel_of_the_booted_bank(self):
+        for bank in (0, 1):
+            with self.subTest(bank=bank):
+                with tempfile.TemporaryDirectory() as temp:
+                    data = bundle(Path(temp))
+                banks = '0fs' if bank == 0 else '1sf'
+                d, r, events = self.transaction('boot', self.installed(data, bank=bank), banks=banks)
+                self.assertEqual(r.returncode, 0, r.stderr)
+                self.assertIn(f'open@{bank}', events)
+                self.assertEqual([e for e in events if e.startswith('compare') and '@' in e],
+                                 [f'compare-kernel@{bank}', f'compare-dtb@{bank}'])
 
     def test_a_boot_refuses_anything_but_the_installed_bundle(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -150,20 +204,18 @@ class SteadyDigitalTests(unittest.TestCase):
         self.assertNotIn('open', events)
         self.assertFalse((d / 'work/state/fpvos-update-clean').exists())
 
-    def test_stock_in_bank_a_leaves_bank_b_free_whatever_it_holds(self):
-        d, r, events = self.transaction('stock-a')
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertIn('activate', events)
-
-    def test_faults_after_the_checks_never_select_bank_b(self):
+    def test_faults_after_the_checks_never_select_the_target(self):
         for fault in ('verify', 'select-stock', 'kernel', 'dtb', 'write', 'readback', 'corrupt'):
-            with self.subTest(fault=fault):
-                d, r, events = self.transaction(fault)
-                self.assertNotEqual(r.returncode, 0)
-                self.assertNotIn('activate', events)
-                if fault in ('verify', 'select-stock', 'kernel', 'dtb'):
-                    self.assertNotIn('write', events)
-                    self.assertEqual((d / 'volume').read_bytes(), b'previous volume')
+            for banks in ('1sf', '0ss'):
+                target = self.TARGETS[banks]
+                with self.subTest(fault=fault, banks=banks):
+                    d, r, events = self.transaction(fault, banks=banks)
+                    self.assertNotEqual(r.returncode, 0)
+                    self.assertNotIn('activate', events)
+                    self.assertEqual((d / f'volume{1 - target}').read_bytes(), b'previous volume %d' % (1 - target))
+                    if fault in ('verify', 'select-stock', 'kernel', 'dtb'):
+                        self.assertNotIn('write', events)
+                        self.assertEqual((d / f'volume{target}').read_bytes(), b'previous volume %d' % target)
 
 
 if __name__ == '__main__':

@@ -22,7 +22,8 @@ config BR2_FPVOS_BOARD_P1_AIR
 	select BR2_FPVOS_SOC_AR9311
 	help
 	  P1 board storage and direct NAND recovery policy. Uses the
-	  verified 1.0.44 partition layout and preserves stock bank 1.
+	  verified P1 partition layout; installs on the bank not holding
+	  stock (either bank) and preserves the stock bank.
 
 config BR2_FPVOS_BOARD_P1_GOGGLE
 	bool "BETAFPV P1 goggles (AR9311)"

@@ -139,27 +139,47 @@ static int copy_package(const char *source, const char *destination)
     return rc ? -1 : 0;
 }
 
-/* Bank B is ours to write only when it is not what the unit runs: either
- * bank A is the active one, or bank B already holds fpvOS. An active bank B
- * without an fpvOS bundle is the unit's own stock (a vendor update moved it
- * there), and bank A then holds an older copy nobody has checked. Its bundle
- * volume is checked here too, so a volume that cannot take the bundle is
- * found before the bank selection is touched. */
-static int bank_b_free(void)
+/* What each bank's bundle volume holds (1 fpvOS, 0 anything else, -1 unusable)
+ * and which bank the unit boots. Asked before anything is selected or written. */
+static int banks(unsigned *active, int held[2])
 {
-    unsigned bank;
-    if (p1_active_bank(&bank)) return -1;
-    int fpvos = p1_bundle_present();
-    if (fpvos < 0) {
-        fprintf(stderr,"SteadyDigital: bank B's bundle volume cannot be used; nothing was changed\n");
-        return -1;
-    }
-    if (bank == 1 && !fpvos) {
-        fprintf(stderr,"SteadyDigital: bank B is the active bank and does not hold fpvOS: "
-                       "it is the unit's stock firmware; nothing was changed\n");
-        return -1;
-    }
+    if (p1_active_bank(active)) return -1;
+    held[0] = p1_bundle_present(0);
+    held[1] = p1_bundle_present(1);
     return 0;
+}
+
+/* The bank an install writes. Neither is fpvOS's or stock's for good: the one
+ * that holds fpvOS is rewritten in place (an update, stock stays on the other);
+ * with no fpvOS bank, or two, it is the one the unit does not boot - booted
+ * stock is never the target, whichever bank a vendor update left it on. The
+ * other bank keeps what it holds and is selected while the target is written,
+ * so a power cut boots it. */
+static int target_bank(unsigned *target)
+{
+    unsigned active; int held[2];
+    if (banks(&active,held)) return -1;
+    unsigned other = active ^ 1;
+    *target = held[active] == 1 && held[other] != 1 ? active : other;
+    if (held[*target] < 0) {
+        fprintf(stderr,"SteadyDigital: bank %u's bundle volume cannot be used; nothing was changed\n",*target);
+        return -1;
+    }
+    fprintf(stderr,"SteadyDigital: booted bank %u; installing on bank %u, bank %u keeps %s\n",active,*target,
+            *target ^ 1,held[*target ^ 1] == 1 ? "its fpvOS" : "what it holds (stock)");
+    return 0;
+}
+
+/* The bank that does not hold fpvOS: the booted one, else the other. With
+ * fpvOS on both there is no stock left to return to. */
+static int stock_bank(unsigned *bank)
+{
+    unsigned active; int held[2];
+    if (banks(&active,held)) return -1;
+    if (held[active] != 1) { *bank = active; return 0; }
+    if (held[active ^ 1] != 1) { *bank = active ^ 1; return 0; }
+    fprintf(stderr,"SteadyDigital: both banks hold fpvOS; there is no stock bank to select\n");
+    return -1;
 }
 
 static int transaction(const char *source)
@@ -176,21 +196,22 @@ static int transaction(const char *source)
     int got = p1_exact(fd,header,sizeof(header),0);
     close(fd);
     if (got) goto done;
-    if (bank_b_free()) goto done;
-    /* Select the untouched stock bank A (0) before modifying bank B (1). Power
-     * loss during installation then boots stock; only verified images reactivate
-     * fpvOS. No change to environment/U-Boot selection or factory contents. */
-    if (remove_stock_hook() || p1_select_bank(0)) goto done;
+    /* Select the bank that is not written before modifying the target. Power
+     * loss during installation then boots what it holds (stock); only verified
+     * images select the target. No change to environment/U-Boot selection or
+     * factory contents. */
+    unsigned bank;
+    if (target_bank(&bank) || remove_stock_hook() || p1_select_bank(bank ^ 1)) goto done;
     for (unsigned i = 0; i < 2; i++) {
         snprintf(path,sizeof(path),"%s/%s",images,fpvos_board.names[i]);
-        if (p1_flash_image(i,path,1)) goto done;
+        if (p1_flash_image(bank,i,path,1)) goto done;
     }
     remove_images(images);
-    if (p1_bundle_write(package) || p1_bundle_read(readback) || p1_hash(readback,after) || strcmp(before,after) ||
+    if (p1_bundle_write(bank,package) || p1_bundle_read(bank,readback) || p1_hash(readback,after) || strcmp(before,after) ||
         installed_write(before,fpvos_get_le32(header+508))) goto done;
     int flag = clean_flag(0);
-    if (flag < 0 || p1_select_bank(1)) goto done;
-    puts("Verified kernel, DTB and UBI root; fpvOS bank B selected");
+    if (flag < 0 || p1_select_bank(bank)) goto done;
+    printf("Verified kernel, DTB and UBI root; fpvOS bank %u selected\n",bank);
     rc = 0;
  done:
     remove_images(images); unlink(package); unlink(readback); rmdir(directory);
@@ -212,11 +233,11 @@ static int save(const char *path, const void *data, size_t size)
     return rc ? -1 : 0;
 }
 
-/* The root is mounted where it lies in the bundle volume, so a boot reads
- * only what proves the bundle is the installed one and fits this kernel: the
- * header (CRC as recorded at install), the DTB (hash, and the same as dtb1),
- * the kernel's first 4 KiB (its image headers, with the data CRC, the same as
- * kernel1's) and the root's superblock. The whole bundle was hashed and read
+/* The root is mounted where it lies in the booted bank's bundle volume, so a
+ * boot reads only what proves the bundle is the installed one and fits this
+ * kernel: the header (CRC as recorded at install), the DTB (hash, and the same
+ * as the bank's dtb), the kernel's first 4 KiB (its image headers, with the
+ * data CRC, the same as the bank's kernel) and the root's superblock. The whole bundle was hashed and read
  * back from flash when it was installed; reading it again cost ~3.5 s of
  * every boot, and unpacking the root into RAM another ~3 s and 20 MB. */
 static int boot(void)
@@ -235,7 +256,10 @@ static int boot(void)
 
     uint64_t capacity;
     unsigned char header[512], head[4096], superblock[SD_ROOT_SUPERBLOCK], *dtb = NULL;
-    int fd = p1_bundle_open(&capacity,node);
+    /* The root comes from the bank SPL booted, and must match its kernel and DTB. */
+    unsigned bank;
+    if (p1_active_bank(&bank)) return -1;
+    int fd = p1_bundle_open(bank,&capacity,node);
     if (fd < 0) return -1;
     rc = -1;
     /* A dynamic volume keeps no length of its last update: the header says
@@ -252,12 +276,12 @@ static int boot(void)
     size_t first = kernel < sizeof(head) ? kernel : sizeof(head);
     if (mkdir(P1_ROOT,0700) || !(dtb = malloc(tree))) goto done;
     snprintf(path,sizeof(path),"%s/kernel-head",P1_ROOT);
-    if (p1_exact(fd,head,first,512) || save(path,head,first) || p1_flash_image(0,path,0)) goto done;
+    if (p1_exact(fd,head,first,512) || save(path,head,first) || p1_flash_image(bank,0,path,0)) goto done;
     unlink(path);
     snprintf(path,sizeof(path),"%s/%s",P1_ROOT,fpvos_board.names[1]);
     if (p1_exact(fd,dtb,tree,512+(off_t)kernel) || !fpvos_board_image_valid(1,dtb,tree,0) ||
         save(path,dtb,tree) || p1_hash(path,hash) || memcmp(hash,FPVOS_BUNDLE_ENTRY(header,1)+36,64) ||
-        p1_flash_image(1,path,0)) goto done;
+        p1_flash_image(bank,1,path,0)) goto done;
     unlink(path);
     off_t offset = 512+(off_t)kernel+tree;
     if (p1_exact(fd,superblock,sizeof(superblock),offset) || !sd_root_valid(superblock,sizeof(superblock),root) ||
@@ -289,7 +313,7 @@ int main(int argc, char **argv)
     int rc = -1;
     if (p1_preflight()) goto done;
     if (!strcmp(argv[1],"preflight") && argc == 2) {
-        puts("SteadyDigital NAND layout verified; bank A (stock) and factory contents preserved"); rc = 0;
+        puts("SteadyDigital NAND layout verified; stock bank and factory contents preserved"); rc = 0;
     } else if (!strcmp(argv[1],"install") && argc == 3) {
         if (!regular(P1_WORK "/clean")) goto done;
         const char *starting = "0 3 verifying and installing\n";
@@ -303,7 +327,8 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1],"clean") && argc == 2 && p1_stock() == 0) {
         rc = clean_flag(1);
     } else if (!strcmp(argv[1],"stock") && argc == 2) {
-        rc = remove_stock_hook() || p1_select_bank(0);
+        unsigned bank;
+        rc = stock_bank(&bank) || remove_stock_hook() || p1_select_bank(bank);
     }
  done:
     if (rc && rc != 10) fprintf(stderr,"SteadyDigital %s failed\n",argv[1]);

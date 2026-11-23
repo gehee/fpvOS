@@ -24,10 +24,13 @@ int __wrap_ioctl(int fd,unsigned long request,...) {
     *info=(struct mtd_info_user){.type=MTD_NANDFLASH,.size=st.st_size,.erasesize=0x20000,.writesize=2048,.oobsize=128};
     return 0;
 }
+/* data | app0 | app1: the settings volume or that bank's bundle volume. */
 int main(int argc,char **argv) {
     assert(argc==2);
     char node[64];
-    int fd=volume(!strcmp(argv[1],"data"),0,node);
+    int data=!strcmp(argv[1],"data");
+    assert(data || !strcmp(argv[1],"app0") || !strcmp(argv[1],"app1"));
+    int fd=volume(data,data ? 0 : (unsigned)(argv[1][3]-'0'),0,node);
     if (fd<0) return 1;
     puts(node);
     return 0;

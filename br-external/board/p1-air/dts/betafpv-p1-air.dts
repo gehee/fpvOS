@@ -277,22 +277,32 @@
 				reg = <0x200000 0x600000>;
 				read-only;
 			};
+			/* Both banks, under the stock names: an install picks the bank
+			 * (fpvos-update: the one holding fpvOS, else the one not booted)
+			 * and its checks, not the DT, keep the stock bank unwritten. */
 			partition@a40000 {
 				label = "kernel0";
 				reg = <0xa40000 0x600000>;
+			};
+			partition@1040000 {
+				label = "kernel1";
+				reg = <0x1040000 0x600000>;
 			};
 			partition@1640000 {
 				label = "dtb0";
 				reg = <0x1640000 0x60000>;
 			};
-			partition@1040000 {
-				label = "stock-kernel";
-				reg = <0x1040000 0x600000>;
-				read-only;
+			partition@16a0000 {
+				label = "dtb1";
+				reg = <0x16a0000 0x60000>;
 			};
 			partition@1700000 {
 				label = "userapp0";
 				reg = <0x1700000 0x2d00000>;
+			};
+			partition@4400000 {
+				label = "userapp1";
+				reg = <0x4400000 0x2d00000>;
 			};
 			partition@7100000 {
 				label = "usr_data";

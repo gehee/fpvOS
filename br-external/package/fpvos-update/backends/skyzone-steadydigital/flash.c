@@ -81,11 +81,12 @@ int p1_select_bank(unsigned bank)
     return rc ? -1 : 0;
 }
 
-int p1_flash_image(unsigned index, const char *path, int writing)
+int p1_flash_image(unsigned bank, unsigned index, const char *path, int writing)
 {
-    if (index > 1) return -1;
+    if (bank > 1 || index > 1) return -1;
     unsigned number, size = index ? 0x60000 : 0x600000;
-    int ro = p1_mtd(index ? "dtb1" : "kernel1",index ? 0x16a0000 : 0x1040000,size,&number);
+    int ro = p1_mtd(index ? p1_dtb_part(bank) : p1_kernel_part(bank),
+                    index ? p1_dtb_offset(bank) : p1_kernel_offset(bank),size,&number);
     if (ro < 0) return -1;
     int fd = writing ? writable(ro,number) : ro;
     if (writing) close(ro);

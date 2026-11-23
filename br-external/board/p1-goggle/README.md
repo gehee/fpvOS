@@ -22,9 +22,11 @@ a diagnostic loader that parks the second CPU must supply `maxcpus=1`.
 USB Ethernet uses `192.168.3.1/24`, as every fpvOS goggle, with SSH `root:root`; the computer gets an address from .200-.209. The USB identity is
 `fpvos-p1-goggle`, distinct from Ascent VRX and P1 Air.
 
-The NAND layout preserves stock bank 0 and installs fpvOS into kernel1,
-dtb1 and userapp1. SPL, bootloaders, vendor data, stock kernel/DTB/rootfs and
-factory calibration are exposed read-only. The updater changes the boot
+The NAND layout preserves the stock bank and installs fpvOS into the other
+bank's kernel, DTB and userapp (the bank already holding fpvOS, else the one
+not booted). SPL, bootloaders, vendor data and factory calibration are exposed
+read-only; both banks' kernel/DTB/userapp are writable, guarded by the
+updater's checks rather than the DT. The updater changes the boot
 selection only after verifying all three fpvOS components. User data holds
 recovery state; factory calibration stays read-only. The shared SD service
 mounts an existing FAT, exFAT or ext4 card at `/mnt/sd` without formatting or
@@ -211,9 +213,10 @@ another board's installer.
 
 Use `tools/fpvos-update/client.py --board p1-goggle --port <goggles-port>`
 with `info`, `clean`, then `install output/p1-goggle/images/fpvos-p1-goggle.fwu`.
-The installer selects stock bank 0 before writing bank 1, verifies readback,
-and selects bank 1 last. The installed kernel contains a small recovery root
-that validates and unpacks the full rootfs bundle from userapp1. A missing or
+The installer selects the stock bank before writing the target bank, verifies
+readback, and selects the target last. The installed kernel contains a small
+recovery root that validates and unpacks the full rootfs bundle from the
+booted bank's userapp. A missing or
 invalid bundle leaves the USB recovery service running. `clean` enters this
 recovery environment for subsequent updates; `stock` selects the preserved
 stock bank without rewriting it.

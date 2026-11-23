@@ -106,6 +106,8 @@ class P1Tests(unittest.TestCase):
                                   f'sys/class/ubi/ubi{n}_0/usable_eb_size':'126976',f'dev/ubi{n}_0':''}.items():
                     (d/path).parent.mkdir(parents=True,exist_ok=True);(d/path).write_text(text+'\n' if text else '')
                 with open(d/f'dev/mtd{n}','wb') as f: f.truncate(size)
+            # 'app' asks for the bank of the bundle partition laid out above.
+            if kind=='app': kind='app'+getattr(self,'app_partition',('userapp0',))[0][-1]
             r=subprocess.run([str(self.build/'volume'),kind],cwd=d,capture_output=True,text=True)
             return r.stdout.strip() if r.returncode==0 else None
 
@@ -125,8 +127,9 @@ class P1Tests(unittest.TestCase):
         (d/'dtb0').write_bytes(b'\x55'*0x60000)
         return d
 
-    def flash(self,d,operation,arg,fault=0,output=False):
-        r=subprocess.run([str(self.build/'flash'),operation,str(arg),str(fault)],cwd=d,capture_output=True,text=True)
+    def flash(self,d,operation,arg,fault=0,output=False,bank=None):
+        extra=[] if bank is None else [str(bank)]
+        r=subprocess.run([str(self.build/'flash'),operation,str(arg),str(fault)]+extra,cwd=d,capture_output=True,text=True)
         return (r.returncode,r.stderr) if output else r.returncode
 
     def test_direct_selection_and_return_preserve_other_metadata(self):
@@ -179,18 +182,32 @@ class P1Tests(unittest.TestCase):
         for fault in (1,3,4,7):
             self.assertNotEqual(self.flash(d,'write','image',fault),0)
 
-    def transaction(self,mode):
+    def test_kernel_write_targets_the_chosen_bank(self):
+        for bank in (0,1):
+            with self.subTest(bank=bank):
+                d=self.flash_directory()
+                for name in ('kernel1','dtb1'): (d/name).write_bytes(b'\x55'*(0x600000 if name.startswith('kernel') else 0x60000))
+                image=bytes(range(256))*1200;(d/'image').write_bytes(image)
+                self.assertEqual(self.flash(d,'write','image',0,bank=bank),0)
+                self.assertEqual((d/f'kernel{bank}').read_bytes()[:len(image)],image)
+                self.assertEqual((d/f'kernel{1-bank}').read_bytes(),b'\x55'*0x600000)
+                self.assertEqual(self.flash(d,'compare','image',0,bank=bank),0)
+
+    def transaction(self,mode,banks='0fs'):
+        """An install. BANKS: the booted bank, then what bank 0 and bank 1
+        hold ('f' fpvOS, 's' stock, 'b' an unusable volume)."""
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);d=Path(temp.name)
         (d/'work/state/fpvos-boot').mkdir(parents=True,mode=0o700)
         (d/'work/state/fpvos-boot/owner').write_text('fpvOS P1 boot agent 1\n')
         (d/'work/state/fpvos-boot/fpvos-update').write_bytes(b'old agent')
         (d/'work/state/sirius-clean-system-flag').write_text('web:/usrdata/fpvos-boot/boot.sh\n' if mode!='foreign' else 'usb:vendor\n')
-        (d/'volume').write_bytes(b'previous volume')
+        for bank in (0,1): (d/f'volume{bank}').write_bytes(b'previous volume %d' % bank)
         (d/'upload').write_bytes(b'valid verified snapshot')
         # Production requires root-owned files; simulate that one metadata bit
         # for this filesystem harness using a separately compiled shim below.
-        r=subprocess.run([str(self.build/'transaction'),mode],cwd=d,capture_output=True)
-        return d,r,(d/'events').read_text().splitlines()
+        r=subprocess.run([str(self.build/'transaction'),mode,banks],cwd=d,capture_output=True)
+        events=(d/'events').read_text().splitlines() if (d/'events').exists() else []
+        return d,r,events
 
     def test_verified_readback_precedes_boot_activation(self):
         d,r,events=self.transaction('ok')
@@ -200,49 +217,88 @@ class P1Tests(unittest.TestCase):
         self.assertLess(events.index('dtb'),events.index('write'))
         self.assertLess(events.index('write'),events.index('readback'))
         self.assertLess(events.index('readback'),events.index('activate'))
-        self.assertEqual((d/'volume').read_bytes(),b'valid verified snapshot')
+        self.assertEqual((d/'volume0').read_bytes(),b'valid verified snapshot')
         self.assertFalse((d/'work/state/fpvos-boot/disabled').exists())
 
     def test_bank_and_volume_are_checked_before_anything_changes(self):
         d,r,events=self.transaction('ok')
-        order=['verify','active-bank','bundle-present','select-stock','kernel','dtb','write','readback','activate']
+        order=['verify','active-bank','bundle-present','bundle-present','select-stock','kernel','dtb','write','readback','activate']
         self.assertEqual([e for e in events if e in order],order)
 
-    def test_live_stock_in_the_fpvos_bank_and_an_unusable_volume_change_nothing(self):
-        for fault,said in (('stock-fpvos-bank',b"unit's stock"),('bad-volume',b'cannot be used'),('gpt',b'')):
-            with self.subTest(fault=fault):
-                d,r,events=self.transaction(fault)
+    # Booted bank + contents -> the bank written. No bank is fpvOS's or stock's
+    # for good: the fpvOS bank is rewritten in place, else the one not booted.
+    TARGETS = {'0fs':0,'1sf':1,          # an update: fpvOS rewritten in place
+               '0ss':1,'1ss':0,          # a first install: the bank not booted
+               '0sf':1,'1fs':0,          # fpvOS installed, stock booted
+               '0ff':1,'1ff':0,          # fpvOS on both: keep the booted one
+               '0fb':0,'1bf':1,          # an update beside an unusable bank
+               '0bs':1,'1sb':0}          # booted volume unusable (stock's own root mounted)
+
+    def test_the_target_bank_is_chosen_from_what_each_bank_holds(self):
+        for banks,target in self.TARGETS.items():
+            with self.subTest(banks=banks):
+                d,r,events=self.transaction('ok',banks)
+                self.assertEqual(r.returncode,0,r.stderr)
+                for written in ('kernel','dtb','write','readback','activate'):
+                    self.assertIn(f'{written}@{target}',events)
+                self.assertIn(f'select-stock@{1-target}',events)
+                self.assertEqual((d/f'volume{target}').read_bytes(),b'valid verified snapshot')
+                self.assertEqual((d/f'volume{1-target}').read_bytes(),b'previous volume %d' % (1-target))
+                self.assertIn(b'installing on bank %d' % target,r.stderr)
+
+    def test_booted_stock_is_never_written(self):
+        for banks,target in self.TARGETS.items():
+            if banks[1+int(banks[0])]=='f': continue
+            with self.subTest(banks=banks):
+                d,r,events=self.transaction('ok',banks)
+                self.assertNotEqual(target,int(banks[0]))
+                self.assertFalse([e for e in events if e.endswith('@'+banks[0]) and not e.startswith(('bundle-present','select-stock'))])
+
+    def test_an_unusable_target_volume_or_gpt_changes_nothing(self):
+        for fault,banks,said in (('ok','0sb',b'cannot be used'),('ok','1bs',b'cannot be used'),
+                                 ('ok','0bb',b'cannot be used'),('gpt','0fs',b'')):
+            with self.subTest(fault=fault,banks=banks):
+                d,r,events=self.transaction(fault,banks)
                 self.assertNotEqual(r.returncode,0)
                 self.assertIn(said,r.stderr)
                 for touched in ('select-stock','kernel','dtb','write','activate'):
                     self.assertNotIn(touched,events)
-                self.assertEqual((d/'volume').read_bytes(),b'previous volume')
+                for bank in (0,1): self.assertEqual((d/f'volume{bank}').read_bytes(),b'previous volume %d' % bank)
                 self.assertTrue((d/'work/state/sirius-clean-system-flag').exists())
 
-    def test_stock_in_the_stock_bank_leaves_the_fpvos_bank_free(self):
-        d,r,events=self.transaction('stock-other')
-        self.assertEqual(r.returncode,0,r.stderr)
-        self.assertIn('activate',events)
+    def test_stock_selects_the_bank_without_fpvos(self):
+        for banks,expected in (('0fs',1),('1sf',0),('0sf',0),('1fs',1),('0ss',0),('1ss',1),('0ff',None)):
+            with self.subTest(banks=banks):
+                d,r,events=self.transaction('stock',banks)
+                if expected is None:
+                    self.assertNotEqual(r.returncode,0)
+                    self.assertIn(b'no stock bank',r.stderr)
+                else:
+                    self.assertEqual(r.returncode,0,r.stderr)
+                    self.assertEqual(r.stdout.strip(),b'stock bank %d' % expected)
 
     def test_faults_never_arm_or_overwrite_stock_selection(self):
         for fault in ('verify','gzip','select-stock','kernel','dtb','write','readback','corrupt','foreign'):
-            with self.subTest(fault=fault):
-                d,r,events=self.transaction(fault)
-                self.assertNotEqual(r.returncode,0)
-                self.assertNotIn('activate',events)
-                if fault in ('verify','gzip','select-stock','kernel','dtb','foreign'):
-                    self.assertNotIn('write',events)
-                    self.assertEqual((d/'volume').read_bytes(),b'previous volume')
-                if fault=='write':
-                    self.assertEqual((d/'volume').read_bytes(),b'torn update')
-                if fault in ('write','readback','corrupt'):
-                    self.assertFalse((d/'work/state/sirius-clean-system-flag').exists())
+            for banks in ('0fs','0ss'):
+                target=self.TARGETS[banks]
+                with self.subTest(fault=fault,banks=banks):
+                    d,r,events=self.transaction(fault,banks)
+                    self.assertNotEqual(r.returncode,0)
+                    self.assertNotIn('activate',events)
+                    self.assertEqual((d/f'volume{1-target}').read_bytes(),b'previous volume %d' % (1-target))
+                    if fault in ('verify','gzip','select-stock','kernel','dtb','foreign'):
+                        self.assertNotIn('write',events)
+                        self.assertEqual((d/f'volume{target}').read_bytes(),b'previous volume %d' % target)
+                    if fault=='write':
+                        self.assertEqual((d/f'volume{target}').read_bytes(),b'torn update')
+                    if fault in ('write','readback','corrupt'):
+                        self.assertFalse((d/'work/state/sirius-clean-system-flag').exists())
 
     def test_changed_upload_cannot_replace_verified_snapshot(self):
         d,r,events=self.transaction('mutate')
         self.assertEqual(r.returncode,0,r.stderr)
         self.assertEqual((d/'upload').read_bytes(),b'changed')
-        self.assertEqual((d/'volume').read_bytes(),b'valid verified snapshot')
+        self.assertEqual((d/'volume0').read_bytes(),b'valid verified snapshot')
 
 class BootGuardTests(unittest.TestCase):
     def test_entry_preserves_header_and_returns_to_original_branch(self):

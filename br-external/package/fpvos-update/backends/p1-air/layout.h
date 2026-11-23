@@ -5,7 +5,7 @@
 #include "config.h"
 #include "ar9311-gpt.h"
 /* P1 fixed layout: only kernel/DTB/userapp selection may switch together.
- * SPL, environment, U-Boot and the stock bank 1 contents are preserved. */
+ * SPL, environment, U-Boot and the stock bank's contents are preserved. */
 static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], unsigned *record, unsigned *bank)
 {
     int valid[2];

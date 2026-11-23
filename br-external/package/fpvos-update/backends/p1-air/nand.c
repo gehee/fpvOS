@@ -75,28 +75,47 @@ static int remove_stock_hook(void)
     return rc;
 }
 
-/* The fpvOS bank is ours to write only when it is not what the unit runs:
- * either the stock bank is the active one, or the fpvOS bank already holds
- * fpvOS. An active fpvOS bank without an fpvOS bundle is the unit's own stock
- * (a vendor update put it there; the other bank then holds an older copy
- * nobody has checked) - writing it would leave the unit without its stock.
- * The bundle volume is checked here too, so one that cannot take the bundle
- * is found before the bank selection or the kernel is touched. */
-static int fpvos_bank_free(void)
+/* What each bank's bundle volume holds (1 fpvOS, 0 anything else, -1 unusable)
+ * and which bank the unit boots. Asked before anything is selected or written. */
+static int banks(unsigned *active, int held[2])
 {
-    unsigned bank;
-    if (p1_active_bank(&bank)) return -1;
-    int fpvos = p1_bundle_present();
-    if (fpvos < 0) {
-        fprintf(stderr,"P1: bank %d's bundle volume cannot be used; nothing was changed\n",P1_FPVOS_BANK);
-        return -1;
-    }
-    if (bank == P1_FPVOS_BANK && !fpvos) {
-        fprintf(stderr,"P1: bank %d is the active bank and does not hold fpvOS: "
-                       "it is the unit's stock firmware; nothing was changed\n",P1_FPVOS_BANK);
-        return -1;
-    }
+    if (p1_active_bank(active)) return -1;
+    held[0] = p1_bundle_present(0);
+    held[1] = p1_bundle_present(1);
     return 0;
+}
+
+/* The bank an install writes. Neither is fpvOS's or stock's for good: the one
+ * that holds fpvOS is rewritten in place (an update, stock stays on the other);
+ * with no fpvOS bank, or two, it is the one the unit does not boot - booted
+ * stock is never the target, whichever bank a vendor update left it on. The
+ * other bank keeps what it holds and is selected while the target is written,
+ * so a power cut boots it. */
+static int target_bank(unsigned *target)
+{
+    unsigned active; int held[2];
+    if (banks(&active,held)) return -1;
+    unsigned other = active ^ 1;
+    *target = held[active] == 1 && held[other] != 1 ? active : other;
+    if (held[*target] < 0) {
+        fprintf(stderr,"P1: bank %u's bundle volume cannot be used; nothing was changed\n",*target);
+        return -1;
+    }
+    fprintf(stderr,"P1: booted bank %u; installing on bank %u, bank %u keeps %s\n",active,*target,
+            *target ^ 1,held[*target ^ 1] == 1 ? "its fpvOS" : "what it holds (stock)");
+    return 0;
+}
+
+/* The bank that does not hold fpvOS: the booted one, else the other. With
+ * fpvOS on both there is no stock left to return to. */
+static int stock_bank(unsigned *bank)
+{
+    unsigned active; int held[2];
+    if (banks(&active,held)) return -1;
+    if (held[active] != 1) { *bank = active; return 0; }
+    if (held[active ^ 1] != 1) { *bank = active ^ 1; return 0; }
+    fprintf(stderr,"P1: both banks hold fpvOS; there is no stock bank to select\n");
+    return -1;
 }
 
 static int transaction(const char *source)
@@ -108,19 +127,21 @@ static int transaction(const char *source)
     snprintf(images,sizeof(images),"%s/images",directory);
     snprintf(readback,sizeof(readback),"%s/readback.fwu",directory);
     if (fpvos_bootstrap_copy_limit(source,package,0400,fpvos_board.bundle_limits[0]) || verify(package,images) || p1_hash(package,before)) goto done;
-    /* Select the untouched stock bank before modifying the fpvOS bank. Power loss
-     * during installation then boots stock; only verified images reactivate
-     * fpvOS. No change to environment/U-Boot selection or factory contents. */
-    if (fpvos_bank_free() || remove_stock_hook() || p1_select_bank(P1_STOCK_BANK)) goto done;
+    /* Select the bank that is not written before modifying the target. Power
+     * loss during installation then boots what it holds (stock); only verified
+     * images select the target. No change to environment/U-Boot selection or
+     * factory contents. */
+    unsigned bank;
+    if (target_bank(&bank) || remove_stock_hook() || p1_select_bank(bank ^ 1)) goto done;
     for (unsigned i = 0; i < 2; i++) {
         snprintf(path,sizeof(path),"%s/%s",images,fpvos_board.names[i]);
-        if (p1_flash_image(i,path,1)) goto done;
+        if (p1_flash_image(bank,i,path,1)) goto done;
     }
     remove_images(images);
-    if (p1_bundle_write(package) || p1_bundle_read(readback) || p1_hash(readback,after) || strcmp(before,after)) goto done;
+    if (p1_bundle_write(bank,package) || p1_bundle_read(bank,readback) || p1_hash(readback,after) || strcmp(before,after)) goto done;
     int flag = clean_flag(0);
-    if (flag < 0 || p1_select_bank(P1_FPVOS_BANK)) goto done;
-    puts("Verified kernel, DTB and UBI root; direct fpvOS bank selected");
+    if (flag < 0 || p1_select_bank(bank)) goto done;
+    printf("Verified kernel, DTB and UBI root; fpvOS bank %u selected\n",bank);
     rc = 0;
  done:
     remove_images(images); unlink(package); unlink(readback); rmdir(directory);
@@ -131,11 +152,14 @@ static int boot(void)
 {
     int rc = clean_flag(0);
     if (rc) return rc;
+    /* The root comes from the bank SPL booted, and must match its kernel and DTB. */
+    unsigned bank;
+    if (p1_active_bank(&bank)) return -1;
     const char *package = P1_WORK "/boot.fwu", *images = "/run/fpvos-root";
-    if (p1_bundle_read(package) || verify(package,images)) return -1;
+    if (p1_bundle_read(bank,package) || verify(package,images)) return -1;
     for (unsigned i = 0; i < 2; i++) {
         char path[512]; snprintf(path,sizeof(path),"%s/%s",images,fpvos_board.names[i]);
-        if (p1_flash_image(i,path,0)) return -1;
+        if (p1_flash_image(bank,i,path,0)) return -1;
         unlink(path);
     }
     return 0;
@@ -170,7 +194,8 @@ int main(int argc, char **argv)
     } else if (!strcmp(argv[1],"clean") && argc == 2 && p1_stock() == 0) {
         rc = clean_flag(1);
     } else if (!strcmp(argv[1],"stock") && argc == 2) {
-        rc = remove_stock_hook() || p1_select_bank(P1_STOCK_BANK);
+        unsigned bank;
+        rc = stock_bank(&bank) || remove_stock_hook() || p1_select_bank(bank);
     }
  done:
     if (rc && rc != 10) fprintf(stderr,"P1 %s failed\n",argv[1]);

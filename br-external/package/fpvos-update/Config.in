@@ -39,24 +39,26 @@ config BR2_PACKAGE_FPVOS_UPDATE_P1_AIR
 	depends on BR2_FPVOS_BOARD_P1_AIR
 	help
 	  Direct boot with an embedded fpvOS recovery system. Write and
-	  verify bank 0 before selecting it; preserve stock bank 1, factory
+	  verify the target bank (the one holding fpvOS, else the one not
+	  booted) before selecting it; preserve the stock bank, factory
 	  calibration and user settings. Stock clean mode is only an installer.
 
 config BR2_PACKAGE_FPVOS_UPDATE_P1_GOGGLE
 	bool "BETAFPV P1 goggles NAND"
 	depends on BR2_FPVOS_BOARD_P1_GOGGLE
 	help
-	  Install fpvOS in bank 1 with independent USB recovery. Preserve
-	  stock bank 0, SPL/U-Boot, environment and factory calibration.
-	  Initial installation requires RAM boot into fpvOS recovery.
+	  Install fpvOS with independent USB recovery on the bank not
+	  holding stock (either bank). Preserve the stock bank, SPL/U-Boot,
+	  environment and factory calibration. Initial installation requires
+	  RAM boot into fpvOS recovery.
 
 config BR2_PACKAGE_FPVOS_UPDATE_SKYZONE_STEADYDIGITAL
 	bool "Skyzone SteadyDigital NAND (AR9311)"
 	depends on BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
 	help
-	  Direct boot with an embedded fpvOS recovery system, as the P1,
-	  but mirrored for this board: write and verify bank B before
-	  selecting it; preserve stock bank A, factory calibration and user
-	  settings. The receiver is kestrel-gnd.
+	  Direct boot with an embedded fpvOS recovery system, as the P1:
+	  write and verify the target bank (the one holding fpvOS, else the
+	  one not booted) before selecting it; preserve the stock bank,
+	  factory calibration and user settings. The receiver is kestrel-gnd.
 endchoice
 endif

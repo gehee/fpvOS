@@ -1,5 +1,6 @@
 /* SPDX-License-Identifier: GPL-2.0-or-later */
-/* SteadyDigital stock A/B layout, UBI storage. Factory and stock bank A are preserved. */
+/* SteadyDigital stock A/B layout, UBI storage, either bank. Factory contents are
+ * never written; which bank an install may write is decided in nand.c. */
 #define _GNU_SOURCE
 #include "p1.h"
 #include "layout.h"
@@ -125,9 +126,13 @@ int p1_stock(void)
     struct utsname u;
     if (p1_read("/proc/device-tree/model", model, sizeof(model)) || uname(&u)) return -1;
     if (!strcmp(model,"Skyzone SteadyDigital (AR9311)") && !strncmp(u.release,"6.18.",5)) return 0;
+    /* Stock runs from either bank's userapp (mtd17 bank 0, mtd18 bank 1): a
+     * vendor update may have left it on either. Its mounted root (ubiblock) is
+     * never an install target - volume() refuses a volume in use. */
     if (strcmp(model,"Artosyn, Proxima Development Board") || strcmp(u.release,"4.9.38") ||
         p1_read("/proc/cmdline",cmdline,sizeof(cmdline)) || !token(cmdline,stock_map) ||
-        !token(cmdline,"ubi.mtd=17,2048") || !token(cmdline,"root=/dev/ubiblock0_0")) return -1;
+        !(token(cmdline,"ubi.mtd=17,2048") || token(cmdline,"ubi.mtd=18,2048")) ||
+        !token(cmdline,"root=/dev/ubiblock0_0")) return -1;
     if (p1_read("/usr/usrdata/sdk_version.json",version,sizeof(version)) &&
         p1_read("/etc/fpvos-stock-version",version,sizeof(version))) return -1;
     return strstr(version,"A1_GND") ? 1 : -1;
@@ -225,10 +230,12 @@ static int ubi_for(unsigned mtd_number, int attach)
     return rc ? -1 : request.ubi_num;
 }
 
-static int volume(int data, int writing, char node[64])
+/* The settings volume (data), or bank BANK's bundle volume. */
+static int volume(int data, unsigned bank, int writing, char node[64])
 {
     unsigned number;
-    int fd = p1_mtd(data ? "usr_data" : "userapp1",data ? 0x7100000 : 0x4400000,
+    if (bank > 1) return -1;
+    int fd = p1_mtd(data ? "usr_data" : p1_root_part(bank),data ? 0x7100000 : p1_root_offset(bank),
                  data ? 0x600000 : 0x2d00000,&number);
     if (fd < 0) return -1;
     close(fd);
@@ -237,8 +244,8 @@ static int volume(int data, int writing, char node[64])
     char path[256],text[128];
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d/ro_mode",ubi);
     if (p1_read(path,text,sizeof(text)) || strcmp(text,"0")) return -1;
-    /* Stock names the volumes: MTD usr_data holds "usr_data", userapp1
-     * (bank B) holds "userapp". */
+    /* Stock names the volumes: MTD usr_data holds "usr_data", either bank's
+     * userapp holds "userapp". */
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/name",ubi);
     if (p1_read(path,text,sizeof(text)) || strcmp(text,data ? "usr_data" : "userapp")) return -1;
     snprintf(path,sizeof(path),"/sys/class/ubi/ubi%d_0/type",ubi);
@@ -267,10 +274,10 @@ static int volume(int data, int writing, char node[64])
     return -1;
 }
 
-int p1_bundle_read(const char *destination)
+int p1_bundle_read(unsigned bank, const char *destination)
 {
     char node[64];
-    int in = volume(0,0,node);
+    int in = volume(0,bank,0,node);
     if (in < 0) return -1;
     unsigned char header[512];
     if (p1_exact(in,header,sizeof(header),0) || memcmp(header,"FPVOSUP1",8)) { close(in); return -1; }
@@ -286,9 +293,9 @@ int p1_bundle_read(const char *destination)
 /* The bundle volume, read-only, for a boot that mounts the root where it lies
  * (*bytes: the volume's size; a dynamic volume does not record how much its
  * last update wrote). */
-int p1_bundle_open(uint64_t *bytes, char node[64])
+int p1_bundle_open(unsigned bank, uint64_t *bytes, char node[64])
 {
-    int fd = volume(0,0,node);
+    int fd = volume(0,bank,0,node);
     if (fd < 0) return -1;
     char path[128],text[64];
     snprintf(path,sizeof(path),"/sys/class/ubi/%s/data_bytes",node+5);
@@ -339,13 +346,13 @@ int p1_root_attach(int volume_fd, const char *node, uint64_t offset, uint64_t si
     return rc ? -1 : 0;
 }
 
-/* What bank B's bundle volume holds, asked before anything is selected or
+/* What bank BANK's bundle volume holds, asked before anything is selected or
  * written: 1 an fpvOS bundle, 0 anything else (stock's own userapp), -1 the
  * volume is not the expected one or cannot be written. */
-int p1_bundle_present(void)
+int p1_bundle_present(unsigned bank)
 {
     char node[64];
-    int fd = volume(0,1,node);
+    int fd = volume(0,bank,1,node);
     if (fd < 0) return -1;
     unsigned char header[512];
     int present = !p1_exact(fd,header,sizeof(header),0) && !memcmp(header,"FPVOSUP1",8);
@@ -353,7 +360,7 @@ int p1_bundle_present(void)
     return present;
 }
 
-int p1_bundle_write(const char *source)
+int p1_bundle_write(unsigned bank, const char *source)
 {
     int in = open(source,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
     struct stat st;
@@ -361,7 +368,7 @@ int p1_bundle_write(const char *source)
     if (fstat(in,&st) || !S_ISREG(st.st_mode) || st.st_size < 512 ||
         st.st_size > fpvos_board.bundle_limits[0]) { close(in); return -1; }
     char node[64];
-    int out = volume(0,1,node);
+    int out = volume(0,bank,1,node);
     if (out < 0) { close(in); return -1; }
     __s64 bytes = st.st_size;
     int rc = ioctl(out,UBI_IOCVOLUP,&bytes) || p1_copy_n(in,out,(size_t)bytes) || fsync(out);
@@ -372,7 +379,7 @@ int p1_bundle_write(const char *source)
 int p1_state_mount(void)
 {
     char node[64];
-    int fd = volume(1,0,node);
+    int fd = volume(1,0,0,node);
     if (fd < 0) return -1;
     close(fd);
     if (mkdir(P1_STATE,0700) && errno != EEXIST) return -1;

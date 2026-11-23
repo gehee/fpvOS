@@ -1,7 +1,8 @@
 # Skyzone SteadyDigital flashable image (Artosyn Proxima AR9311, Cortex-A53).
 # The NAND kernel carries a small fpvOS recovery that loads the main root from
-# bank B's userapp over USB; the updater writes bank B and preserves stock
-# bank A. Same board, drivers and receiver as the RAM image.
+# the booted bank's userapp; the updater writes the bank not holding stock
+# (either bank) and preserves the stock bank. Same board, drivers and receiver
+# as the RAM image.
 BR2_aarch64=y
 BR2_cortex_a53=y
 BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL=y
@@ -35,7 +36,7 @@ BR2_PACKAGE_DOSFSTOOLS=y
 BR2_PACKAGE_EXFATPROGS=y
 BR2_PACKAGE_DOSFSTOOLS_FSCK_FAT=y
 BR2_PACKAGE_E2FSPROGS=y
-# The NAND updater and its embedded recovery (bank B; stock bank A preserved).
+# The NAND updater and its embedded recovery (either bank; stock preserved).
 BR2_PACKAGE_FPVOS_UPDATE=y
 BR2_PACKAGE_FPVOS_UPDATE_SKYZONE_STEADYDIGITAL=y
 BR2_PACKAGE_FPVOS_RECOVERY=y
