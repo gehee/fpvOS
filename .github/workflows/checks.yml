@@ -32,7 +32,12 @@ jobs:
                    br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-format-dvr \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/root/bb-restart.sh \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/ar8030soc/bb_only.sh \
-                   br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/start.sh; do
+                   br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/start.sh \
+                   br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/run-kestrel-air.sh \
+                   br-external/board/ascent-lite/rootfs-overlay/usrdata/fpv/air/fpvos-usb \
+                   br-external/board/ascent-lite/post-image.sh br-external/board/ascent-lite/fpv_run-hook.sh \
+                   br-external/board/ascent-lite/usb_ip.sh br-external/board/ascent-lite/config_ether.sh \
+                   br-external/board/ascent-lite/disable_config_ether.sh boot/ascent-deploy.sh; do
             head -1 "$f" | grep -q bash && sh=bash || sh=sh
             $sh -n "$f" || { echo "syntax error: $f"; exit 1; }
           done
@@ -46,6 +51,7 @@ jobs:
         run: |
           for f in $(git ls-files 'br-external/board/ascent-vrx/*' \
                      'br-external/board/skyzone-steadydigital/*' \
+                     'br-external/board/p1-goggle/*' \
                      'br-external/board/common/ar9311/*' \
                      'br-external/package/ar9311-radio/src/*' \
                      'br-external/package/kestrel-native/*' \
@@ -72,14 +78,36 @@ jobs:
           sh -n br-external/package/kestrel-air/ar9311-run
           sh -n br-external/package/kestrel-air/S60kestrel-air
           python3 br-external/package/kestrel-air/tests/test_supervise.py -v
+          python3 br-external/package/kestrel-native/tests/test_run.py -v
+          python3 br-external/package/kestrel-native/tests/test_package.py -v
+          python3 br-external/board/p1-goggle/tests/test_inittab.py -v
+          python3 br-external/board/p1-goggle/tests/test_update_helper.py -v
+          python3 br-external/board/ascent-vrx/tests/test_format_dvr.py -v
           python3 br-external/board/p1-air/tests/test_settings.py -v
           python3 br-external/board/p1-air/tests/test_inittab.py -v
+          python3 br-external/board/p1-air/tests/test_radio_check.py -v
+          python3 br-external/package/ar9311-radio/tests/test_radio_start.py -v
           python3 br-external/board/skyzone-steadydigital/tests/test_inittab.py -v
-          python3 br-external/board/ascent-vrx-pro/tests/test_wifi.py -v
           sh -n br-external/board/p1-air/post-image.sh
           sh -n br-external/board/p1-air/source-post-image.sh
           sh -n br-external/board/p1-air/rootfs-overlay/usrdata/fpv/air/root-login.sh
           python3 -m unittest discover -s br-external/package/p1-air-vendor/tests -v
+
+      - name: VRX Pro scripts
+        run: |
+          # mkfs.exfat/exfatlabel/fsck.exfat for S35dvrpart's real-filesystem test
+          sudo apt-get update -qq && sudo apt-get install -y exfatprogs
+          python3 br-external/board/ascent-vrx-pro/tests/test_wifi.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_dvrpart.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_udhcpd.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_bb_only.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_busybox.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_factory.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_usbgadget.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_post_build.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_sd_image.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_extract_firmware.py -v
+          python3 br-external/board/ascent-vrx-pro/tests/test_format_dvr.py -v
 
       - name: Source camera white-balance checks
         run: |

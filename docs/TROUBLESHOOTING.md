@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Find what you see, then try the fix. This page is for release **2026.10.beta4**.
+Find what you see, then try the fix. This page is for release **2026.11.beta1**.
 If it doesn't solve it, [get help](../SUPPORT.md): say what you see, your
 versions, and attach the [logs](#collecting-logs).
 
@@ -143,9 +143,8 @@ once you power it off**. Collect them after the problem, before you shut down.
 
 To keep them across a power-off, turn **HUD › Debug Info** on before you fly.
 The goggle then also writes its log to the card, next to the recordings
-(`fpvOS_<date>_<time>.log`, the newest 30), and an fpvOS air unit keeps a log
-of each armed flight, from 10 s before arming to 10 s after disarming, in
-`/usrdata/fpv/air/logs` (the newest 5).
+(`fpvOS_<date>_<time>.log`, the newest 30). The air unit keeps no flight logs
+on its flash.
 
 Connect the goggle to a computer over USB (see
 [connecting over USB](INSTALL.md#connecting-over-usb-advanced)), then:
@@ -158,6 +157,14 @@ ssh root@192.168.3.1 'cat /var/log/ar8030-chip.log'  > ar8030-chip.log     # the
 
 (The password is `fpvos`. Use `cat`, as here: the goggle has no `scp`/sftp
 server.) `kestrel-gnd.log.prev` is the run before this one.
+
+On the AR9311 receivers (Ascent VRX, P1 goggles, SteadyDigital) the password is
+`root`, and the app's log is `/run/kestrel-gnd/current.log` (the run before:
+`previous.log`):
+
+```sh
+ssh root@192.168.3.1 'cat /run/kestrel-gnd/current.log'  > kestrel-gnd.log
+```
 
 Add your versions: **SYSTEM › Version** on the goggle, and **AIR UNIT › INFO**
 for the air unit. For the OSD or telemetry, add the flight controller and its

@@ -20,7 +20,7 @@ device stands, released or in development, and how it installs is in the
 | Flight controller telemetry over MSP (battery, altitude, GPS, modes) | ✅ | ✅ | ? |
 | A cap on the video bitrate | ✅ | ✅ | ? |
 | USB network (CDC-NCM) and SSH | ✅ | ✅ | ✅ |
-| Back to stock | ✅ Caddx's own update | ✅ Caddx's own update | ✅ stock kept in bank 1 |
+| Back to stock | ✅ Caddx's own update | ✅ Caddx's own update | ✅ stock kept on its other bank |
 
 **Receivers and goggles**
 
@@ -33,10 +33,10 @@ device stands, released or in development, and how it installs is in the
 | DVR to the SD card | ✅ FPV and SCREEN | ? | ✅ received video | ✅ |
 | Gallery: play, seek, delete | ✅ | ? | ? | ? |
 | WiFi spectator view for phones | ✅ | — | — | — |
-| Settings and pairing kept across boots | ✅ | ? | ❌ | ? |
+| Settings and pairing kept across boots | ✅ | ✅ on the SD card | ❌ | ✅ (flash image) |
 | USB network and SSH | ✅ CDC-NCM | ✅ | ✅ | ✅ |
 | Update from fpvOS | ✅ write a new card | ✅ self-update | ❌ not qualified | ✅ `tools/fpvos-update` |
-| Back to stock | ✅ pull the card | ✅ restore checked | ✅ stock kept in bank 0 | ✅ stock kept in bank A |
+| Back to stock | ✅ pull the card | ✅ restore checked | ✅ stock kept on its other bank | ✅ stock kept on its other bank |
 
 ## Specs
 

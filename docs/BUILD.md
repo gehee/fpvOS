@@ -109,8 +109,10 @@ does not have to come from the build either. Stock keeps its copy on the
 goggle's internal NAND, and at every boot `S50factory` reads it and adds any
 air unit the card's list is missing:
 
-- the NAND is only read: the partition is attached for the copy and detached
-  again, the volume is mounted read-only, and nothing is written back
+- nothing is written back: the partition is attached for the copy and
+  detached again, and the volume is mounted read-only. UBI is attached as stock
+  attaches it, so its own upkeep (refreshing a block with bitflips) can still
+  run while it is attached, as it would under stock
 - an air unit bound in fpvOS is saved on the card, so stock does not see it
 - a goggle never paired under stock starts with an empty list: bind the air
   unit once from the menu
@@ -281,6 +283,13 @@ which starts kestrel-air where the stock script would start the stock air app.
 `touch /usrdata/fpv/air/disable` on the unit gives the stock app from the next
 boot.
 
+The app volume also carries fpvOS's own versions of a few stock files: the
+updater (`ar_fpvhs_upgrade`, stock's kept beside it as
+`ar_fpvhs_upgrade.stock`), the USB serial gadget's name (`config_serial.sh`),
+and the USB network (`config_ether.sh`, `disable_config_ether.sh` and
+`usb_ip.sh`: CDC-NCM at 192.168.2.1 with a DHCP server, in place of stock's
+RNDIS at 192.168.3.104).
+
 **Lite or Lite+:** one stock image serves both, and so does ours. The stock
 board script tells them apart by a voltage on the board (board type 482 is the
 Lite, 472 the Lite+), and `air/start.sh` follows it: the Lite+ gets its own radio
@@ -299,6 +308,16 @@ changed: the password goes in a copy of `/etc/shadow` mounted over it at boot.
 The unit speaks network once its USB link is switched from the Caddx serial
 gadget to network, at 192.168.2.1, with a DHCP server for the computer. The
 host key is made on the first boot, in the app volume.
+
+**The stock base:** `./build.sh air` builds on exactly
+`vendor/stock/air/Ascent_H_Sky_18_21_10.img` and checks its SHA-256 (the
+radio driver, the SDK libraries and the run script are matched to it).
+`FPVOS_AIR_STOCK=path/to/image` builds on another stock image on purpose, with
+a warning.
+
+**A release build:** `FPVOS_RELEASE=1 ./build.sh air` refuses personal SSH keys
+(`FPVOS_AIR_SSH_KEYS`), `FPVOS_AIR_STOCK`, uncommitted changes, and a tree that
+is not exactly on a tag, so the image's `air/VERSION` is the release's name.
 
 The MPI libraries are proprietary and only exist prebuilt (the stock firmware
 links them statically into its own app); `hi3516cv610-sdk` fetches them and

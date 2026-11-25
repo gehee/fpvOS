@@ -1,8 +1,8 @@
 # FAQ
 
 **Will it brick my goggle?**
-No. The VRX Pro boots from the SD card and fpvOS never writes to the goggle's
-own memory. Pull the card and it boots stock. The one step that writes to
+No. The VRX Pro boots from the SD card and fpvOS never writes its own data to
+the goggle's memory: it only reads stock's pairing list from it. Pull the card and it boots stock. The one step that writes to
 hardware is the optional air unit flash, and flashing Caddx's own update the
 same way puts the stock firmware back.
 

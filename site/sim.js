@@ -686,7 +686,7 @@
       r.push({ type: 'R', label: 'Space Left', value: function () { return '28 GB'; }, help: 'Room remaining on the recordings partition.' });
     } else if (side === 0 && name === 'SYSTEM') {
       r.push({ type: 'R', label: 'Build', value: function () { return '2026-10-20 18:02'; } });
-      r.push({ type: 'R', label: 'Version', value: function () { return 'v2026.10.beta4'; } });
+      r.push({ type: 'R', label: 'Version', value: function () { return 'v2026.11.beta1'; } });
       r.push({ type: 'R', label: 'Decoder', value: function () { return 'rkmpp'; } });
       r.push(opt('screenMode', 'Screen Mode', ['Auto', '1920x1080 @ 240 Hz', '1920x1080 @ 144 Hz', '1920x1080 @ 120 Hz', '1920x1080 @ 60 Hz', '1280x720 @ 60 Hz'], { trial: 1, help: "Showing 1920x1080 @ 200 Hz. Auto refreshes in step with the camera's frame rate\nwhere the screen can, else at the highest refresh it offers.", warnPending: 'Enter tries it: the app restarts, then asks whether to keep it.' }));
       r.push(opt('wifi', 'WiFi AP', ['OFF', 'ON'], { help: function () { return S.wifi === 'ON' ? 'Network fpvOS-3F2A   Password 12345678   (running). Watch the video at http://192.168.4.1' : 'Wifi access point for spectators'; }, warn: 'Warning: Before enabling, plug an external antenna to the wifi uFL connector.' }));
@@ -735,7 +735,7 @@
       r.push({ type: 'R', label: 'SW Version', value: function () { return lk ? '18.21.10' : '-.-.-'; }, help: 'The Caddx firmware on the air unit, as stock shows it. With fpvOS it is the stock firmware fpvOS runs on.' });
       if (lk && L.fpvAir) {
         r.push({ type: 'H', label: 'FPVOS' });
-        r.push({ type: 'R', label: 'fpvOS', value: function () { return '2026.10.beta4'; }, help: 'The fpvOS air image the unit was flashed with.' });
+        r.push({ type: 'R', label: 'fpvOS', value: function () { return '2026.11.beta1'; }, help: 'The fpvOS air image the unit was flashed with.' });
         r.push({ type: 'R', label: 'kestrel-air', value: function () { return 'beta4 (protocol 9)'; }, help: "fpvOS's air app: it runs the camera and the radio in place of Caddx's." });
         r.push({ type: 'R', label: 'Radio Driver', value: function () { return 'ar_libre beta4'; }, help: 'What drives the AR8030 radio on the air unit.' });
         r.push({ type: 'R', label: 'Radio Firmware', value: function () { return 'Open8030'; }, help: "What runs on the air unit's AR8030 radio chip: the stock firmware, or Open8030, the open one (Lite and Lite+)." });

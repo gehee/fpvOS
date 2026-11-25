@@ -1,7 +1,7 @@
 # User guide
 
 How to fly and use fpvOS on the Caddx Ascent VRX Pro. This guide is for release
-**2026.10.beta4**. Something not working? [Troubleshooting](TROUBLESHOOTING.md).
+**2026.11.beta1**. Something not working? [Troubleshooting](TROUBLESHOOTING.md).
 
 - [The controls](#the-controls)
 - [The live view](#the-live-view)
@@ -80,7 +80,7 @@ row (like Bind) runs when you press OK.
 | | Canopy Voltage | PER CELL · PACK (CANOPY only) |
 | | Clock | OFF · IDLE ONLY 12H · IDLE ONLY 24H · ON 12H · ON 24H |
 | | Dynamic HUD | OFF · SMALL · MEDIUM · EXTREME: how far the HUD moves with the aircraft |
-| | Debug Info | OFF · ON: a line of radio details under the right panel, for field tests. While ON, the VRX also keeps its log on the card (`fpvOS_<date>_<time>.log` next to the recordings, newest 30) and a kestrel-air unit keeps a log of each armed flight on its flash (`/usrdata/fpv/air/logs`, newest 5) |
+| | Debug Info | OFF · ON: a line of radio details under the right panel, for field tests. While ON, the VRX also keeps its log on the card (`fpvOS_<date>_<time>.log` next to the recordings, newest 30). The air unit keeps no flight logs on its flash |
 | **DISPLAY** | Theme | KESTREL · EMBER · ICE · MONO · VIOLET |
 | | Background Video | ON · OFF |
 | | Picture Size | 60% to FULL, in steps of 5 |

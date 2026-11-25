@@ -4,7 +4,8 @@
 #
 ################################################################################
 
-# Pinned to a commit, never a branch (see ../kestrel/kestrel.mk for why).
+# Pinned to a commit, never a branch (see ../kestrel/kestrel.mk for why); a
+# new pin needs its tarball's hash in the .hash file beside this one.
 # FPVOS_USB_OVERRIDE_SRCDIR=/path/to/fpvOS_usb builds a local checkout instead.
 FPVOS_USB_SITE ?= https://github.com/gehee/fpvOS_usb.git
 FPVOS_USB_SITE_METHOD = git
