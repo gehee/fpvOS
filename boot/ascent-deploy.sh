@@ -3,11 +3,11 @@
 # flashing it: the files under fpv/air/ and the hooked fpv_run_cx482.sh, taken
 # from the same app volume the PC tool would flash, so the result is the same.
 #
-#   boot/ascent-deploy.sh [--dry] [--reboot] [HOST]       (HOST default root@192.168.5.104)
+#   boot/ascent-deploy.sh [--dry] [--reboot] [HOST]       (HOST default root@192.168.2.1)
 #   IMG=path/to/Ascent_H_Sky_*.img                        (default: output/ascent-lite/images/)
 #
-# Needs ssh to the unit (build with FPVOS_AIR_SSH_KEYS, enable_rndis.py, and the
-# host address and route; see docs/BUILD.md). Nothing is run on the unit but tar,
+# Needs ssh to the unit over its USB network (192.168.2.1, which gives the computer
+# an address; see docs/BUILD.md). Nothing is run on the unit but tar,
 # mv, md5sum and sync. Reboot it afterwards (--reboot does): the radio driver is
 # not swapped on a running chip.
 #
@@ -23,7 +23,7 @@
 set -eu
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-DRY=0; REBOOT=0; HOST=root@192.168.5.104
+DRY=0; REBOOT=0; HOST=root@192.168.2.1
 for a in "$@"; do
     case $a in
         --dry) DRY=1 ;;
