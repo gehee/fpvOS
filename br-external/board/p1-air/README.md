@@ -448,14 +448,17 @@ for normal operation or updates. The kernel embeds a small fpvOS recovery
 root with USB Ethernet, SSH and the shared CDC-ACM update service.
 
 The fixed P1_SKY partition geometry is validated before writes. The updater
-picks the target bank at install time: the bank that already holds an fpvOS
-bundle (an update), else the bank the unit does not boot - stock, on
+picks the target bank at install time (`src/ar9311-banks.h`): the booted
+bank when it holds fpvOS - its bundle, or its kernel when the bundle is
+damaged (a repair) - else the bank booted stock does not run from. Stock, on
 whichever bank a vendor update left it (1.0.44 runs from bank 1, a 2.x update
-from bank 0), is never written. It first selects the other bank, writes and
+from bank 0), is never written; when fpvOS runs and the booted bank is neither
+fpvOS nor stock, the install refuses rather than guess. It first selects the other bank, writes and
 reads back the target's kernel and DTB, then updates the target's `userapp`
 UBI volume with the full `FPVOSUP1` bundle. Only a successful full readback
 permits GPT activation of the target. `fpvos-update nand stock` selects the
-bank without fpvOS. GPT updates erase the nonselected copy, increment its generation,
+bank that holds stock (its kernel and a readable root), never one that may
+not boot. GPT updates erase the nonselected copy, increment its generation,
 recompute CRCs and verify the new record. Every readback that decides or
 verifies a write (both GPT records, kernel0, dtb0) also checks the partition's
 ECC failure count, since a read returns the data even when ECC could not

@@ -30,6 +30,11 @@
 ttyS0::askfirst:-/bin/sh
 
 ::ctrlaltdel:/sbin/reboot
+# Bridge mode (fpvOS_usb, the flash image only) undone before the USB gadget
+# goes down: unbinding it under the bridge's FunctionFS endpoints hangs the
+# reboot, and no watchdog would reset it. The saved mode stays: a unit left in
+# bridge mode comes back in it.
+::shutdown:/bin/sh -c '[ ! -x /usr/sbin/fpvos-usb ] || /usr/sbin/fpvos-usb shutdown'
 ::shutdown:/bin/sh -c '[ ! -x /etc/init.d/S60kestrel-gnd ] || /etc/init.d/S60kestrel-gnd stop'
 ::shutdown:/etc/init.d/S50dropbear stop
 ::shutdown:/etc/init.d/S45ar9311-sd stop

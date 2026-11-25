@@ -23,8 +23,9 @@ USB Ethernet uses `192.168.3.1/24`, as every fpvOS goggle, with SSH `root:root`;
 `fpvos-p1-goggle`, distinct from Ascent VRX and P1 Air.
 
 The NAND layout preserves the stock bank and installs fpvOS into the other
-bank's kernel, DTB and userapp (the bank already holding fpvOS, else the one
-not booted). SPL, bootloaders, vendor data and factory calibration are exposed
+bank's kernel, DTB and userapp (the bank already holding fpvOS - by its bundle
+or its kernel - else the one booted stock does not run from; the choice is in
+`src/ar9311-banks.h`). SPL, bootloaders, vendor data and factory calibration are exposed
 read-only; both banks' kernel/DTB/userapp are writable, guarded by the
 updater's checks rather than the DT. The updater changes the boot
 selection only after verifying all three fpvOS components. User data holds

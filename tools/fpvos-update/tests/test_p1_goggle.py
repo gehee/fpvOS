@@ -21,9 +21,17 @@ class GoggleTests(unittest.TestCase):
     test_bank_and_volume_are_checked_before_anything_changes = p1.P1Tests.test_bank_and_volume_are_checked_before_anything_changes
     test_the_target_bank_is_chosen_from_what_each_bank_holds = p1.P1Tests.test_the_target_bank_is_chosen_from_what_each_bank_holds
     test_booted_stock_is_never_written = p1.P1Tests.test_booted_stock_is_never_written
-    test_an_unusable_target_volume_or_gpt_changes_nothing = p1.P1Tests.test_an_unusable_target_volume_or_gpt_changes_nothing
-    test_stock_selects_the_bank_without_fpvos = p1.P1Tests.test_stock_selects_the_bank_without_fpvos
+    test_refusals_change_nothing = p1.P1Tests.test_refusals_change_nothing
+    test_a_booted_fpvos_with_a_bad_bundle_never_takes_the_stock_bank = p1.P1Tests.test_a_booted_fpvos_with_a_bad_bundle_never_takes_the_stock_bank
+    test_every_case_keeps_a_stock_bank = p1.P1Tests.test_every_case_keeps_a_stock_bank
+    test_stock_selects_the_bank_that_holds_stock = p1.P1Tests.test_stock_selects_the_bank_that_holds_stock
+    test_stock_never_selects_a_bank_without_stock = p1.P1Tests.test_stock_never_selects_a_bank_without_stock
     flash = p1.P1Tests.flash
+    flash_directory = p1.P1Tests.flash_directory
+    kernel_kind = p1.P1Tests.kernel_kind
+    kernel_header = p1.P1Tests.kernel_header
+    kernel_name = b'fpvOS P1 goggles recovery'
+    test_the_kernel_partition_says_whose_kernel_it_holds = p1.P1Tests.test_the_kernel_partition_says_whose_kernel_it_holds
     layout = p1.P1Tests.layout
 
     def directory(self):

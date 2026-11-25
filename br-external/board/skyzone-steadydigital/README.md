@@ -102,7 +102,10 @@ bundle in two steps: their recovery accepts only gzip roots, so first a bridge
 bundle in the old format carrying the new kernel (whose recovery then stays in
 USB recovery: there is no install record yet), then the squashfs bundle. Installing from the running fpvOS
 recovery over USB is `fpvos-update`'s normal `clean` → `verify` → `install`
-flow; `ar9311-nandctl stock` selects the bank without fpvOS (stock).
+flow; `ar9311-nandctl stock` selects the bank that holds stock: a stock kernel
+and a readable stock root, never a bank that may not boot. The bank choice is
+the P1's (`src/ar9311-banks.h`): a bank whose kernel is fpvOS's counts as fpvOS
+even when its bundle volume is held as the running root or damaged.
 
 **No-UART entry — open.** The stock Skyzone runtime has the Sirius
 clean-system hook (`start_clean_system.sh`, `web:/usrdata/<script>` in

@@ -53,12 +53,13 @@ ssize_t __wrap_pread(int fd,void *data,size_t n,off_t off) {
     static int once;
     if ((fault==5 && pwrites && off==0 && n==AR9311_GPT_BYTES && !once++) ||
         (fault==6 && pwrites && off==0 && n>=AR9311_GPT_BYTES) ||
-        (fault==7 && pwrites && off==0 && n==0x20000 && !once++)) ecc_failed++;
+        (fault==7 && pwrites && off==0 && n==0x20000 && !once++) ||
+        (fault==9 && n==128)) ecc_failed++;
     return __real_pread(fd,data,n,off);
 }
 int __wrap_ioctl(int fd,unsigned long request,...) {
     va_list ap;va_start(ap,request);void *arg=va_arg(ap,void *);va_end(ap);
-    if (request==MEMGETBADBLOCK) return fault==2 && *(loff_t *)arg==0x20000;
+    if (request==MEMGETBADBLOCK) return (fault==2 && *(loff_t *)arg==0x20000) || (fault==8 && *(loff_t *)arg==0);
     if (request==ECCGETSTATS) {
         struct mtd_ecc_stats *s=arg;memset(s,0,sizeof(*s));s->failed=ecc_failed;return 0;
     }
@@ -67,9 +68,12 @@ int __wrap_ioctl(int fd,unsigned long request,...) {
     if (fault==4) {errno=EIO;return -1;}
     unsigned char b[0x20000];memset(b,0xff,sizeof(b));assert(__real_pwrite(fd,b,sizeof(b),e->start)==sizeof(b));return 0;
 }
-/* select BANK FAULT | write|compare IMAGE FAULT [BANK]: the kernel image of BANK (0). */
+/* select BANK FAULT | write|compare IMAGE FAULT [BANK]: the kernel image of BANK (0)
+ * | kind BANK FAULT: prints what BANK's kernel partition holds (p1_kernel_kind).
+ * 8: the partition's first block is bad; 9: the header reads with an ECC error. */
 int main(int argc,char **argv) {
     assert(argc==4 || argc==5);fault=atoi(argv[3]);
+    if (!strcmp(argv[1],"kind")) { printf("%d\n",p1_kernel_kind(atoi(argv[2]))); return 0; }
     unsigned bank = argc==5 ? (unsigned)atoi(argv[4]) : 0;
     int rc=!strcmp(argv[1],"select") ? p1_select_bank(atoi(argv[2])) :
            p1_flash_image(bank,0,argv[2],strcmp(argv[1],"compare")!=0);

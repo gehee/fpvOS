@@ -14,9 +14,16 @@ const struct fpvos_bootstrap_file fpvos_bootstrap_files[] = {
     {"root/usr/share/fpvos-update/clean.sh",(const unsigned char *)"clean",5,0600}
 };
 const size_t fpvos_bootstrap_file_count = 2;
-/* argv: FAULT BANKS. BANKS is the booted bank and what each bank's volume holds,
- * e.g. "0fs": booted bank 0, bank 0 fpvOS, bank 1 stock ('s' stock, 'f' fpvOS,
- * 'b' an unusable volume). Each bank's volume is the file volume<N>. */
+/* argv: FAULT [BANKS]. BANKS is what runs, the booted bank, then what each
+ * bank holds, e.g. "r0fs": fpvOS runs, booted bank 0, bank 0 fpvOS, bank 1
+ * stock. What runs: 's' stock, 'r' fpvOS (from the bank, or uploaded to RAM).
+ * A bank, as its bundle volume and its kernel (ar9311-banks.h):
+ *   'f' fpvOS: an fpvOS bundle and kernel     's' stock: stock's root and kernel
+ *   'b' stock's kernel, its volume unusable (stock's own root mounted)
+ *   'u' fpvOS's kernel, its volume unusable (the running root, or broken)
+ *   'd' fpvOS's kernel, its volume not an fpvOS bundle (damaged)
+ *   'e' erased: no kernel, a readable volume without a bundle
+ * Each bank's volume is the file volume<N>. */
 static const char *fault, *scenario;
 static int wrote;
 static void event(const char *name) { FILE *f=fopen("events","a"); assert(f); fprintf(f,"%s\n",name); fclose(f); }
@@ -49,14 +56,20 @@ int p1_bundle_read(unsigned bank,const char *destination) {
 int p1_active_bank(unsigned *bank) {
     event("active-bank");
     if (!strcmp(fault,"gpt")) return -1;
-    *bank = scenario[0]-'0';
+    *bank = scenario[1]-'0';
     return 0;
 }
 int p1_bundle_present(unsigned bank) {
     event("bundle-present"); eventf("bundle-present",bank);
-    char held = scenario[1+bank];
-    return held == 'b' ? -1 : held == 'f';
+    char held = scenario[2+bank];
+    return strchr("bu",held) ? -1 : held == 'f';
 }
+int p1_kernel_kind(unsigned bank) {
+    event("kernel-kind"); eventf("kernel-kind",bank);
+    char held = scenario[2+bank];
+    return held == 'e' ? -1 : strchr("fud",held) != NULL;
+}
+int p1_stock(void) { return scenario[0] == 's'; }
 int p1_select_bank(unsigned bank) {
     if (!wrote) {
         /* Before any write: the bank kept as it is, booted if power is cut. */
@@ -95,8 +108,8 @@ int __wrap_execlp(const char *program,const char *arg,...) {
 }
 /* FAULT [BANKS]: an install; "stock" as FAULT runs the stock command instead. */
 int main(int argc,char **argv) {
-    assert(argc==2 || argc==3);fault=argv[1];scenario=argc==3 ? argv[2] : "0fs";
-    assert(strlen(scenario)==3 && (scenario[0]=='0' || scenario[0]=='1'));
+    assert(argc==2 || argc==3);fault=argv[1];scenario=argc==3 ? argv[2] : "r0fs";
+    assert(strlen(scenario)==4 && strchr("sr",scenario[0]) && (scenario[1]=='0' || scenario[1]=='1'));
     if (!strcmp(fault,"stock")) {
         unsigned bank;
         if (stock_bank(&bank)) return 1;

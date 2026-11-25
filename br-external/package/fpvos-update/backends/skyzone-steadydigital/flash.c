@@ -2,6 +2,7 @@
 #define _GNU_SOURCE
 #include "p1.h"
 #include "layout.h"
+#include "fpvos-bytes.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <mtd/mtd-user.h>
@@ -127,4 +128,27 @@ done:
     if (in >= 0) close(in);
     close(fd);
     return rc ? -1 : 0;
+}
+
+/* What BANK's kernel partition holds, from its first good block: 1 the fpvOS
+ * kernel (P1_KERNEL_NAME in its uImage header), 0 another OTRA/uImage kernel
+ * (stock's: SPL boots nothing else), -1 none, or a header ECC cannot read. */
+int p1_kernel_kind(unsigned bank)
+{
+    unsigned number; unsigned char header[128];
+    if (bank > 1) return -1;
+    int fd = p1_mtd(p1_kernel_part(bank),p1_kernel_offset(bank),0x600000,&number);
+    if (fd < 0) return -1;
+    int kind = -1;
+    for (loff_t off = 0; off < 0x600000; off += 0x20000) {
+        int bad = ioctl(fd,MEMGETBADBLOCK,&off);
+        if (bad < 0) break;
+        if (bad) continue;
+        if (!p1_read_checked(fd,header,sizeof(header),off) && !memcmp(header,"OTRA",4) &&
+            fpvos_get_be32(header+64) == 0x27051956)
+            kind = !memcmp(header+96,P1_KERNEL_NAME,sizeof(P1_KERNEL_NAME));
+        break;
+    }
+    close(fd);
+    return kind;
 }

@@ -3,6 +3,7 @@
 #include "p1.h"
 #include "board.h"
 #include "bootstrap.h"
+#include "ar9311-banks.h"
 #include "fpvos-bundle.h"
 #include "root.h"
 #include <errno.h>
@@ -139,47 +140,58 @@ static int copy_package(const char *source, const char *destination)
     return rc ? -1 : 0;
 }
 
-/* What each bank's bundle volume holds (1 fpvOS, 0 anything else, -1 unusable)
- * and which bank the unit boots. Asked before anything is selected or written. */
-static int banks(unsigned *active, int held[2])
+/* What each bank holds (ar9311-banks.h), which bank the unit boots, and
+ * whether stock is what runs. Asked before anything is selected or written. */
+static int banks(int *stock_runtime, unsigned *active, struct ar9311_bank held[2])
 {
-    if (p1_active_bank(active)) return -1;
-    held[0] = p1_bundle_present(0);
-    held[1] = p1_bundle_present(1);
+    *stock_runtime = p1_stock();
+    if (*stock_runtime < 0 || p1_active_bank(active)) return -1;
+    for (unsigned i = 0; i < 2; i++) {
+        held[i].bundle = p1_bundle_present(i);
+        held[i].kernel = p1_kernel_kind(i);
+    }
     return 0;
 }
 
-/* The bank an install writes. Neither is fpvOS's or stock's for good: the one
- * that holds fpvOS is rewritten in place (an update, stock stays on the other);
- * with no fpvOS bank, or two, it is the one the unit does not boot - booted
- * stock is never the target, whichever bank a vendor update left it on. The
- * other bank keeps what it holds and is selected while the target is written,
- * so a power cut boots it. */
+static const char *holding(const struct ar9311_bank *b)
+{
+    return ar9311_bank_fpvos(b) ? "its fpvOS" : ar9311_bank_stock(b) ? "its stock" : "what it holds";
+}
+
+/* The bank an install writes: the booted fpvOS bank in place, else the bank
+ * booted stock does not run from (ar9311_install_bank). The other bank keeps
+ * what it holds and is selected while the target is written, so a power cut
+ * boots it. */
 static int target_bank(unsigned *target)
 {
-    unsigned active; int held[2];
-    if (banks(&active,held)) return -1;
-    unsigned other = active ^ 1;
-    *target = held[active] == 1 && held[other] != 1 ? active : other;
-    if (held[*target] < 0) {
-        fprintf(stderr,"SteadyDigital: bank %u's bundle volume cannot be used; nothing was changed\n",*target);
+    unsigned active; int stock_runtime; struct ar9311_bank held[2];
+    if (banks(&stock_runtime,&active,held)) return -1;
+    switch (ar9311_install_bank(stock_runtime,active,held,target)) {
+    case AR9311_CHOSEN: break;
+    case AR9311_UNUSABLE:
+        fprintf(stderr,"SteadyDigital: bank %u's bundle volume cannot be used; nothing was changed%s\n",*target,
+                *target == active && !stock_runtime ? " (it holds the booted fpvOS: boot into update mode)" : "");
+        return -1;
+    default:
+        fprintf(stderr,"SteadyDigital: booted bank %u holds neither fpvOS nor an intact stock system; "
+                "which bank keeps stock cannot be told, so nothing was changed\n",active);
         return -1;
     }
     fprintf(stderr,"SteadyDigital: booted bank %u; installing on bank %u, bank %u keeps %s\n",active,*target,
-            *target ^ 1,held[*target ^ 1] == 1 ? "its fpvOS" : "what it holds (stock)");
+            *target ^ 1,holding(&held[*target ^ 1]));
     return 0;
 }
 
-/* The bank that does not hold fpvOS: the booted one, else the other. With
- * fpvOS on both there is no stock left to return to. */
+/* The bank that holds stock (ar9311_stock_bank). */
 static int stock_bank(unsigned *bank)
 {
-    unsigned active; int held[2];
-    if (banks(&active,held)) return -1;
-    if (held[active] != 1) { *bank = active; return 0; }
-    if (held[active ^ 1] != 1) { *bank = active ^ 1; return 0; }
-    fprintf(stderr,"SteadyDigital: both banks hold fpvOS; there is no stock bank to select\n");
-    return -1;
+    unsigned active; int stock_runtime; struct ar9311_bank held[2];
+    if (banks(&stock_runtime,&active,held)) return -1;
+    if (ar9311_stock_bank(stock_runtime,active,held,bank) != AR9311_CHOSEN) {
+        fprintf(stderr,"SteadyDigital: neither bank holds an intact stock system; there is no stock bank to select\n");
+        return -1;
+    }
+    return 0;
 }
 
 static int transaction(const char *source)

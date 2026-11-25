@@ -34,6 +34,56 @@ def record(slot=1,generation=1,parts=PARTS):
     return bytes(512)+h+entries
 
 
+# Scenarios (p1_transaction_sim.c): what runs ('s' stock, 'r' fpvOS), the
+# booted bank, then what each bank holds: 'f' fpvOS, 's' stock, 'b' stock with
+# its volume unusable, 'u' fpvOS's kernel with its volume unusable, 'd' fpvOS's
+# kernel with a damaged bundle, 'e' erased.
+# Scenario -> the bank an install writes.
+TARGETS = {'s0ss':1,'s1ss':0,          # a first install from stock: the bank not booted
+           's0sf':1,'s1fs':0,          # fpvOS installed, stock booted
+           's0bs':1,'s1sb':0,          # stock's own root mounted from its volume
+           's0bf':1,'s1fb':0,'s0se':1,
+           'r0fs':0,'r1sf':1,          # an update: the booted fpvOS in place
+           'r0ff':1,'r1ff':0,          # fpvOS on both: keep the booted one
+           'r0fb':0,'r1bf':1,          # an update beside an unusable bank
+           'r0ds':0,'r1sd':1,          # a repair: the booted fpvOS's bundle damaged
+           'r0ss':1,'r1ss':0,          # RAM recovery over a booted stock
+           'r0sf':1,'r1fs':0,'r0sd':1,'r0se':1}
+# (fault, scenario) -> what the refusal says.
+REFUSALS = {('ok','s0sb'):b'cannot be used',('ok','s1bs'):b'cannot be used',('ok','s0bb'):b'cannot be used',
+            ('ok','r0us'):b'boot into update mode',('ok','r1su'):b'boot into update mode',
+            ('ok','r0es'):b'cannot be told',('ok','r0bs'):b'cannot be told',('ok','r1ee'):b'cannot be told'}
+# Scenario -> the bank "stock" selects (None: refused).
+STOCK_BANKS = {'r0fs':1,'r1sf':0,'r0us':1,'r1su':0,'r0ds':1,   # from fpvOS, booted or in its recovery
+               'r0ss':0,'r1ss':1,'r0sf':0,                     # RAM recovery over a booted stock
+               's0bs':0,'s1sb':1,'s0bf':0,                     # stock itself
+               'r0ff':None,'r0fe':None,'r0fb':None,'r0fd':None,'r0uu':None,'r0fu':None,'r0es':1}
+
+
+def every_scenario():
+    for runtime in 'sr':
+        for active in '01':
+            for a in 'fsbude':
+                for b in 'fsbude':
+                    yield runtime+active+a+b
+
+
+def booted_stock(banks):
+    return banks[0]=='s' or banks[2+int(banks[1])]=='s'
+
+
+def stock_banks(banks):
+    """The banks that hold stock: its kernel, and its root readable or running."""
+    active=int(banks[1])
+    held={b for b in (0,1) if banks[2+b]=='s'}
+    if banks[0]=='s': held.add(active)
+    return held
+
+
+def written_to(events,bank):
+    return [e for e in events if e.endswith(f'@{bank}') and not e.startswith(('bundle-present','kernel-kind','select-stock'))]
+
+
 class P1Tests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -182,6 +232,37 @@ class P1Tests(unittest.TestCase):
         for fault in (1,3,4,7):
             self.assertNotEqual(self.flash(d,'write','image',fault),0)
 
+    def kernel_kind(self,data,bank=0,fault=0,name=None):
+        d=self.flash_directory()
+        (d/'kernel1').write_bytes(b'\xff'*0x600000)
+        if data is not None:
+            image=bytearray(b'\xff'*0x600000);image[:len(data)]=data
+            (d/f'kernel{bank}').write_bytes(bytes(image))
+        r=subprocess.run([str(self.build/'flash'),'kind',str(bank),str(fault)],cwd=d,capture_output=True,text=True)
+        self.assertEqual(r.returncode,0,r.stderr)
+        return int(r.stdout)
+
+    def kernel_header(self,name):
+        h=bytearray(128);h[:4]=b'OTRA';struct.pack_into('>I',h,64,0x27051956)
+        h[96:96+len(name)]=name;return bytes(h)
+
+    def test_the_kernel_partition_says_whose_kernel_it_holds(self):
+        ours=getattr(self,'kernel_name',b'fpvOS P1 recovery')
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours)),1)
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours),bank=1),1)
+        # Another kernel - stock's - and one whose name only starts like ours.
+        self.assertEqual(self.kernel_kind(self.kernel_header(b'Linux-4.9.38')),0)
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours+b' 2')),0)
+        # Erased, not an OTRA/uImage kernel, or unreadable: nobody's.
+        self.assertEqual(self.kernel_kind(None,bank=1),-1)
+        self.assertEqual(self.kernel_kind(b'OTRA'+bytes(124)),-1)
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours),fault=9),-1)
+        # A bad first block is skipped, as SPL and the writer skip it.
+        d=self.flash_directory();image=bytearray(b'\xff'*0x600000)
+        image[0x20000:0x20080]=self.kernel_header(ours);(d/'kernel0').write_bytes(bytes(image))
+        r=subprocess.run([str(self.build/'flash'),'kind','0','8'],cwd=d,capture_output=True,text=True)
+        self.assertEqual(r.stdout.strip(),'1')
+
     def test_kernel_write_targets_the_chosen_bank(self):
         for bank in (0,1):
             with self.subTest(bank=bank):
@@ -193,9 +274,9 @@ class P1Tests(unittest.TestCase):
                 self.assertEqual((d/f'kernel{1-bank}').read_bytes(),b'\x55'*0x600000)
                 self.assertEqual(self.flash(d,'compare','image',0,bank=bank),0)
 
-    def transaction(self,mode,banks='0fs'):
-        """An install. BANKS: the booted bank, then what bank 0 and bank 1
-        hold ('f' fpvOS, 's' stock, 'b' an unusable volume)."""
+    def transaction(self,mode,banks='r0fs'):
+        """An install. BANKS: what runs, the booted bank, then what bank 0
+        and bank 1 hold (p1_transaction_sim.c)."""
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);d=Path(temp.name)
         (d/'work/state/fpvos-boot').mkdir(parents=True,mode=0o700)
         (d/'work/state/fpvos-boot/owner').write_text('fpvOS P1 boot agent 1\n')
@@ -225,14 +306,7 @@ class P1Tests(unittest.TestCase):
         order=['verify','active-bank','bundle-present','bundle-present','select-stock','kernel','dtb','write','readback','activate']
         self.assertEqual([e for e in events if e in order],order)
 
-    # Booted bank + contents -> the bank written. No bank is fpvOS's or stock's
-    # for good: the fpvOS bank is rewritten in place, else the one not booted.
-    TARGETS = {'0fs':0,'1sf':1,          # an update: fpvOS rewritten in place
-               '0ss':1,'1ss':0,          # a first install: the bank not booted
-               '0sf':1,'1fs':0,          # fpvOS installed, stock booted
-               '0ff':1,'1ff':0,          # fpvOS on both: keep the booted one
-               '0fb':0,'1bf':1,          # an update beside an unusable bank
-               '0bs':1,'1sb':0}          # booted volume unusable (stock's own root mounted)
+    TARGETS = TARGETS
 
     def test_the_target_bank_is_chosen_from_what_each_bank_holds(self):
         for banks,target in self.TARGETS.items():
@@ -248,15 +322,14 @@ class P1Tests(unittest.TestCase):
 
     def test_booted_stock_is_never_written(self):
         for banks,target in self.TARGETS.items():
-            if banks[1+int(banks[0])]=='f': continue
+            if not booted_stock(banks): continue
             with self.subTest(banks=banks):
                 d,r,events=self.transaction('ok',banks)
-                self.assertNotEqual(target,int(banks[0]))
-                self.assertFalse([e for e in events if e.endswith('@'+banks[0]) and not e.startswith(('bundle-present','select-stock'))])
+                self.assertNotEqual(target,int(banks[1]))
+                self.assertFalse(written_to(events,int(banks[1])))
 
-    def test_an_unusable_target_volume_or_gpt_changes_nothing(self):
-        for fault,banks,said in (('ok','0sb',b'cannot be used'),('ok','1bs',b'cannot be used'),
-                                 ('ok','0bb',b'cannot be used'),('gpt','0fs',b'')):
+    def test_refusals_change_nothing(self):
+        for (fault,banks),said in {**REFUSALS,('gpt','r0fs'):b''}.items():
             with self.subTest(fault=fault,banks=banks):
                 d,r,events=self.transaction(fault,banks)
                 self.assertNotEqual(r.returncode,0)
@@ -266,8 +339,33 @@ class P1Tests(unittest.TestCase):
                 for bank in (0,1): self.assertEqual((d/f'volume{bank}').read_bytes(),b'previous volume %d' % bank)
                 self.assertTrue((d/'work/state/sirius-clean-system-flag').exists())
 
-    def test_stock_selects_the_bank_without_fpvos(self):
-        for banks,expected in (('0fs',1),('1sf',0),('0sf',0),('1fs',1),('0ss',0),('1ss',1),('0ff',None)):
+    def test_a_booted_fpvos_with_a_bad_bundle_never_takes_the_stock_bank(self):
+        # The repair after a failed root: fpvOS's kernel on the booted bank,
+        # its bundle damaged or unusable. Stock on the other bank stays.
+        for banks in ('r0ds','r1sd','r0us','r1su'):
+            with self.subTest(banks=banks):
+                d,r,events=self.transaction('ok',banks)
+                stock=1-int(banks[1])
+                self.assertFalse(written_to(events,stock))
+                self.assertEqual((d/f'volume{stock}').read_bytes(),b'previous volume %d' % stock)
+
+    def test_every_case_keeps_a_stock_bank(self):
+        # Whatever runs and whatever each bank holds: when a bank holds stock
+        # before an install, one still does after it (or nothing changed).
+        for banks in every_scenario():
+            with self.subTest(banks=banks):
+                d,r,events=self.transaction('ok',banks)
+                if r.returncode:
+                    for touched in ('select-stock','kernel','dtb','write','activate'): self.assertNotIn(touched,events)
+                    continue
+                target=[b for b in (0,1) if f'write@{b}' in events]
+                self.assertEqual(len(target),1)
+                kept=1-target[0]
+                if stock_banks(banks):
+                    self.assertIn(kept,stock_banks(banks))
+
+    def test_stock_selects_the_bank_that_holds_stock(self):
+        for banks,expected in STOCK_BANKS.items():
             with self.subTest(banks=banks):
                 d,r,events=self.transaction('stock',banks)
                 if expected is None:
@@ -277,9 +375,16 @@ class P1Tests(unittest.TestCase):
                     self.assertEqual(r.returncode,0,r.stderr)
                     self.assertEqual(r.stdout.strip(),b'stock bank %d' % expected)
 
+    def test_stock_never_selects_a_bank_without_stock(self):
+        for banks in every_scenario():
+            with self.subTest(banks=banks):
+                d,r,events=self.transaction('stock',banks)
+                if r.returncode == 0:
+                    self.assertIn(int(r.stdout.split()[-1]),stock_banks(banks))
+
     def test_faults_never_arm_or_overwrite_stock_selection(self):
         for fault in ('verify','gzip','select-stock','kernel','dtb','write','readback','corrupt','foreign'):
-            for banks in ('0fs','0ss'):
+            for banks in ('r0fs','s0ss'):
                 target=self.TARGETS[banks]
                 with self.subTest(fault=fault,banks=banks):
                     d,r,events=self.transaction(fault,banks)

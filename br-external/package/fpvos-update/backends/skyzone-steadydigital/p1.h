@@ -4,6 +4,8 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "layout.h"
+/* The installed kernel's uImage name (images.c checks the same). */
+#define P1_KERNEL_NAME "fpvOS SteadyDigital recovery"
 #include <sys/types.h>
 #ifndef P1_WORK
 #define P1_WORK "/run/fpvos-update"
@@ -40,4 +42,5 @@ int p1_mtd(const char *name, unsigned offset, unsigned size, unsigned *number);
 int p1_gpt_read(unsigned char gpt[SD_GPT_BYTES]);
 int p1_select_bank(unsigned bank);
 int p1_flash_image(unsigned bank, unsigned index, const char *path, int writing);
+int p1_kernel_kind(unsigned bank);
 #endif

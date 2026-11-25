@@ -38,4 +38,5 @@ int p1_mtd(const char *name, unsigned offset, unsigned size, unsigned *number);
 int p1_gpt_read(unsigned char gpt[2][AR9311_GPT_BYTES]);
 int p1_select_bank(unsigned bank);
 int p1_flash_image(unsigned bank, unsigned index, const char *path, int writing);
+int p1_kernel_kind(unsigned bank);
 #endif
