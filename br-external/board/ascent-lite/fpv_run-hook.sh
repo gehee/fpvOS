@@ -12,7 +12,9 @@ if [ -e /usrdata/fpv/air/stock-once ]; then
 	sync
 	echo "fpvOS: stock radio and air app for this boot only"
 elif [ -x /usrdata/fpv/air/start.sh ] && [ ! -e /usrdata/fpv/air/disable ]; then
-	/usrdata/fpv/air/start.sh $board_type $board_ver $HW_VER $rf_board > /tmp/air.log 2>&1 &
+	# Appended to (O_APPEND), so start.sh can cut the log short under its
+	# writers and they go on at its new end.
+	/usrdata/fpv/air/start.sh $board_type $board_ver $HW_VER $rf_board >> /tmp/air.log 2>&1 &
 	exit 0
 fi
 

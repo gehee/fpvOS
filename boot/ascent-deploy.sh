@@ -1,15 +1,20 @@
 #!/bin/bash
 # Put the air app of a built image on a running Ascent Lite or Lite+ over ssh, without
-# flashing it: the files under fpv/air/ and the hooked fpv_run_cx482.sh, taken
-# from the same app volume the PC tool would flash, so the result is the same.
+# flashing it: every file fpvOS adds to or changes in the stock app volume (fpv/air/,
+# the hooked fpv_run_cx482.sh, fpvOS's updater as ar_fpvhs_upgrade and stock's as
+# ar_fpvhs_upgrade.stock, the renamed config_serial.sh, and the USB network's
+# config_ether.sh, disable_config_ether.sh and usb_ip.sh), taken from the same app
+# volume the PC tool would flash, so those files end up the same as a flash puts them.
+# The rest of the volume is stock's and is left as it is on the unit.
 #
 #   boot/ascent-deploy.sh [--dry] [--reboot] [HOST]       (HOST default root@192.168.2.1)
 #   IMG=path/to/Ascent_H_Sky_*.img                        (default: output/ascent-lite/images/)
 #
-# Needs ssh to the unit over its USB network (192.168.2.1, which gives the computer
-# an address; see docs/BUILD.md). Nothing is run on the unit but tar,
-# mv, md5sum and sync. Reboot it afterwards (--reboot does): the radio driver is
-# not swapped on a running chip.
+# Needs ssh to the unit with a key, as it never asks for a password (build with
+# FPVOS_AIR_SSH_KEYS, switch the unit's USB link to network with the PC tool or the
+# fpvOS Flasher; see docs/BUILD.md). Nothing is run on the unit but tar, mv,
+# md5sum and sync. Reboot it afterwards (--reboot does): the radio driver is not
+# swapped on a running chip.
 #
 # Every file is written beside its place and then renamed over it, so files in
 # use (the running kestrel-air, dropbear) are replaced safely and the running
@@ -42,8 +47,19 @@ T=$(mktemp -d)
 trap 'rm -rf "$T"' EXIT
 "$ROOT/boot/mkascentimg.py" extract "$IMG" "$T/img" > /dev/null
 VOL=$T/img/fpv                      # the app volume's root: contains fpv/
-FILES="fpv/air fpv/fpv_run_cx482.sh"
 [ -x "$VOL/fpv/air/start.sh" ] || { echo "the image has no fpv/air/start.sh" >&2; exit 1; }
+# What board/ascent-lite/post-image.sh puts in the stock volume or changes in it:
+# everything else in the volume is stock's. ar_fpvhs_upgrade.stock is there only
+# when the image carries fpvOS's updater.
+FILES=
+for f in fpv/air fpv/fpv_run_cx482.sh fpv/ar_fpvhs_upgrade fpv/ar_fpvhs_upgrade.stock \
+         fpv/config_serial.sh fpv/config_ether.sh fpv/disable_config_ether.sh fpv/usb_ip.sh; do
+    if [ -e "$VOL/$f" ]; then FILES="$FILES $f"; fi
+done
+for f in fpv/ar_fpvhs_upgrade fpv/config_serial.sh fpv/config_ether.sh fpv/disable_config_ether.sh fpv/usb_ip.sh; do
+    # the PC tool's way back in, in the normal and the clean system
+    [ -e "$VOL/$f" ] || { echo "the image has no $f" >&2; exit 1; }
+done
 
 echo "image: $(cat "$VOL/fpv/air/VERSION")  ($(basename "$IMG"))"
 echo "unit:  $(unit "cat $UNIT_ROOT/fpv/air/VERSION 2>/dev/null || echo 'no fpv/air yet'")"

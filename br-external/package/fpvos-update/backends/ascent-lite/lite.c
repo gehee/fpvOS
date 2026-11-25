@@ -14,7 +14,9 @@
  * FPVOS_LITE_ROOT puts every path under a directory, for host tests: there
  * the MTD partitions are plain files with 128 KiB erase blocks, their bad
  * blocks listed in mtdN.bad, and FPVOS_LITE_CUT_AFTER=N stops the installer
- * dead after N block writes (a power cut).
+ * dead after N block writes (a power cut). mtdN.weak lists blocks that do not
+ * take the data ("B" always, "B N" the first N writes), mtdN.nomark blocks
+ * that cannot be marked bad.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -288,6 +290,9 @@ struct mtd {
 	int fd, number;
 	uint32_t size, erasesize, writesize;
 	unsigned char bad[MAX_BLOCKS];
+	/* simulated only: writes left that go wrong (255 every one), and marks
+	 * that do not stick */
+	unsigned char weak[MAX_BLOCKS], nomark[MAX_BLOCKS];
 };
 
 static long cut_after = -1;
@@ -323,6 +328,25 @@ static int mtd_open(struct mtd *m, int number)
 				m->bad[b] = 1;
 		if (f)
 			fclose(f);
+		snprintf(dev, sizeof(dev), "/dev/mtd%d.weak", number);
+		at(p, sizeof(p), dev);
+		char line[32];
+		if ((f = fopen(p, "r"))) {
+			while (fgets(line, sizeof(line), f)) {
+				unsigned times = 255;
+				if (sscanf(line, "%u %u", &b, &times) >= 1 && b < MAX_BLOCKS)
+					m->weak[b] = times > 255 ? 255 : (unsigned char)times;
+			}
+			fclose(f);
+		}
+		snprintf(dev, sizeof(dev), "/dev/mtd%d.nomark", number);
+		at(p, sizeof(p), dev);
+		f = fopen(p, "r");
+		while (f && fscanf(f, "%u", &b) == 1)
+			if (b < MAX_BLOCKS)
+				m->nomark[b] = 1;
+		if (f)
+			fclose(f);
 	} else {
 		struct mtd_info_user info;
 		if (ioctl(m->fd, MEMGETINFO, &info))
@@ -349,22 +373,28 @@ static int mtd_bad(struct mtd *m, unsigned block)
 	loff_t o = (loff_t)block * m->erasesize;
 	return ioctl(m->fd, MEMGETBADBLOCK, &o) > 0;
 }
-static void mtd_mark_bad(struct mtd *m, unsigned block)
+/* 0 once the block reads back as bad: a reader that skips marked blocks
+ * (U-Boot, UBI, section_on_flash) would otherwise take whatever is left in it
+ * for data. */
+static int mtd_mark_bad(struct mtd *m, unsigned block)
 {
-	m->bad[block] = 1;
 	if (simulated()) {
-		char p[PATH_MAX], dev[32];
-		snprintf(dev, sizeof(dev), "/dev/mtd%d.bad", m->number);
-		at(p, sizeof(p), dev);
-		FILE *f = fopen(p, "a");
-		if (f) {
-			fprintf(f, "%u\n", block);
-			fclose(f);
+		if (!m->nomark[block]) {
+			char p[PATH_MAX], dev[32];
+			snprintf(dev, sizeof(dev), "/dev/mtd%d.bad", m->number);
+			at(p, sizeof(p), dev);
+			FILE *f = fopen(p, "a");
+			if (f && fprintf(f, "%u\n", block) > 0 && fclose(f) == 0)
+				m->bad[block] = 1;
+			else if (f)
+				fclose(f);
 		}
-		return;
+	} else {
+		loff_t o = (loff_t)block * m->erasesize;
+		if (ioctl(m->fd, MEMSETBADBLOCK, &o))
+			return -1;
 	}
-	loff_t o = (loff_t)block * m->erasesize;
-	ioctl(m->fd, MEMSETBADBLOCK, &o);
+	return mtd_bad(m, block) ? 0 : -1;
 }
 static int mtd_erase(struct mtd *m, unsigned block)
 {
@@ -381,8 +411,18 @@ static int mtd_erase(struct mtd *m, unsigned block)
 static int mtd_write(struct mtd *m, unsigned block, const unsigned char *buf, uint32_t n)
 {
 	int r = pwrite(m->fd, buf, n, (off_t)block * m->erasesize) == (ssize_t)n ? 0 : -1;
-	if (simulated())
+	if (simulated()) {
+		if (m->weak[block]) {
+			/* a block that does not take the data: one byte comes back
+			 * wrong */
+			unsigned char c = (unsigned char)(buf[n / 2] ^ 0x10);
+			if (pwrite(m->fd, &c, 1, (off_t)block * m->erasesize + n / 2) != 1)
+				r = -1;
+			if (m->weak[block] != 255)
+				m->weak[block]--;
+		}
 		block_written();
+	}
 	return r;
 }
 static int mtd_read(struct mtd *m, unsigned block, unsigned char *buf, uint32_t n)
@@ -411,8 +451,10 @@ static int mtd_in_use(int number)
  * header, magic "ASW\0", board id at 4, version at 8/12/16, five sections
  * {u8 type, u8 upgrade, u8 dual, u8 pad, u32 flash alloc, u32 file offset} at
  * 0x14, CRC-32 of 0x80..end at 0x70, the size at 0x74. Section i ends where
- * section i + 1 starts; 0 boot, 1 env, 2 kernel, 3 rootfs, 4 app volume. */
+ * section i + 1 starts; 0 boot, 1 env, 2 kernel, 3 rootfs, 4 app volume, of
+ * types 0, 1, 2, 4 and 5 (every stock image's, 18.21.10's included). */
 #define SECTIONS 5
+static const unsigned char section_types[SECTIONS] = {0, 1, 2, 4, 5};
 struct image {
 	int fd;
 	uint32_t size, version[3];
@@ -446,6 +488,13 @@ static int image_open(struct image *img, const char *path, char *why, size_t why
 	for (int i = 0; i < 3; i++)
 		img->version[i] = fpvos_get_le32(h + 8 + 4 * i);
 	for (int i = 0; i < SECTIONS; i++) {
+		/* Sections are taken by position: each must be the one stock puts
+		 * there. */
+		if (h[0x14 + 12 * i] != section_types[i]) {
+			snprintf(why, why_size, "section %d has type %u, not %u", i,
+				 h[0x14 + 12 * i], section_types[i]);
+			return -1;
+		}
 		img->section[i].upgrade = h[0x14 + 12 * i + 1] != 0;
 		img->section[i].offset = fpvos_get_le32(h + 0x14 + 12 * i + 8);
 	}
@@ -461,6 +510,12 @@ static int image_open(struct image *img, const char *path, char *why, size_t why
 		snprintf(why, why_size, "section table out of order");
 		return -1;
 	}
+	/* A bank is a kernel, a rootfs and an app volume: none may be empty. */
+	for (int i = 2; i < SECTIONS; i++)
+		if (!img->section[i].length) {
+			snprintf(why, why_size, "the %s section is empty", section_names[i]);
+			return -1;
+		}
 	static unsigned char buf[MAX_BLOCK];
 	unsigned crc = ~0U;
 	for (uint32_t at = 0x80; at < img->size;) {
@@ -503,11 +558,54 @@ static void status(unsigned percent, int state, const char *fmt, ...)
 static unsigned char block[MAX_BLOCK], back[MAX_BLOCK];
 static uint64_t done_bytes, all_bytes;
 
+/* Blocks this run marked bad, and why it stopped when it did. A block that
+ * fails twice in a row is marked bad; more than MAX_NEW_BAD in one run is a
+ * fault of the flash or its driver, not worn blocks, and marks are forever: the
+ * install stops there, before the boot bank is switched. */
+#define MAX_NEW_BAD 4
+static unsigned new_bad;
+static char failure[64];
+
+/* Erase block B and write N bytes of BUF to it, read back: twice before it
+ * counts as failed. */
+static int take_block(struct mtd *m, unsigned b, const unsigned char *buf, uint32_t n)
+{
+	for (int attempt = 0; attempt < 2; attempt++) {
+		if (!mtd_erase(m, b) && !mtd_write(m, b, buf, n) && !mtd_read(m, b, back, n) &&
+		    !memcmp(buf, back, n))
+			return 0;
+		fprintf(stderr, "fpvos-update: mtd%d block %u does not take the data%s\n", m->number, b,
+			attempt ? "" : ": trying it again");
+	}
+	return -1;
+}
+
+/* Block B failed: erased and marked bad, or -1 (FAILURE says why) when the
+ * mark does not stick or too many have gone this run. */
+static int retire_block(struct mtd *m, unsigned b)
+{
+	if (new_bad >= MAX_NEW_BAD) {
+		snprintf(failure, sizeof(failure), "more than %d blocks failed", MAX_NEW_BAD);
+		fprintf(stderr, "fpvos-update: mtd%d block %u failed too: %s, stopping\n", m->number, b, failure);
+		return -1;
+	}
+	mtd_erase(m, b);
+	if (mtd_mark_bad(m, b)) {
+		snprintf(failure, sizeof(failure), "mtd%d block %u cannot be marked bad", m->number, b);
+		fprintf(stderr, "fpvos-update: %s\n", failure);
+		return -1;
+	}
+	new_bad++;
+	fprintf(stderr, "fpvos-update: mtd%d block %u marked bad\n", m->number, b);
+	return 0;
+}
+
 /* Section INDEX into partition M as stock writes it (erase, write, bad blocks
  * skipped, the last block padded with zeros), each block read back; a block
- * that does not read back is marked bad and the data goes to the next one.
- * TAIL: the good blocks after the data are erased too, so UBI finds them
- * empty (stock leaves them as they were). PROGRESS: counted in the status. */
+ * that does not read back twice is marked bad and the data goes to the next
+ * one. TAIL: the good blocks after the data are erased too, so UBI finds them
+ * empty (stock leaves them as they were). PROGRESS: counted in the status.
+ * -1 with FAILURE empty: the section did not fit. */
 static int write_section(struct mtd *m, const struct image *img, int index, int tail, int progress)
 {
 	uint32_t length = img->section[index].length, used = 0;
@@ -519,20 +617,19 @@ static int write_section(struct mtd *m, const struct image *img, int index, int 
 		if (mtd_bad(m, b))
 			continue;
 		if (used >= length) {
-			if (mtd_erase(m, b))
-				mtd_mark_bad(m, b);
+			if (mtd_erase(m, b) && mtd_erase(m, b) && retire_block(m, b))
+				return -1;
 			continue;
 		}
 		uint32_t n = length - used < m->erasesize ? length - used : m->erasesize;
-		if (pread(img->fd, block, n, img->section[index].offset + used) != (ssize_t)n)
+		if (pread(img->fd, block, n, img->section[index].offset + used) != (ssize_t)n) {
+			snprintf(failure, sizeof(failure), "cannot read the image");
 			return -1;
+		}
 		memset(block + n, 0, m->erasesize - n);
-		if (mtd_erase(m, b) || mtd_write(m, b, block, m->erasesize) ||
-		    mtd_read(m, b, back, m->erasesize) || memcmp(block, back, m->erasesize)) {
-			fprintf(stderr, "fpvos-update: mtd%d block %u does not take the data: marked bad\n",
-				m->number, b);
-			mtd_erase(m, b);
-			mtd_mark_bad(m, b);
+		if (take_block(m, b, block, m->erasesize)) {
+			if (retire_block(m, b))
+				return -1;
 			continue;
 		}
 		used += n;
@@ -579,10 +676,11 @@ static int select_bank(int bank)
 	for (unsigned b = 0; b < mtd_blocks(&m); b++) {
 		if (mtd_bad(&m, b))
 			continue;
-		if (mtd_erase(&m, b) || mtd_write(&m, b, block, m.writesize) ||
-		    mtd_read(&m, b, back, m.writesize) || memcmp(block, back, m.writesize)) {
-			mtd_erase(&m, b);
-			mtd_mark_bad(&m, b);
+		if (take_block(&m, b, block, m.writesize)) {
+			if (retire_block(&m, b)) {
+				close(m.fd);
+				return -1;
+			}
 			continue;
 		}
 		good++;
@@ -614,6 +712,8 @@ static int install(const char *path)
 	fprintf(stderr, "fpvos-update: image %u.%u.%u, booted bank %d, writing bank %d\n",
 		img.version[0], img.version[1], img.version[2], booted, bank);
 	all_bytes = done_bytes = 0;
+	new_bad = 0;
+	failure[0] = 0;
 	for (int i = 2; i < SECTIONS; i++) {
 		if (img.section[i].upgrade && mtd_in_use(bank_mtd[bank][i])) {
 			status(0, -1, "install failed: mtd%d is in use", bank_mtd[bank][i]);
@@ -636,6 +736,10 @@ static int install(const char *path)
 		}
 		int r = write_section(&m, &img, i, 1, 1);
 		close(m.fd);
+		if (r && failure[0]) {
+			status(0, -1, "install failed: %s", failure);
+			return 1;
+		}
 		if (r) {
 			status(0, -1, "install failed: the %s did not fit mtd%d", section_names[i], bank_mtd[bank][i]);
 			return 1;
@@ -663,13 +767,19 @@ static int install(const char *path)
 		}
 		close(m.fd);
 		if (r) {
-			status(0, -1, "install failed: the %s did not write", section_names[i]);
+			if (failure[0])
+				status(0, -1, "install failed: %s", failure);
+			else
+				status(0, -1, "install failed: the %s did not write", section_names[i]);
 			return 1;
 		}
 	}
 	status(97, 3, "switching to bank %d", bank);
 	if (select_bank(bank)) {
-		status(0, -1, "install failed: the boot bank record did not write");
+		if (failure[0])
+			status(0, -1, "install failed: %s", failure);
+		else
+			status(0, -1, "install failed: the boot bank record did not write");
 		return 1;
 	}
 	close(img.fd);

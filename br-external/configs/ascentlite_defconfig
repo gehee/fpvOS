@@ -47,7 +47,8 @@ BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-lite/post-
 BR2_PACKAGE_KESTREL_AIR=y
 # mkfs.ubifs and ubinize for mkascentimg.py, rather than whatever the host has
 BR2_PACKAGE_HOST_MTD=y
-# An SSH server in the app volume, public-key login only; see air/start.sh
+# An SSH server in the app volume: root/root by default (FPVOS_AIR_ROOT_PASSWORD), plus
+# public keys from FPVOS_AIR_SSH_KEYS; see board/ascent-lite/post-image.sh and air/start.sh
 BR2_PACKAGE_AIR_DROPBEAR=y
 BR2_PACKAGE_AIR_BUSYBOX=y
 # The radio through ar_libre (arlink.ko + libar8030_client.so, no daemon) instead

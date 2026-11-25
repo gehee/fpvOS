@@ -47,4 +47,4 @@ stock/boot.img                           boot.img   (kernel FIT: dtb, kernel, re
 
 # --- Air unit: the stock Ascent Lite and Lite+ VTX image (H_Sky), unmodified -------------
 # From the same release zip. `./build.sh air` and boot/mkascentimg.py build on it.
-stock/air/Ascent_H_Sky_*.img             Ascent_V*/Ascent_H_Sky_*.img (release zip)
+stock/air/Ascent_H_Sky_18_21_10.img      Ascent_V*/Ascent_H_Sky_18_21_10.img (release zip; the air build checks its SHA-256)

@@ -5,13 +5,51 @@
 # plus fpv_run-hook.sh in the stock board script. U-Boot, env, kernel and
 # rootfs stay byte-identical to stock. mkascentimg.py refuses a volume that
 # would lose the PC tool's updater.
+#
+#   FPVOS_AIR_STOCK=PATH  build on another stock image than 18.21.10, on purpose
+#                         only: arlink.ko, the SDK libraries and start.sh's
+#                         copy of the stock run script are made for 18.21.10
+#   FPVOS_RELEASE=1       a release build: no personal SSH keys, no
+#                         FPVOS_AIR_STOCK, a clean tree exactly on a tag
 set -eu
 
 BOARD=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$BOARD/../../.." && pwd)
 MKIMG=$ROOT/boot/mkascentimg.py
-STOCK=$(ls "$ROOT"/vendor/stock/air/Ascent_H_Sky_*.img 2>/dev/null | tail -n 1)
-[ -n "$STOCK" ] || { echo "no stock air image: run scripts/extract-ascent-vrx-pro-firmware.py" >&2; exit 1; }
+RELEASE=${FPVOS_RELEASE:-0}
+die() { echo "post-image (air): $*" >&2; exit 1; }
+
+# The stock image it is built on: 18.21.10, the one everything in the app
+# volume is made for - arlink.ko's vermagic is its kernel's, kestrel-air links
+# its SDK libraries, start.sh repeats what its fpv_run_cx482.sh does. Any other
+# is refused unless FPVOS_AIR_STOCK names it.
+STOCK_NAME=Ascent_H_Sky_18_21_10.img
+STOCK_SHA256=78d9e73ce8ffe3b42991b12cdecca0b7b1140c3f8cbbba484deeedae51301907
+if [ -n "${FPVOS_AIR_STOCK:-}" ]; then
+	STOCK=$FPVOS_AIR_STOCK
+	[ -f "$STOCK" ] || die "FPVOS_AIR_STOCK=$STOCK: no such file"
+	[ "$RELEASE" != 1 ] || die "FPVOS_AIR_STOCK is set: a release is built on stock $STOCK_NAME only"
+	echo "*** air: built on $STOCK (FPVOS_AIR_STOCK), not on stock $STOCK_NAME: arlink.ko, the SDK libraries and the run script may not match it" >&2
+else
+	STOCK=$ROOT/vendor/stock/air/$STOCK_NAME
+	[ -f "$STOCK" ] ||
+		die "no $STOCK: run scripts/extract-ascent-vrx-pro-firmware.py (or set FPVOS_AIR_STOCK to build on another stock image on purpose)"
+	sum=$(sha256sum "$STOCK" | cut -d' ' -f1)
+	[ "$sum" = "$STOCK_SHA256" ] ||
+		die "$STOCK has SHA-256 $sum, not stock 18.21.10's $STOCK_SHA256: extract it again (or set FPVOS_AIR_STOCK to build on another image on purpose)"
+fi
+
+# A release: no personal keys, and a clean tree exactly on its tag, so the
+# version the unit reports (air/VERSION, below: the SDK field of FIND_DEVICE,
+# the boot log) names exactly what is in the image.
+if [ "$RELEASE" = 1 ]; then
+	[ -z "${FPVOS_AIR_SSH_KEYS:-}" ] ||
+		die "FPVOS_AIR_SSH_KEYS is set ($FPVOS_AIR_SSH_KEYS): a release must not carry personal SSH keys - unset it"
+	[ -z "$(git -C "$ROOT" status --porcelain --untracked-files=no)" ] ||
+		die "FPVOS_RELEASE=1 with uncommitted changes in $ROOT: commit or drop them first"
+	git -C "$ROOT" describe --exact-match --tags HEAD > /dev/null 2>&1 ||
+		die "FPVOS_RELEASE=1 but HEAD is not exactly on a tag ($(git -C "$ROOT" describe --always --tags --dirty))"
+fi
 
 WORK=$BUILD_DIR/air-image
 rm -rf "$WORK"
@@ -61,11 +99,22 @@ for f in config_ether.sh disable_config_ether.sh usb_ip.sh; do
 done
 
 # SSH keys from FPVOS_AIR_SSH_KEYS, a public-key file, at build time. They are
-# personal: never committed, and an image built with them is not for sharing.
+# personal: never committed, never in a release, and an image built with them
+# is not for sharing (whoever holds the private half logs in to every unit
+# flashed with it).
 if [ -n "${FPVOS_AIR_SSH_KEYS:-}" ]; then
 	install -d -m 0700 "$WORK/fpv/fpv/air/ssh"
 	install -m 0600 "$FPVOS_AIR_SSH_KEYS" "$WORK/fpv/fpv/air/ssh/authorized_keys"
-	echo "*** air: SSH keys from $FPVOS_AIR_SSH_KEYS - this image carries your public keys; do not share it" >&2
+	{
+		echo
+		echo "**********************************************************************"
+		echo "*** WARNING: this air image carries YOUR SSH public keys, from"
+		echo "***   FPVOS_AIR_SSH_KEYS=$FPVOS_AIR_SSH_KEYS"
+		echo "*** Whoever holds the matching private keys logs in as root to every"
+		echo "*** unit flashed with it. Do NOT share or publish this image."
+		echo "**********************************************************************"
+		echo
+	} >&2
 else
 	echo "air: no FPVOS_AIR_SSH_KEYS, so no SSH login with a key in this image" >&2
 fi

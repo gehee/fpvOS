@@ -11,7 +11,6 @@ AIR_BUSYBOX_VERSION = $(BUSYBOX_VERSION)
 AIR_BUSYBOX_SITE = $(BUSYBOX_SITE)
 AIR_BUSYBOX_SOURCE = $(BUSYBOX_SOURCE)
 AIR_BUSYBOX_DL_SUBDIR = busybox
-AIR_BUSYBOX_HASH_FILES = $(BUSYBOX_PKGDIR)/busybox.hash
 AIR_BUSYBOX_LICENSE = GPL-2.0
 AIR_BUSYBOX_LICENSE_FILES = LICENSE
 
@@ -40,3 +39,8 @@ define AIR_BUSYBOX_INSTALL_TARGET_CMDS
 endef
 
 $(eval $(generic-package))
+
+# Busybox's own hash file checks the shared tarball (and LICENSE for
+# legal-info). After generic-package, which sets AIR_BUSYBOX_HASH_FILES to
+# this package's (missing) air-busybox.hash and would override it if set above.
+AIR_BUSYBOX_HASH_FILES = $(BUSYBOX_PKGDIR)/busybox.hash

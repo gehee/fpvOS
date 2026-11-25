@@ -28,13 +28,16 @@ BLOCK = 128 * KiB
 SIZES = [512 * KiB, 512 * KiB, 1 * MiB, 4 * MiB, 4 * MiB, 6 * MiB, 16 * MiB, 16 * MiB, 32 * MiB, 32 * MiB]
 BANK = {0: (3, 6, 8), 1: (4, 7, 9)}
 APP_VERSION = 'APP_VERSION=18.21.10\nBOARD_TYPE=Sky482\nBUILD_TIME=202608141800\nROLLBACK_FLAG=1\n'
+# The section types of every stock image (18.21.10's header): boot, env, kernel,
+# rootfs, app volume.
+TYPES = (0, 1, 2, 4, 5)
 
 
 def bsel(bank):
     return b'BSEL' + bytes([bank, 0xff ^ bank]) + b'\xee\x98\x0c\x53'
 
 
-def asw(sections, board=3, version=(18, 21, 10), upgrade=(1, 1, 1, 1, 1)):
+def asw(sections, board=3, version=(18, 21, 10), upgrade=(1, 1, 1, 1, 1), types=TYPES):
     """An ASW container as boot/mkascentimg.py writes one."""
     h = bytearray(0x80)
     h[0:4] = b'ASW\0'
@@ -42,7 +45,7 @@ def asw(sections, board=3, version=(18, 21, 10), upgrade=(1, 1, 1, 1, 1)):
     struct.pack_into('<III', h, 8, *version)
     off = 0x80
     for i, data in enumerate(sections):
-        struct.pack_into('<BBBBII', h, 0x14 + 12 * i, i, upgrade[i], 1, 0, 0x80000, off)
+        struct.pack_into('<BBBBII', h, 0x14 + 12 * i, types[i], upgrade[i], 1, 0, 0x80000, off)
         off += len(data)
     payload = b''.join(sections)
     struct.pack_into('<II', h, 0x70, zlib.crc32(payload), 0x80 + len(payload))
@@ -61,10 +64,10 @@ def text(b):
 
 
 class Unit:
-    """A simulated Lite+ booted from bank 1, with the build of this tree as its
-    updater."""
+    """A simulated Lite+ booted from bank 1 (or BOOTED), with the build of
+    this tree as its updater."""
 
-    def __init__(self, bin_dir, boot=None, env=None):
+    def __init__(self, bin_dir, boot=None, env=None, booted=1):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         for d in ('dev', 'run', 'etc', 'factory', 'tmp', 'usrdata/fpv/air', 'sys/class/ubi', 'proc'):
@@ -76,8 +79,8 @@ class Unit:
             (self.root / f'dev/mtd{n}').write_bytes(fill)
         self.put(0, self.boot + bytes(-len(self.boot) % BLOCK))
         self.put(1, self.env)
-        self.put(2, b''.join(bsel(1).ljust(2048, b'\xff').ljust(BLOCK, b'\xff') for _ in range(8)))
-        (self.root / 'run/bootsel1').write_text('normal check\n')
+        self.put(2, b''.join(bsel(booted).ljust(2048, b'\xff').ljust(BLOCK, b'\xff') for _ in range(8)))
+        (self.root / f'run/bootsel{booted}').write_text('normal check\n')
         (self.root / 'etc/app.version').write_text(APP_VERSION)
         (self.root / 'factory/mp_cfg.json').write_text('{\n    "sn": "0205",\n    "bb_power_offset": [0, 0]\n}\n')
         (self.root / 'chip_id').write_text('0x3516c613\n')
@@ -92,6 +95,28 @@ class Unit:
 
     def mtd(self, n):
         return (self.root / f'dev/mtd{n}').read_bytes()
+
+    def block(self, n, b):
+        return self.mtd(n)[b * BLOCK:(b + 1) * BLOCK]
+
+    def mark(self, kind, n, *lines):
+        """mtdN.bad, .weak (blocks that do not take the data: "B" always,
+        "B N" the first N writes) or .nomark (blocks whose bad mark does not
+        stick)."""
+        with open(self.root / f'dev/mtd{n}.{kind}', 'a') as f:
+            f.writelines(f'{line}\n' for line in lines)
+
+    def marked_bad(self, n):
+        p = self.root / f'dev/mtd{n}.bad'
+        return sorted(int(x) for x in p.read_text().split()) if p.exists() else []
+
+    def install(self, image):
+        """The receiver's helper on IMAGE: its exit status and last status."""
+        img = self.root / 'tmp/image'
+        img.write_bytes(image)
+        r = subprocess.run([str(self.exe), 'install', str(img)], env=self.environ(FPVOS_LITE_HELPER='1'),
+                           capture_output=True, text=True)
+        return r.returncode, (self.root / 'tmp/status').read_text().split(' ', 2)[2].strip()
 
     def environ(self, **extra):
         return dict(os.environ, FPVOS_LITE_ROOT=str(self.root), **extra)
@@ -245,10 +270,19 @@ class Tests(unittest.TestCase):
             self.assertEqual(written[len(sections[i]):len(sections[i]) + pad], bytes(pad))
             self.assertEqual(written[len(sections[i]) + pad:].strip(b'\xff'), b'', f'mtd{n} tail')
 
-    def assert_selected(self, unit, bank):
+    def assert_selected(self, unit, bank, bad=()):
         sel = unit.mtd(2)
         for b in range(len(sel) // BLOCK):
-            self.assertEqual(sel[b * BLOCK:b * BLOCK + 10], bsel(bank))
+            if b not in bad:
+                self.assertEqual(sel[b * BLOCK:b * BLOCK + 10], bsel(bank))
+
+    def assert_refused(self, unit, image, why):
+        """The install fails with WHY, and nothing on the flash changes."""
+        before = {n: unit.mtd(n) for n in range(10)}
+        rc, detail = unit.install(image)
+        self.assertEqual(rc, 1, detail)
+        self.assertIn(why, detail)
+        self.assertEqual({n: unit.mtd(n) for n in range(10)}, before)
 
     def test_identity_as_stock(self):
         """FIND_DEVICE as the stock updater answered on a Lite+ (472, -b 19
@@ -466,6 +500,143 @@ class Tests(unittest.TestCase):
         self.assertIsNotNone(writes)
         self.assertGreater(writes, 100)
         print(f"power cut: {writes} cut points, every one kept bank 1", file=sys.stderr)
+
+    def test_booted_from_bank_0_writes_bank_1(self):
+        """Booted from bank 0: bank 1 is written and selected, bank 0 untouched."""
+        u = self.unit(booted=0)
+        sections, image = self.image_for(u)
+        before = {n: u.mtd(n) for n in range(10)}
+        self.assertEqual(u.install(image), (0, 'installed in bank 1'))
+        self.assert_bank(u, 1, sections)
+        self.assert_selected(u, 1)
+        for n in (0, 1, 3, 5, 6, 8):
+            self.assertEqual(u.mtd(n), before[n], f'mtd{n} changed')
+
+    def test_booted_bank_unknown_refused(self):
+        """Neither or both /run/bootsel files: no bank is known to be free."""
+        u = self.unit()
+        _, image = self.image_for(u)
+        (u.root / 'run/bootsel1').unlink()
+        self.assert_refused(u, image, 'the booted bank is unknown')
+        (u.root / 'run/bootsel0').write_text('normal check\n')
+        (u.root / 'run/bootsel1').write_text('normal check\n')
+        self.assert_refused(u, image, 'the booted bank is unknown')
+
+    def test_block_that_fails_once_is_written_again(self):
+        """A block that does not read back once is erased and written again:
+        it keeps its data and is not marked bad."""
+        u = self.unit()
+        u.mark('weak', 6, '2 1')
+        u.mark('weak', 2, '3 1')
+        sections, image = self.image_for(u)
+        self.assertEqual(u.install(image), (0, 'installed in bank 0'))
+        self.assert_bank(u, 0, sections)
+        self.assert_selected(u, 0)
+        self.assertEqual((u.marked_bad(6), u.marked_bad(2)), ([], []))
+
+    def test_failing_block_marked_bad_and_skipped(self):
+        """A block that fails twice is erased and marked bad, and the data goes
+        on in the next block (rootfs, app volume, boot record)."""
+        u = self.unit()
+        u.mark('weak', 6, 1)
+        u.mark('weak', 8, 5)
+        u.mark('weak', 2, 3)
+        sections, image = self.image_for(u)
+        self.assertEqual(u.install(image), (0, 'installed in bank 0'))
+        self.assertEqual((u.marked_bad(6), u.marked_bad(8), u.marked_bad(2)), ([1], [5], [3]))
+        self.assert_bank(u, 0, sections, bad={(6, 1), (8, 5)})
+        self.assert_selected(u, 0, bad={3})
+        for n, b in ((6, 1), (8, 5), (2, 3)):
+            self.assertEqual(u.block(n, b), b'\xff' * BLOCK, f'mtd{n} block {b} left with data')
+
+    def test_mark_that_does_not_stick_fails_the_install(self):
+        """A failing block whose bad mark does not stick would be read as data:
+        the install fails and the booted bank stays selected."""
+        u = self.unit()
+        u.mark('weak', 6, 3)
+        u.mark('nomark', 6, 3)
+        _, image = self.image_for(u)
+        rc, detail = u.install(image)
+        self.assertEqual((rc, detail), (1, 'install failed: mtd6 block 3 cannot be marked bad'))
+        self.assert_selected(u, 1)
+        self.assertEqual(u.marked_bad(6), [])
+
+    def test_mark_that_does_not_stick_in_the_boot_record(self):
+        u = self.unit()
+        u.mark('weak', 2, 0)
+        u.mark('nomark', 2, 0)
+        _, image = self.image_for(u)
+        rc, detail = u.install(image)
+        self.assertEqual((rc, detail), (1, 'install failed: mtd2 block 0 cannot be marked bad'))
+
+    def test_many_failing_blocks_stop_the_install(self):
+        """A flash or driver fault that fails block after block: at most 4 are
+        marked bad in one run, then the install stops before the bank switch."""
+        u = self.unit()
+        u.mark('weak', 3, *range(32))
+        _, image = self.image_for(u)
+        rc, detail = u.install(image)
+        self.assertEqual((rc, detail), (1, 'install failed: more than 4 blocks failed'))
+        self.assertEqual(u.marked_bad(3), [0, 1, 2, 3])
+        self.assert_selected(u, 1)
+        # The limit is for the run, across partitions.
+        u2 = self.unit()
+        u2.mark('weak', 3, 0, 1)
+        u2.mark('weak', 6, 0, 1)
+        u2.mark('weak', 8, 0)
+        _, image = self.image_for(u2)
+        self.assertEqual(u2.install(image), (1, 'install failed: more than 4 blocks failed'))
+        self.assertEqual((u2.marked_bad(3), u2.marked_bad(6), u2.marked_bad(8)), ([0, 1], [0, 1], []))
+        self.assert_selected(u2, 1)
+
+    def test_section_that_does_not_fit_fails(self):
+        """The kernel (25 blocks) on a 32-block kernel0 with 8 bad blocks."""
+        u = self.unit()
+        u.mark('bad', 3, *range(0, 32, 4))
+        _, image = self.image_for(u)
+        rc, detail = u.install(image)
+        self.assertEqual((rc, detail), (1, 'install failed: the kernel did not fit mtd3'))
+        self.assert_selected(u, 1)
+
+    def test_section_types_checked(self):
+        """Sections are taken by position, so each must carry stock's type."""
+        u = self.unit()
+        for types, why in (((0, 1, 2, 3, 5), 'section 3 has type 3, not 4'),
+                           ((0, 1, 4, 2, 5), 'section 2 has type 4, not 2'),
+                           ((0, 1, 2, 4, 6), 'section 4 has type 6, not 5'),
+                           ((1, 0, 2, 4, 5), 'section 0 has type 1, not 0')):
+            _, image = self.image_for(u, types=types)
+            self.assert_refused(u, image, why)
+
+    def test_empty_sections_refused(self):
+        u = self.unit()
+        for i, name in ((2, 'kernel'), (3, 'rootfs'), (4, 'app volume')):
+            sections = [u.boot, u.env, os.urandom(3 * MiB), os.urandom(5 * BLOCK), os.urandom(9 * BLOCK)]
+            sections[i] = b''
+            self.assert_refused(u, asw(sections), f'the {name} section is empty')
+
+    def test_malformed_section_tables_refused(self):
+        """Offsets past the end, out of order, a first section not at 0x80, a
+        header size that is not the file's; the CRC (of 0x80 on) still good."""
+        u = self.unit()
+        _, image = self.image_for(u)
+        offs = [struct.unpack_from('<I', image, 0x14 + 12 * i + 8)[0] for i in range(5)]
+
+        def table(offsets=offs, size=None):
+            h = bytearray(image)
+            for i, off in enumerate(offsets):
+                struct.pack_into('<I', h, 0x14 + 12 * i + 8, off)
+            if size is not None:
+                struct.pack_into('<I', h, 0x74, size)
+            return bytes(h)
+
+        self.assert_refused(u, table(size=len(image) + 1), f'image size {len(image) + 1}')
+        self.assert_refused(u, table(size=len(image) - 1), f'image size {len(image) - 1}')
+        self.assert_refused(u, table(offs[:4] + [len(image) + 1]), 'section table out of order')
+        self.assert_refused(u, table(offs[:2] + [offs[3], offs[2]] + offs[4:]), 'section table out of order')
+        self.assert_refused(u, table([0x100] + offs[1:]), 'section table out of order')
+        self.assert_refused(u, table([0x40] + offs[1:]), 'section table out of order')
+        self.assert_refused(u, table([0x80, 0x40] + offs[2:]), 'section table out of order')
 
 
 if __name__ == '__main__':

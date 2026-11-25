@@ -15,13 +15,26 @@ air=/usrdata/fpv/air
 
 echo "air: fpvOS $(cat $air/VERSION) board_type=$board_type board_ver=$board_ver hw=$HW_VER rf=$rf_board"
 
+# /tmp/air.log is in RAM (an unsized tmpfs, on a unit with 64 MB), and
+# kestrel-air adds a status line every second: past 1 MiB it is moved to
+# air.log.1 (the one before goes) and starts again, checked once a minute. The
+# hook opens it for appending, so every writer goes on at the new end.
+log=/tmp/air.log
+(
+	while sleep 60; do
+		[ "$(wc -c < $log 2>/dev/null || echo 0)" -gt 1048576 ] || continue
+		cp $log $log.1 && : > $log
+	done
+) < /dev/null > /dev/null 2>&1 &
+
 # The USB network (192.168.2.1 and a DHCP server) is set up by our
 # usb_ip.sh, which our config_ether.sh (CDC-NCM) runs when the link is
 # switched to network.
 
 # SSH when the image carries keys (FPVOS_AIR_SSH_KEYS at build time) or a root
-# password (FPVOS_AIR_ROOT_PASSWORD, root by default); reachable once the USB link is switched to
-# network (enable_rndis.py). The password goes in a copy of /etc/shadow
+# password (FPVOS_AIR_ROOT_PASSWORD, root by default); reachable once the USB
+# link is switched to network (the PC tool's or the fpvOS Flasher's network
+# switch, or /factory/run_rndis_flag at boot). The password goes in a copy of /etc/shadow
 # mounted over the stock one, in RAM: the stock rootfs is never written. The
 # host key is made on the first boot, in the writable app volume. First, so a
 # stuck air app cannot keep you out.
@@ -80,17 +93,45 @@ printf 'board_type=%s\nradio_dir=%s\nradio_fw=%s\nradio_cfg=%s\n' "$board_type" 
 
 if [ $ours = 1 ] && [ -x $air/kestrel-air ] && insmod $air/arlink.ko fw_name=$bb_fw cfg_name=$bb_cfg; then
 	echo "air: arlink $(cat $air/ar-libre.version 2>/dev/null)"
-	for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-		[ -e /dev/arlink0 ] && break
-		sleep 1
-	done
-	[ -e /dev/arlink0 ] && echo "air: /dev/arlink0 after $i s" || echo "air: NO /dev/arlink0 after 15 s"
+	arlink_up() {
+		for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+			[ -e /dev/arlink0 ] && return 0
+			sleep 1
+		done
+		return 1
+	}
+	if arlink_up; then
+		echo "air: /dev/arlink0 after $i s"
+	else
+		# Once more, as fpvOS_usb's chip-load loads it: arlink.ko out, the
+		# chip reset (when chip-load is there) and arlink.ko in again with the
+		# same firmware and config.
+		echo "air: NO /dev/arlink0 after 15 s: loading arlink.ko again"
+		dmesg | grep -iE 'arlink|mmc0' | tail -n 8
+		if [ -x $air/usb/chip-load ]; then
+			$air/usb/chip-load "$(cat /sys/module/firmware_class/parameters/path)" $bb_fw $bb_cfg
+		else
+			rmmod arlink
+			insmod $air/arlink.ko fw_name=$bb_fw cfg_name=$bb_cfg
+		fi
+		arlink_up && echo "air: /dev/arlink0 after loading arlink.ko again" ||
+			echo "air: NO /dev/arlink0 after loading arlink.ko again"
+	fi
 	# Bridge mode, kept by fpvOS_usb until switched back to normal: the radio
 	# is the USB host's, so no kestrel-air; the same switch as the updater's
 	# (from a loaded chip, as verified live).
 	if [ "$($air/fpvos-usb saved 2>/dev/null)" = bridge ]; then
 		echo "air: bridge mode (saved): the AR8030 is on USB"
 		$air/fpvos-usb mode bridge
+		exit 0
+	fi
+	if [ ! -e /dev/arlink0 ]; then
+		# No radio: kestrel-air would wait for it forever, with no link and
+		# never exiting. The runner takes it as a crash: a reboot (which
+		# resets the chip) under its count of reboots in a row, then up and
+		# idle for ssh and the PC tool. Not stock's radio: arlink.ko has had
+		# the chip, which stock's driver only takes from its boot ROM.
+		$air/run-kestrel-air.sh no-radio &
 		exit 0
 	fi
 	echo "air: kestrel-air $(cat $air/kestrel-air.version 2>/dev/null)"

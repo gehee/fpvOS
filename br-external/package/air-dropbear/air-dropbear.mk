@@ -7,8 +7,11 @@
 # Buildroot's own dropbear source, built again for the app volume: the air
 # unit's rootfs stays stock, so the server lives in /usrdata/fpv/air/bin.
 # - statically linked: the stock rootfs has an older musl, without crypt()
-# - public-key login only: password login is compiled out (the stock root
-#   password is not ours to know, and keys are the only way in)
+# - password login compiled in: root/root by default, the hash written at build
+#   time (FPVOS_AIR_ROOT_PASSWORD, empty for none, in board/ascent-lite/
+#   post-image.sh) and mounted over the stock /etc/shadow by air/start.sh, which
+#   runs dropbear with -s -g when there is no password; public keys from
+#   FPVOS_AIR_SSH_KEYS as well
 AIR_DROPBEAR_VERSION = $(DROPBEAR_VERSION)
 AIR_DROPBEAR_SITE = $(DROPBEAR_SITE)
 AIR_DROPBEAR_SOURCE = $(DROPBEAR_SOURCE)
