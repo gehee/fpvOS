@@ -44,9 +44,12 @@ case "${1:-}" in
         [ ! -x /etc/init.d/S43factory ] || /etc/init.d/S43factory stop
         /usr/sbin/fpvos-update nand stock
         ;;
-    bridge|normal)
-        # fpvOS_usb's USB modes; normal exits 10 when only a reboot gets there.
-        exec /usr/sbin/fpvos-usb mode "$1"
+    normal)
+        # No fpvOS_usb on the goggles (p1goggle_defconfig): always in normal mode.
+        ;;
+    bridge)
+        echo 'update-helper: no bridge mode on this board' >&2
+        exit 1
         ;;
     reboot)
         sync

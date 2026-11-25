@@ -22,3 +22,11 @@ CONFIG_PSTORE_CONSOLE=y
 CONFIG_PSTORE_PMSG=y
 # Restart after a panic so UART/U-Boot recovery remains available.
 CONFIG_PANIC_TIMEOUT=5
+# An oops panics (and so restarts, above) instead of leaving the unit up with
+# the oopsing driver thread dead: video gone while userspace keeps feeding the
+# watchdog. The oops itself is still kept in pstore across the reset.
+CONFIG_PANIC_ON_OOPS=y
+# The console UART's RX may float (no adapter attached): noise read as a BREAK
+# must not reach SysRq. SysRq stays built in; enable it at run time with
+# /proc/sys/kernel/sysrq (/proc/sysrq-trigger works regardless).
+CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE=0x0

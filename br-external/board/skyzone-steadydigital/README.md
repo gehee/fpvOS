@@ -4,10 +4,15 @@ Experimental board on the shared AR9311 platform (`board/common/ar9311`, the
 Ascent VRX's kernel, codec and display drivers): Linux 6.18, Wave5 decoding,
 VO/DSI to the board's LT9611 HDMI bridge, the AR8030 radio over SDIO with
 Open8030, USB networking and the native Kestrel receiver. Two images: a RAM
-image, which writes nothing to flash, and a flashable one for NAND bank B
-(below), which leaves stock in bank A.
+image, which writes nothing to flash, and a flashable one for either NAND bank
+(below), which always leaves stock on the other bank.
+
+Both builds need the stock VRX Pro radio configuration,
+`vendor/rootfs/lib/firmware/bb_config_gnd_pro.json` (Open8030's `gnd-config.py`
+makes this board's ground configuration from it), so extract it first:
 
 ```sh
+scripts/extract-ascent-vrx-pro-firmware.py   # downloads the stock firmware
 ./build.sh skyzone-steadydigital config
 KESTREL_NATIVE_IMAGE=/abs/path/runtime.squashfs ./build.sh skyzone-steadydigital
 ```
@@ -59,21 +64,21 @@ Gnd485's quirks: stock's own 1080p60 attribute uses the same raster and
 variant; its defaults (I2C3 0x41, GPIO107) do not apply to this unit.
 Memory: stock gives Linux 148 MiB and the media pool the rest. CPUs use the
 SPL `ar-spin-table` release, as on the P1. Flash is stock's A/B layout (below);
-bank A (stock) and factory are read-only, bank B, the GPT and `usr_data` are
-writable for the updater.
+factory is read-only. Both banks, the GPT and `usr_data` are writable: the
+updater's checks, not the device tree, keep the stock bank unwritten.
 
-## Flashable image (bank B)
+## Flashable image
 
 `./build.sh skyzone-steadydigital-flash` (with the same `KESTREL_NATIVE_IMAGE`
 as the RAM build) builds a NAND image instead
 of the RAM one: `kernel.img` is a recovery kernel (a small fpvOS recovery initramfs, from
 `package/fpvos-recovery`) and `fpvos-steadydigital.fwu` bundles it with the board
 DTB and the main root (`rootfs.squashfs`). The updater backend
-(`package/fpvos-update/backends/skyzone-steadydigital`) writes **bank B**
-(kernel1/dtb1, and the bundle into the `userapp` UBI volume of userapp1) and
-selects stock **bank A** while writing, so a power cut during the install still
-boots stock. Factory calibration, the environment, U-Boot and bank A are never
-written.
+(`package/fpvos-update/backends/skyzone-steadydigital`) writes one bank
+(kernelN/dtbN, and the bundle into the `userapp` UBI volume of userappN; which
+bank is below) and keeps the other bank selected while writing, so a power cut
+during the install still boots what ran before. Factory calibration, the
+environment, U-Boot and the stock bank are never written.
 
 Every unit ships with the A/B GPT; nothing is converted. It is stock's own
 table: one record at the start of `gpt0` (`gpt1` is erased), sized for the
@@ -85,14 +90,15 @@ like the vendor's own flip, keeping the vendor table; `layout.h` accepts only
 this exact table with one whole bank selected. The power must stay on during
 that one block rewrite (there is no second record).
 
-The main root is mounted where it lies in `userapp1`: the recovery `init`
+The main root is mounted where it lies in its bank's `userappN`: the recovery `init`
 puts UBI's block device (`ubiblock`) under the bundle volume and a loop device
 at the root's offset, mounts the squashfs read-only with a RAM overlay on top
 (both visible at `/rom` and `/overlay`) and `switch_root`s into it. A boot reads
 only the bundle header, the DTB, the kernel's first 4 KiB and the root's
 superblock: the header CRC must be the one the install recorded in `usr_data`
 (`fpvos-installed`, with the bundle's SHA-256 that the system reports), the DTB
-must hash right and match `dtb1`, the kernel head must match `kernel1`. The
+must hash right and match the booted bank's `dtbN`, the kernel head must match
+its `kernelN`. The
 whole bundle was hashed and read back from flash when it was installed.
 Settings and pairing live in `usr_data` (shared), so a reinstall of the same
 bank keeps them.
@@ -127,10 +133,13 @@ Checked on hardware: both CPUs, HDMI picture (Kestrel UI) with monitor
 detection, Wave5 decode at 60 fps, the radio running Open8030, binding to an
 Ascent air unit and its video at 60 fps, Kestrel driven by the front keys.
 The flashable image is installed and updated on hardware with
-`tools/fpvos-update` (bank B, boot verified). An SD card with one filesystem
-is mounted at boot and takes the recordings; DVR > Format SD Card makes any
-card one exFAT partition. Not yet: a stock→fpvOS install over USB, and
-removing the bring-up `/dev/mem`.
+`tools/fpvos-update` (boot verified), and a unit has been flashed from stock
+over USB (the slim recovery kernel uploaded through the HID loader, then the
+installed kernel booting with HDMI and live video). The any-bank choice
+(an fpvOS bank, else the bank not booted) is covered by the simulators but not
+yet tried on a unit. An SD card with one filesystem is mounted at boot and
+takes the recordings; DVR > Format SD Card makes any card one exFAT partition.
+Not yet: removing the bring-up `/dev/mem`.
 
 Also checked: 720p video at 720p60 and 720p120 without colour artefacts
 (kernel patch 0031), 1080p scaled onto a 720p60 screen, the Video Mode list and

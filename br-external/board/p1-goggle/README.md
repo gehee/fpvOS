@@ -186,13 +186,10 @@ Calibration failure leaves the radio stopped; this board does not enable
 an uncalibrated fallback. Device identity comes from radio OTP, not a
 unit-specific MAC embedded in the template.
 
-For development, the new profile must be available in the Open8030 source.
-Until its package revision is updated, use a Buildroot local override in
-`output/p1-goggle/local.mk`:
-
-```make
-OPEN8030_OVERRIDE_SRCDIR = /path/to/Open8030
-```
+The board profile, Open8030's `profiles/betafpv-p1-goggle.c`, is in the
+Open8030 revision the package pins; no local override is needed. To try an
+Open8030 checkout of your own, set `OPEN8030_OVERRIDE_SRCDIR = /path/to/Open8030`
+in `output/p1-goggle/local.mk`.
 
 A RAM-boot test with a P1 Air running fpvOS passed SDIO startup, association,
 all ten control acknowledgements and reception of 3.07 MB over 20 seconds.

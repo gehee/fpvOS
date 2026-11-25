@@ -12,7 +12,12 @@
 # already records to the card's folder, which comes back under the same name.
 # It reads the outcome itself. Otherwise it is stopped and started again
 # around the format, and start says so: a VRX's settings are on the card, and
-# a receiver started without a card records to RAM until it is started again.
+# a receiver started without a card does not record (kestrel-native's run gives
+# it a recordings folder that does not exist) until it is started again.
+#
+# One format at a time: start refuses while a worker runs (a second start from
+# SSH during the UI's, say). The worker holds /run/fpvos-format-dvr.lock on
+# fd 8, inherited from start, and keeps it from what it starts.
 #
 # The outcome is the one line in /run/fpvos-format-dvr.status: "running",
 # "ok <what>" or "failed <why>"; kestrel-gnd shows it once it is back.
@@ -23,6 +28,7 @@
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 status=/run/fpvos-format-dvr.status
 keep=/run/fpvos-format-keep
+lock=/run/fpvos-format-dvr.lock
 
 # The SD controller's card, as S45ar9311-sd finds it.
 # Where the settings live now: the card, RAM (a VRX without one), or storage
@@ -74,13 +80,16 @@ check() {
 }
 
 worker() {
+	# Only under start's lock, never beside another worker.
+	flock -n 8 2>/dev/null || exit 1
 	echo running > "$status"
 	name=$(find_card)
 	what="SD card, $(size_text "$name")"
 	mode=${1:-restart}
 	# Started again when it was stopped; left alone when it kept running and
 	# its folder is back. A receiver that kept running but has lost its card
-	# is started again too, so it records to RAM as one booted without a card.
+	# is started again too, so it runs as one booted without a card (no
+	# recording). Nothing started here may keep the lock (fd 8).
 	restart() {
 		[ -x /etc/init.d/S60kestrel-gnd ] || return 0
 		if [ "$mode" = live ] && ! mountpoint -q /mnt/sd; then
@@ -91,8 +100,8 @@ worker() {
 	}
 	fail() {
 		echo "failed $*" > "$status"
-		/etc/init.d/S45ar9311-sd start >/dev/null 2>&1
-		/etc/init.d/S46kestrel-state start >/dev/null 2>&1
+		/etc/init.d/S45ar9311-sd start >/dev/null 2>&1 8>&-
+		/etc/init.d/S46kestrel-state start >/dev/null 2>&1 8>&-
 		# The card's settings now run from RAM, so the receiver stays paired;
 		# the copy is kept for the next try. Not the marker that sends
 		# recordings to a card: there is none mounted.
@@ -100,7 +109,7 @@ worker() {
 			cp -a "$keep/." /var/lib/kestrel/ 2>/dev/null
 			rm -f /var/lib/kestrel/persistent
 		fi
-		restart >/dev/null 2>&1
+		restart >/dev/null 2>&1 8>&-
 		exit 1
 	}
 	[ -n "$name" ] || fail "no SD card"
@@ -149,9 +158,9 @@ worker() {
 		[ ! -e "/sys/class/block/${name}p2" ] || fail "partitioning failed"
 	mkfs.exfat -L DVR "${dev}p1" >/dev/null 2>&1 || fail "formatting failed"
 	sync
-	/etc/init.d/S45ar9311-sd start >/dev/null 2>&1
+	/etc/init.d/S45ar9311-sd start >/dev/null 2>&1 8>&-
 	mountpoint -q /mnt/sd || fail "the new card did not mount"
-	/etc/init.d/S46kestrel-state start >/dev/null 2>&1
+	/etc/init.d/S46kestrel-state start >/dev/null 2>&1 8>&-
 	# The folder a receiver that kept running records to (one that starts
 	# makes its own).
 	mkdir -p /mnt/sd/fpvos/recordings 2>/dev/null
@@ -166,12 +175,14 @@ worker() {
 	else
 		echo "ok $what formatted; its settings could not be read and were not kept" > "$status"
 	fi
-	restart >/dev/null 2>&1
+	restart >/dev/null 2>&1 8>&-
 }
 
 case "${1:-}" in
 	check) check ;;
 	start)
+		exec 8>>"$lock"
+		flock -n 8 || { echo "A format is already running"; exit 1; }
 		why=$(check) || { echo "$why"; exit 1; }
 		how=$(mode)
 		echo running > "$status"

@@ -9,3 +9,6 @@ config BR2_PACKAGE_KESTREL_NATIVE
 	  KESTREL_NATIVE_IMAGE when invoking make. The firmware
 	  package includes the runtime; no host or SD application
 	  install is needed.
+	  Set KESTREL_NATIVE_SHA256 to the image's sha256 to pin
+	  it (a different file fails the build). The image's sha256
+	  is always installed as /usr/share/kestrel/runtime.sha256.

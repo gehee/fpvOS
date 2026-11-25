@@ -1,13 +1,13 @@
 # Slim the SteadyDigital *upload* recovery kernel (images/kernel-recovery.img).
 #
 # Two kernels come out of the flash build. The installed one (kernel.img, in
-# the .fwu and NAND bank B) runs the goggle, so it keeps the full driver set -
-# display, decoder, HDMI. This fragment is for the other one only: the recovery
-# a stock unit boots from RAM through the Artosyn HID loader (the one-time
-# browser-prepare upload). That kernel just runs the firmware-update service
-# over USB to write bank B, then the unit reboots into the installed kernel; it
-# never drives the display, camera, audio or any input device, so those
-# subsystems are dead weight in it.
+# the .fwu and the NAND bank it is installed on) runs the goggle, so it keeps
+# the full driver set - display, decoder, HDMI. This fragment is for the other
+# one only: the recovery a stock unit boots from RAM through the Artosyn HID
+# loader (the one-time browser-prepare upload). That kernel just runs the
+# firmware-update service over USB to write the bank not holding stock, then
+# the unit reboots into the installed kernel; it never drives the display,
+# camera, audio or any input device, so those subsystems are dead weight in it.
 #
 # The HID loader uploads this kernel at a hard ~14.6 KiB/s (full-speed, 15-byte
 # frames - see the ar9311 USB notes), so its size is the browser-prepare wait.
@@ -16,8 +16,8 @@
 # outer image stays LZ4 (the vendor bootloader only unpacks gz/lzo/lz4); XZ here
 # only changes how the kernel stores its own built-in initramfs.
 #
-# Kept: USB gadget (DWC2/ECM/ACM/configfs), MTD/spi-nand, crypto, squashfs +
-# overlayfs, ext4/vfat - the firmware-update path.
+# Kept: USB gadget (DWC2/NCM/ACM/FunctionFS/configfs), MTD/spi-nand, UBI/UBIFS,
+# crypto, squashfs + overlayfs, ext4/vfat - the firmware-update path.
 # NOT in any defconfig: recovery-kernel.sh applies it to a copy of the flash
 # build's kernel tree (./build.sh skyzone-steadydigital-flash recovery), so the
 # installed kernel and the .fwu are never slimmed.

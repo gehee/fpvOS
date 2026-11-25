@@ -5,6 +5,11 @@ baked 720p/1080p UI, in the normal firmware image. Build the ground repository
 with its native `ar9311` CMake target, then run `tools/package_ascent.py`. Pass the
 result as `KESTREL_NATIVE_IMAGE=/absolute/path/runtime.squashfs` to Buildroot.
 After replacing that file, run `kestrel-native-reinstall` before the final build.
+Set `KESTREL_NATIVE_SHA256` (make line or environment) to the image's sha256 to
+pin it: any other file then fails the build. Pinned or not, the image's sha256
+is installed as `/usr/share/kestrel/runtime.sha256`, so a firmware image records
+which runtime it carries. Nothing checks the runtime's board or version: build
+it for the board you are building.
 The default Ascent profile enables this package; disable it explicitly for a
 platform-only development image.
 
@@ -13,8 +18,13 @@ and SquashFS/XZ; the Ascent fragment enables them. This layout keeps images
 compressed in the RAM root instead of expanding all themes/resolutions at boot.
 The existing updater enforces its image and NAND-region limits unchanged.
 
-`S46kestrel-state` selects existing writable SD storage or RAM. It preserves SSH
-keys alongside receiver data without putting device-specific keys into firmware.
+`/var/lib/kestrel` holds settings and pairing. On the Ascent VRX,
+`S46kestrel-state` links it to existing writable SD storage or RAM and keeps SSH
+keys alongside, without putting device-specific keys into firmware; on the
+SteadyDigital it links it to the stock `usr_data` UBIFS (RAM without it); on the
+P1 goggles it is a plain directory in the RAM root. If it is not a writable
+directory when the receiver starts (a card removed since boot), `run` uses
+`/run/kestrel-state` for that start and says so.
 `S60kestrel-gnd` starts after SD, radio and decoder setup, and stops before SD
 unmount. The shared supervisor is also used by Kestrel Air; its tests remain in
 `../kestrel-air/tests/test_supervise.py`. Application logs stay in bounded RAM

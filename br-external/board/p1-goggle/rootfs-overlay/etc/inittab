@@ -22,6 +22,11 @@
 ::respawn:/usr/sbin/fpvos-update-service
 ttyS0::askfirst:-/bin/sh
 ::ctrlaltdel:/sbin/reboot
+# First: the watchdog daemon goes without its magic close, so the watchdog
+# stays armed (busybox's SIGTERM handler would disarm it, and the kernel then
+# keeps the DW watchdog fed for good): a shutdown step that hangs resets the
+# goggles once the 60 s timeout (-T 60 above) runs out instead of never.
+::shutdown:/usr/bin/killall -KILL watchdog
 ::shutdown:/etc/init.d/S60kestrel-gnd stop
 ::shutdown:/etc/init.d/S45ar9311-sd stop
 ::shutdown:/etc/init.d/S50dropbear stop

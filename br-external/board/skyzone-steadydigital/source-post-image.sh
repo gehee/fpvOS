@@ -1,11 +1,12 @@
 #!/bin/sh
-# Flashable SteadyDigital image: the installed kernel.img for NAND bank B and a
-# packaged .fwu (kernel.img + board DTB + main root). This kernel runs the
-# goggle, so it has the full driver set (display, decoder, HDMI). Its initramfs
-# is the fpvOS recovery (set by external.mk when fpvos-recovery is enabled); the
-# main root is rootfs.squashfs, written to userapp1 by the updater and mounted
-# from there by the recovery. The slim kernel the flasher uploads over the HID
-# loader is a separate build: recovery-kernel.sh.
+# Flashable SteadyDigital image: the installed kernel.img (for whichever NAND
+# bank the updater picks) and a packaged .fwu (kernel.img + board DTB + main
+# root). This kernel runs the goggle, so it has the full driver set (display,
+# decoder, HDMI). Its initramfs is the fpvOS recovery (set by external.mk when
+# fpvos-recovery is enabled); the main root is rootfs.squashfs, written to that
+# bank's userapp by the updater and mounted from there by the recovery. The
+# slim kernel the flasher uploads over the HID loader is a separate build:
+# recovery-kernel.sh.
 set -eu
 
 board_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)

@@ -30,9 +30,10 @@ config BR2_FPVOS_BOARD_P1_GOGGLE
 	depends on BR2_aarch64
 	select BR2_FPVOS_SOC_AR9311
 	help
-	  P1 goggles RAM-boot bring-up. Reuses shared AR9311 drivers
-	  with board-specific memory and SD wiring. NAND is read-only;
-	  no persistent installer or receiver application is selected.
+	  P1 goggles. Reuses shared AR9311 drivers with board-specific
+	  memory and SD wiring. The defconfig selects the native Kestrel
+	  receiver and the NAND updater, which installs on the bank not
+	  holding stock (either bank) and preserves the stock bank.
 
 config BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
 	bool "Skyzone SteadyDigital (AR9311)"
@@ -40,5 +41,7 @@ config BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL
 	select BR2_FPVOS_SOC_AR9311
 	help
 	  SteadyDigital receiver wiring: SDIO radio, LT9611 HDMI
-	  bridge, polled GPIO keys. Uses the stock A/B flash layout
-	  read-only; bank A (stock) is never written.
+	  bridge, polled GPIO keys. Uses the stock A/B flash layout;
+	  the flash image's updater installs on the bank not holding
+	  stock (either bank) and never writes the stock bank or
+	  factory data.

@@ -39,6 +39,20 @@ need_vendor() {
         exit 1; }
 }
 
+# The SteadyDigital defconfigs name no radio config of their own, so Open8030's
+# gnd-config.py makes it from the stock VRX Pro one - only that file, not the
+# VRX Pro boot images need_vendor wants. Say so now, not deep into the build.
+# OPEN8030_PRIVATE_DIR/OPEN8030_CONFIG_DIR (a config of your own) skip it.
+need_stock_gnd_config() {
+    [ -z "${OPEN8030_PRIVATE_DIR:-}${OPEN8030_CONFIG_DIR:-}" ] || return 0
+    local config=${OPEN8030_STOCK_GND_CONFIG:-$ROOT/vendor/rootfs/lib/firmware/bb_config_gnd_pro.json}
+    [ -f "$config" ] || {
+        echo "missing $config" >&2
+        echo "(the stock VRX Pro radio config this board's Open8030 config is made from) - run:" >&2
+        echo "  scripts/extract-ascent-vrx-pro-firmware.py        (downloads the stock firmware)" >&2
+        exit 1; }
+}
+
 # Each board has an independent Buildroot configuration, toolchain and images.
 ASCENT_VRX_PRO_OUT="$ROOT/output/ascent-vrx-pro"
 AIR_OUT="$ROOT/output/ascent-lite"
@@ -85,12 +99,13 @@ case "${1:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig ;;
       kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig
               make -C "$STEADYDIGITAL_OUT" linux-reconfigure ;;
-      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig
+      all)    need_stock_gnd_config
+              make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig
               make -C "$STEADYDIGITAL_OUT" ;;
       *) echo "usage: $0 skyzone-steadydigital [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   skyzone-steadydigital-flash)
-    # Flashable NAND image: the installed kernel.img for bank B + packaged .fwu.
+    # Flashable NAND image: the installed kernel.img (for either bank) + packaged .fwu.
     # `recovery` then builds the slim upload recovery kernel the flasher boots
     # through the HID loader (images/kernel-recovery.img) from a copy of it.
     case "${2:-all}" in
@@ -101,7 +116,8 @@ case "${1:-all}" in
               make -C "$STEADYDIGITAL_FLASH_OUT" linux-reconfigure
               for p in $(make -s -C "$STEADYDIGITAL_FLASH_OUT" linux-show-rdepends); do
                   make -C "$STEADYDIGITAL_FLASH_OUT" "$p-rebuild"; done ;;
-      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig
+      all)    need_stock_gnd_config
+              make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig
               make -C "$STEADYDIGITAL_FLASH_OUT" ;;
       recovery) "$EXT/board/skyzone-steadydigital/recovery-kernel.sh" "$STEADYDIGITAL_FLASH_OUT" ;;
       *) echo "usage: $0 skyzone-steadydigital-flash [config|kernel|all|recovery]" >&2; exit 1 ;;

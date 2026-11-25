@@ -1,4 +1,6 @@
-# Read-only NAND exposure is enforced by the board DT; no UBI auto-attach.
+# The board DT keeps SPL, bootloaders, vendor data and factory read-only; both
+# banks are writable, guarded by the updater (never the stock bank). No UBI
+# auto-attach.
 CONFIG_MTD=y
 CONFIG_MTD_SPI_NAND=y
 # CONFIG_MTD_PARTITIONED_MASTER is not set
