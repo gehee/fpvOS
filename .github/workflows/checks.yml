@@ -25,7 +25,7 @@ jobs:
 
       - name: Shell syntax
         run: |
-          for f in build.sh boot/mk-sd-image.sh scripts/release.sh \
+          for f in build.sh boot/mk-sd-image.sh scripts/release.sh scripts/native-runtime.sh scripts/fpvos-version \
                    br-external/board/ascent-vrx-pro/post-build.sh \
                    $(git ls-files 'br-external/board/ascent-vrx-pro/rootfs-overlay/etc/init.d/*') \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-wifi \

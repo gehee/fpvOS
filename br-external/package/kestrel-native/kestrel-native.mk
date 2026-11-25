@@ -11,14 +11,31 @@ KESTREL_NATIVE_LICENSE = MIT (supervisor), GPL-3.0 (runtime)
 # kestrel-common has no licence file: the supervisor's SPDX header is its licence.
 KESTREL_NATIVE_LICENSE_FILES = supervise.c
 
-# Prepared by tools/package_ascent.py in the ground repository. It contains
-# static target executables and host-baked assets, with no machine settings.
-# KESTREL_NATIVE_SHA256 (on the make line or in the environment), when set,
-# pins the image: any other file fails the build. Pinned or not, the image
-# records what it carries in /usr/share/kestrel/runtime.sha256.
+# The board's runtime: static target executables and host-baked assets, no
+# machine settings. scripts/native-runtime.sh builds it from KESTREL_PIN and
+# AR_LIBRE_VERSION into output/kestrel-runtime/ (build.sh runs it when the
+# file there is not the pinned one). The P1 goggles have their own; the
+# Ascent VRX and the SteadyDigital share the ascent one.
+KESTREL_NATIVE_BOARD = $(if $(BR2_FPVOS_BOARD_P1_GOGGLE),p1goggle,ascent)
+KESTREL_NATIVE_IMAGE ?= $(BR2_EXTERNAL_FPVOS_PATH)/../output/kestrel-runtime/runtime-$(KESTREL_NATIVE_BOARD).squashfs
+
+# The pin: the runtime the pins build, in runtime.hash (board, sha256,
+# kestrel-gnd, ar_libre). Any other file fails the build. A line that names
+# other pins than the tree's fails it too: KESTREL_PIN or AR_LIBRE_VERSION
+# moved without a new runtime. KESTREL_NATIVE_SHA256 set (make line or
+# environment) replaces the pin, empty for none - a development runtime of
+# your own in KESTREL_NATIVE_IMAGE. Pinned or not, the image records what it
+# carries in /usr/share/kestrel/runtime.sha256.
+KESTREL_NATIVE_PIN_LINE = $(shell awk '$$1 == "$(KESTREL_NATIVE_BOARD)"' $(KESTREL_NATIVE_PKGDIR)/runtime.hash)
+KESTREL_NATIVE_SHA256 ?= $(word 2,$(KESTREL_NATIVE_PIN_LINE))
+KESTREL_NATIVE_PINNED = $(if $(filter environment command line,$(origin KESTREL_NATIVE_SHA256)),,y)
+
 define KESTREL_NATIVE_BUILD_CMDS
 	test -s "$(KESTREL_NATIVE_IMAGE)" || \
-		{ echo "Set KESTREL_NATIVE_IMAGE to the packaged board runtime" >&2; exit 1; }
+		{ echo "$(KESTREL_NATIVE_IMAGE): no runtime - scripts/native-runtime.sh $(KESTREL_NATIVE_BOARD) builds it" >&2; exit 1; }
+	test -z "$(KESTREL_NATIVE_PINNED)" || \
+	test "$(word 3,$(KESTREL_NATIVE_PIN_LINE))" = "$(KESTREL_PIN)" -a "$(word 4,$(KESTREL_NATIVE_PIN_LINE))" = "$(AR_LIBRE_VERSION)" || \
+		{ echo "kestrel-native: runtime.hash pins $(KESTREL_NATIVE_BOARD) for kestrel-gnd $(word 3,$(KESTREL_NATIVE_PIN_LINE)) and ar_libre $(word 4,$(KESTREL_NATIVE_PIN_LINE)) - not KESTREL_PIN $(KESTREL_PIN) and AR_LIBRE_VERSION $(AR_LIBRE_VERSION): rebuild both runtimes with scripts/native-runtime.sh and update runtime.hash" >&2; exit 1; }
 	$(TARGET_CC) $(TARGET_CFLAGS) -Wall -Wextra -Werror $(TARGET_LDFLAGS) \
 		$(@D)/supervise.c -o $(@D)/kestrel-gnd-supervise
 endef
@@ -46,3 +63,6 @@ define KESTREL_NATIVE_INSTALL_TARGET_CMDS
 endef
 
 $(eval $(generic-package))
+
+# A new runtime file is installed again: no reinstall to remember.
+$(KESTREL_NATIVE_TARGET_INSTALL_TARGET): $(wildcard $(KESTREL_NATIVE_IMAGE))

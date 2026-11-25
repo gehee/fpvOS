@@ -1,0 +1,7 @@
+# The AR9311 receivers' kestrel-gnd runtimes, as scripts/native-runtime.sh
+# builds them (scripts/native-runtime/Dockerfile, environment 620c142a636c):
+# board, sha256, kestrel-gnd (KESTREL_PIN), ar_libre (AR_LIBRE_VERSION).
+# kestrel-native refuses any other file, and a line whose pins are not the
+# tree's. After moving either pin, rebuild both and put their sums here.
+ascent    6cf99ddede27152c5309754fa0b34baaae8789daeb8dc5abd8e7ec0fa0a6df1b  4fe7cabfad906073403758b136ed178fe035754b  aa94f45394cc76be5fa2955f51bd003a532ac60c
+p1goggle  0e0c0b397c0f92661d6d8c85714b47046bdead7d7210203265cec6f25fc16162  4fe7cabfad906073403758b136ed178fe035754b  aa94f45394cc76be5fa2955f51bd003a532ac60c

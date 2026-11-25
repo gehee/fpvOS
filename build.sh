@@ -53,6 +53,22 @@ need_stock_gnd_config() {
         exit 1; }
 }
 
+# The AR9311 receivers' kestrel-gnd runtime (kestrel-native): the pinned one
+# (br-external/package/kestrel-native/runtime.hash) in output/kestrel-runtime/,
+# built with scripts/native-runtime.sh when it is not there yet - which needs
+# Docker. A KESTREL_NATIVE_IMAGE of your own is used as it is.
+need_native_runtime() {
+    [ -z "${KESTREL_NATIVE_IMAGE:-}" ] || return 0
+    local board=$1 image=$ROOT/output/kestrel-runtime/runtime-$1.squashfs pin
+    pin=$(awk -v b="$board" '$1 == b { print $2 }' "$EXT/package/kestrel-native/runtime.hash")
+    [ -f "$image" ] && [ "$(sha256sum "$image" | cut -d' ' -f1)" = "$pin" ] && return 0
+    command -v docker > /dev/null || {
+        echo "$image is not the pinned $board runtime ($pin), and building it needs Docker:" >&2
+        echo "  scripts/native-runtime.sh $board        (on a host with Docker, in this tree)" >&2
+        exit 1; }
+    "$ROOT/scripts/native-runtime.sh" "$board"
+}
+
 # Each board has an independent Buildroot configuration, toolchain and images.
 ASCENT_VRX_PRO_OUT="$ROOT/output/ascent-vrx-pro"
 AIR_OUT="$ROOT/output/ascent-lite"
@@ -72,7 +88,8 @@ case "${1:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig ;;
       kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig
               make -C "$P1_GOGGLE_OUT" linux-reconfigure ;;
-      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig
+      all)    need_native_runtime p1goggle
+              make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig
               make -C "$P1_GOGGLE_OUT" ;;
       *) echo "usage: $0 p1-goggle [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
@@ -99,7 +116,8 @@ case "${1:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig ;;
       kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig
               make -C "$STEADYDIGITAL_OUT" linux-reconfigure ;;
-      all)    need_stock_gnd_config
+      all)    need_native_runtime ascent
+              need_stock_gnd_config
               make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_OUT" skyzonesteadydigital_defconfig
               make -C "$STEADYDIGITAL_OUT" ;;
       *) echo "usage: $0 skyzone-steadydigital [config|kernel|all]" >&2; exit 1 ;;
@@ -116,7 +134,8 @@ case "${1:-all}" in
               make -C "$STEADYDIGITAL_FLASH_OUT" linux-reconfigure
               for p in $(make -s -C "$STEADYDIGITAL_FLASH_OUT" linux-show-rdepends); do
                   make -C "$STEADYDIGITAL_FLASH_OUT" "$p-rebuild"; done ;;
-      all)    need_stock_gnd_config
+      all)    need_native_runtime ascent
+              need_stock_gnd_config
               make -C "$BR" BR2_EXTERNAL="$EXT" O="$STEADYDIGITAL_FLASH_OUT" skyzonesteadydigital_flash_defconfig
               make -C "$STEADYDIGITAL_FLASH_OUT" ;;
       recovery) "$EXT/board/skyzone-steadydigital/recovery-kernel.sh" "$STEADYDIGITAL_FLASH_OUT" ;;
@@ -128,7 +147,8 @@ case "${1:-all}" in
       config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig ;;
       kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig
               make -C "$ASCENT_VRX_OUT" linux-reconfigure ;;
-      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig
+      all)    need_native_runtime ascent
+              make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_OUT" ascentvrx_defconfig
               make -C "$ASCENT_VRX_OUT" ;;
       *) echo "usage: $0 ascent-vrx [config|kernel|all]" >&2; exit 1 ;;
     esac ;;

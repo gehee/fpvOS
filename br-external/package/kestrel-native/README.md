@@ -1,15 +1,31 @@
 # Native Ascent receiver deployment
 
-This package embeds an independently built static Kestrel runtime, including its
-baked 720p/1080p UI, in the normal firmware image. Build the ground repository
-with its native `ar9311` CMake target, then run `tools/package_ascent.py`. Pass the
-result as `KESTREL_NATIVE_IMAGE=/absolute/path/runtime.squashfs` to Buildroot.
-After replacing that file, run `kestrel-native-reinstall` before the final build.
-Set `KESTREL_NATIVE_SHA256` (make line or environment) to the image's sha256 to
-pin it: any other file then fails the build. Pinned or not, the image's sha256
-is installed as `/usr/share/kestrel/runtime.sha256`, so a firmware image records
-which runtime it carries. Nothing checks the runtime's board or version: build
-it for the board you are building.
+This package embeds a static Kestrel runtime, including its baked 720p/1080p UI,
+in the normal firmware image. There are two: `ascent` (Ascent VRX and Skyzone
+SteadyDigital) and `p1goggle` (BETAFPV P1 goggles).
+
+**Built from fpvOS's pins.** `scripts/native-runtime.sh BOARD` builds kestrel-gnd
+at `KESTREL_PIN` with ar_libre's client library at `AR_LIBRE_VERSION`, natively
+for AArch64 in `scripts/native-runtime/Dockerfile` (a Debian image pinned by
+digest, its packages from snapshot.debian.org at a fixed date), and packages it
+with kestrel-gnd's `tools/package_ascent.py`. `SOURCE_DATE_EPOCH` is
+kestrel-gnd's commit time, so the same pins give the same file. It writes
+`output/kestrel-runtime/runtime-BOARD.squashfs`, where this package looks, and
+`runtime-BOARD.pins`, what it was built from. `build.sh` runs it for the board
+it builds when that file is not the pinned one; it needs Docker (and QEMU's
+binfmt for arm64 on another architecture). A new runtime file is installed
+again without a reinstall.
+
+**Pinned.** `runtime.hash` lists, per board, the runtime's sha256 and the
+kestrel-gnd and ar_libre it was built from. The build refuses another file, and
+a line naming other pins than the tree's (`KESTREL_PIN` or `AR_LIBRE_VERSION`
+moved without a new runtime). After moving either pin, run the script for both
+boards and put the sums it prints in `runtime.hash`.
+
+A runtime of your own: `KESTREL_NATIVE_IMAGE=/absolute/path/runtime.squashfs
+KESTREL_NATIVE_SHA256=` (empty: no pin, or its own sum). Pinned or not, the
+image's sha256 is installed as `/usr/share/kestrel/runtime.sha256`, so a
+firmware image records which runtime it carries.
 The default Ascent profile enables this package; disable it explicitly for a
 platform-only development image.
 

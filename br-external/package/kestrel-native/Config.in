@@ -4,11 +4,11 @@ config BR2_PACKAGE_KESTREL_NATIVE
 	help
 	  Install a static, read-only Kestrel runtime and boot
 	  supervisor.
-	  First create the SquashFS image with kestrel-gnd's
-	  tools/package_ascent.py, then supply its absolute path as
-	  KESTREL_NATIVE_IMAGE when invoking make. The firmware
-	  package includes the runtime; no host or SD application
-	  install is needed.
-	  Set KESTREL_NATIVE_SHA256 to the image's sha256 to pin
-	  it (a different file fails the build). The image's sha256
-	  is always installed as /usr/share/kestrel/runtime.sha256.
+	  The runtime is built from fpvOS's kestrel-gnd and
+	  ar_libre pins by scripts/native-runtime.sh (build.sh runs
+	  it), and pinned in runtime.hash: another file fails the
+	  build. KESTREL_NATIVE_IMAGE with KESTREL_NATIVE_SHA256=
+	  takes a runtime of your own. The firmware package includes
+	  the runtime; no host or SD application install is needed.
+	  The image's sha256 is always installed as
+	  /usr/share/kestrel/runtime.sha256.
