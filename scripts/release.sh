@@ -232,6 +232,9 @@ strings "$BO/target/usr/bin/kestrel-gnd" | grep -q "decoded as their slices arri
 KSHORT=$(printf '%.8s' "$KCOMMIT")   # ${KCOMMIT:0:8} is bash-only; this is /bin/sh
 strings "$BO/target/usr/bin/kestrel-gnd" | grep -q "$KSHORT" ||
     fail "kestrel-gnd in the target was not built from $KCOMMIT"
+# fpvos-wifi will not start the access point without it (it keeps the AP off
+# SSH and the USB link).
+[ -e "$BO/target/usr/sbin/iptables" ] || fail "no iptables in the target - the WiFi AP would refuse to start"
 if grep -q "^BR2_PACKAGE_MESA3D=y" "$BO/.config" && ls "$BO"/target/usr/lib/libmali* >/dev/null 2>&1; then
     fail "Mesa is selected but libmali is still in the target (an old output)"
 fi

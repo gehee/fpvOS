@@ -16,9 +16,13 @@
 # /etc/fpvos/wifi-ap, written the first time the AP starts, and can be edited
 # there. The goggle is 192.168.4.1 and hands out .100-.120.
 #
-# SSH is not reachable over this network: dropbear listens on the USB link
-# only (see /etc/default/dropbear), so the published root password is not a
-# way in for anyone who joins the AP.
+# SSH is not reachable over this network, so the published root password is
+# not a way in for anyone who joins the AP. dropbear listens on the USB link's
+# address only (see /etc/default/dropbear), but that alone does not keep it off
+# WiFi: Linux delivers a packet for any of the goggle's addresses on whichever
+# interface it arrives, so a client routing 192.168.3.1 through 192.168.4.1
+# would reach it. guard() drops that, and SSH from the AP altogether, before
+# the AP comes up; the AP does not start without it.
 #
 # Channel: 1, 6 or 11, whichever is quietest in a scan taken just before the AP
 # starts. hostapd's own automatic selection (channel=0) cannot work here - this
@@ -42,6 +46,18 @@ our_udhcpd() {
 }
 
 running() { [ -f "$RUN/hostapd.pid" ] && kill -0 "$(cat "$RUN/hostapd.pid")" 2>/dev/null; }
+
+# Nothing from the AP reaches the USB link (192.168.3.0/24, S30usbgadget) or
+# SSH. Once in, the rules stay: wlan0 matches by name, so they hold whenever
+# the AP is up again.
+GUARD_RULES='-i wlan0 -d 192.168.3.0/24 -j DROP
+-i wlan0 -p tcp --dport 22 -j DROP'
+guard() {
+    command -v iptables >/dev/null || return 1
+    echo "$GUARD_RULES" | while read -r rule; do
+        iptables -C INPUT $rule 2>/dev/null || iptables -I INPUT $rule || exit 1
+    done
+}
 
 power() {
     [ -d /sys/class/gpio/gpio$GPIO ] || echo $GPIO > /sys/class/gpio/export
@@ -96,6 +112,7 @@ start() {
     while [ ! -e /sys/class/net/wlan0 ] && [ $i -lt 50 ]; do usleep 100000; i=$((i + 1)); done
     [ -e /sys/class/net/wlan0 ] || { log "wlan0 never appeared"; stop; return 1; }
 
+    guard || { log "cannot keep the AP off SSH and the USB link (iptables); not starting it"; stop; return 1; }
     identity
     . "$IDENT"
     ifconfig wlan0 up

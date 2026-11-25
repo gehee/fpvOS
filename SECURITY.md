@@ -16,6 +16,10 @@ and some of its defaults are open on purpose:
 - **Root login.** The root password is `fpvos`, and SSH (dropbear) is enabled.
   It is how you pull logs and swap binaries over the USB link. SSH listens on
   the USB link only (`192.168.3.1`), never on WiFi: see `/etc/default/dropbear`.
+  Before the access point starts, `fpvos-wifi` also drops everything arriving
+  over WiFi for port 22 or the USB link's addresses (a phone on the AP could
+  otherwise route to `192.168.3.1` through the goggle); the AP does not start
+  if it cannot.
 - **WiFi access point.** Off by default. When it is on, it uses WPA2 with the
   passphrase `12345678`, the same as stock. Change it in `/etc/fpvos/wifi-ap`
   on the goggle if other people could be in range.

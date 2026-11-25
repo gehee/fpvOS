@@ -176,7 +176,8 @@ ssh root@192.168.3.1      # password: fpvos on the VRX Pro, root on the others
 ```
 
 SSH is only on the USB link. It does not answer over the goggle's WiFi access
-point, so the default password is not reachable by anyone nearby.
+point - the goggle drops SSH and anything for the USB link's address coming in
+over WiFi - so the default password is not reachable by anyone nearby.
 
 **The air unit** (fpvOS image) does the same at **192.168.2.1**, every fpvOS
 air unit, with 192.168.2.200-209 for your computer. The login is `root` / `root` by default; see

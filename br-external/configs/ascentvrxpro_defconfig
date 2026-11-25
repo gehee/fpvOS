@@ -92,14 +92,16 @@ BR2_PACKAGE_MTD_UBIDETACH=y
 BR2_GENERATE_LOCALE="en_US.UTF-8"
 BR2_PACKAGE_BTOP=y
 # WiFi access point (usr/sbin/fpvos-wifi, toggled from kestrel's SYSTEM tab):
-# hostapd for the AP, iw for the scan that picks the channel, and busybox's
-# udhcpd for addresses.
+# hostapd for the AP, iw for the scan that picks the channel, busybox's
+# udhcpd for addresses, and iptables for the rules that keep the AP's clients
+# off SSH and the USB link's address.
 BR2_PACKAGE_BUSYBOX_CONFIG_FRAGMENT_FILES="$(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx-pro/busybox.fragment"
 BR2_PACKAGE_HOSTAPD=y
 # BR2_PACKAGE_HOSTAPD_DRIVER_HOSTAP is not set
 # BR2_PACKAGE_HOSTAPD_ACS is not set
 # BR2_PACKAGE_HOSTAPD_VLAN is not set
 BR2_PACKAGE_IW=y
+BR2_PACKAGE_IPTABLES=y
 # The SD boot chain, made from the stock boot images (boot/mkbootchain.py).
 BR2_PACKAGE_FPVOS_BOOTCHAIN=y
 # The kernel, built from source: Rockchip's develop-6.12 tree, with the stock

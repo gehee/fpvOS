@@ -24,6 +24,12 @@ CONFIG_DRM_PANFROST=m
 # The onboard WiFi (RTL8188FTV, USB 0bda:f179): mainline rtl8xxxu, which has
 # RTL8188F support with access-point mode from 6.12 on.
 CONFIG_RTL8XXXU=m
+# The filter fpvos-wifi puts in front of the access point (iptables, legacy):
+# stock has it built in; kept so that never changes quietly.
+CONFIG_NETFILTER=y
+CONFIG_NETFILTER_XTABLES=y
+CONFIG_IP_NF_IPTABLES=y
+CONFIG_IP_NF_FILTER=y
 
 # 6.12 builds with -Werror by default, and some Rockchip drivers (and the
 # out-of-tree AR8030 driver) trip on GCC 14 warnings. Warnings stay warnings.

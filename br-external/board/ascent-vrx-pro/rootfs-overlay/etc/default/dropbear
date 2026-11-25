@@ -3,8 +3,10 @@
 # SSH answers on the USB link only. The root password is the published
 # default "fpvos", and the WiFi access point's passphrase is just as public,
 # so listening on every interface would hand a root shell to anyone in WiFi
-# range whenever the AP is on. Bound to usb0's address instead: the port
-# simply does not exist on wlan0.
+# range whenever the AP is on. Bound to usb0's address instead. That alone
+# would not keep WiFi out (Linux takes a packet for usb0's address arriving on
+# wlan0 too), so fpvos-wifi also drops, before the AP starts, everything from
+# wlan0 for the USB link's addresses and for port 22.
 #
 # S30usbgadget brings usb0 up with 192.168.3.1 before this starts. If the
 # gadget failed, dropbear fails to bind and there is no SSH - closed, not open.
