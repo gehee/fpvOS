@@ -90,9 +90,13 @@ class Client:
         if len(body) != 300:
             raise ValueError('invalid device info')
         text = lambda offset, n: body[offset:offset+n].split(b'\0')[0].decode()
-        result = dict(device=text(36, 64), hardware=text(200, 32),
+        result = dict(device=text(36, 64), hardware=text(200, 32), sdk=text(4, 32),
                       detail=text(236, 64), firmware=text(104, 64), chunk_limit=struct.unpack_from('<I', body)[0])
-        if (result['device'] not in ('fpvOS updater', self.board.get('legacy_service')) or
+        stock = STOCK_DIALECT.get(self.board.get('name'))
+        if stock:
+            if result['device'] not in stock['devices'] or not result['hardware'].startswith(stock['hardware_prefix']):
+                raise ValueError('update service does not match the selected board')
+        elif (result['device'] not in ('fpvOS updater', self.board.get('legacy_service')) or
                 result['hardware'] != self.board['hardware']):
             raise ValueError('update service does not match the selected board')
         return result
@@ -145,6 +149,16 @@ class Client:
 
 
 
+# Boards whose updater keeps the stock tool's dialect (the Ascent Lite and
+# Lite+, so the vendor's PC tool still works): its device names and hardware
+# string, the unit's own stock USB serial number, and the stock image (.img)
+# sent as it is. Their FIND_DEVICE firmware field is stock's name, so a boot is
+# confirmed by the fpvOS version in the SDK field instead of the image hash.
+STOCK_DIALECT = {
+    'ascent-lite': dict(devices=('Ascent_lite', 'Ascent_lite_plus', 'Ascent'),
+                        hardware_prefix='FPV-Ascent-Sky-'),
+}
+
 # fpvOS_usb's bridge mode: the AR8030's boot ROM and running chip IDs, with
 # the board's own serial number.
 BRIDGE_IDS = (('4152', '8030'), ('1d6b', '8030'))
@@ -192,6 +206,8 @@ def checked_port(path, board):
         raise ValueError('no USB identity; physical debug UART is not supported')
     usb = tuple(board['usb_identity'])
     bridge = identity[:2] in BRIDGE_IDS and identity[2] == usb[2]
+    if board.get('name') in STOCK_DIALECT:   # the unit's own stock serial number
+        identity, usb = identity[:2], usb[:2]
     if identity != usb and not bridge:
         raise ValueError(f'not the fpvOS native USB gadget: {identity}')
     users = subprocess.run(['fuser', str(path)] if linux else ['lsof', '-t', str(path)],
@@ -260,7 +276,7 @@ def main():
     install_parser.add_argument('--no-reboot', action='store_true',
                                 help='leave the completed installation in clean mode')
     args = parser.parse_args()
-    board = get_profile(args.board)
+    board = dict(get_profile(args.board), name=args.board)
     fd, client = connect(args.port, board)
     try:
         result = client.info()
@@ -278,11 +294,16 @@ def main():
                 with args.package.open('rb') as package:
                     header = package.read(512)
                 kind = struct.unpack_from('<I', header, 88)[0]
+                stock = args.board in STOCK_DIALECT
                 client.ack(3, b'reboot'.ljust(32, b'\0'))
                 result['reboot_requested'] = True
                 disconnect(fd)
                 fd = None
-                if kind == 0:
+                if stock:
+                    fd, client, info = reconnect(args.port, board)
+                    result['boot_verified'] = info['detail'] != 'clean RAM mode'
+                    result['fpvos_version'] = info['sdk']
+                elif kind == 0:
                     fd, client, info = reconnect(args.port, board, image_hash=result['sha256'])
                     result['boot_verified'] = True
                 else:
