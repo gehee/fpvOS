@@ -5,6 +5,16 @@ Adapt encoder stride, DMA buffer ownership, rate changes and recovery from
 Missing-Lynk/ml-kernel e3885c6394a7025eacd3a23f473276d9823beb25.
 Keep the existing decoder path and platform power resources.
 
+The job timeout acts only on the job it was armed for: device_run marks a
+job in flight under irq_lock before the frame is issued and arms the work
+only if no completion has already cleared it; the work, and a completion
+that arrives after the timeout, return without touching the m2m context
+when no job is in flight, so neither can error a healthy buffer or reach a
+context v4l2_m2m_ctx_release() has freed. A source stride is honoured only
+up to the 16-bit SRC_STRIDE field, with overflow-checked sizes, and a source
+buffer whose data_offset leaves less than a plane's sizeimage is refused at
+QBUF.
+
 --- a/drivers/media/platform/chips-media/wave5/wave5-helper.c
 +++ b/drivers/media/platform/chips-media/wave5/wave5-helper.c
 @@ -36,6 +36,13 @@
@@ -434,7 +444,7 @@ Keep the existing decoder path and platform power resources.
  		src_buf = v4l2_m2m_src_buf_remove(m2m_ctx);
  		if (!src_buf) {
  			dev_dbg(inst->dev->dev,
-@@ -219,38 +288,153 @@
+@@ -219,38 +288,186 @@
  				__func__);
  			return -EINVAL;
  		}
@@ -443,6 +453,10 @@ Keep the existing decoder path and platform power resources.
  		dst_buf->vb2_buf.timestamp = src_buf->vb2_buf.timestamp;
  		v4l2_m2m_buf_done(src_buf, VB2_BUF_STATE_ERROR);
  		v4l2_m2m_buf_done(dst_buf, VB2_BUF_STATE_ERROR);
++		/* Nothing reached the firmware, so no completion will come: device_run finishes
++		 * the job now. Left running, only the timeout would end it, and that errors
++		 * whichever healthy bitstream buffer is queued next. */
++		return -EIO;
  	} else {
 -		dev_dbg(inst->dev->dev, "%s: wave5_vpu_enc_start_one_frame success\n",
 -			__func__);
@@ -488,6 +502,7 @@ Keep the existing decoder path and platform power resources.
 +
 +/**
 + * wave5_vpu_enc_job_timeout - finish an encode job the firmware never completed.
++ * @work: the instance's job_timeout_work
 + *
 + * Runs on a workqueue and takes irq_lock only, which is what makes it able to help: the task it
 + * releases is itself inside v4l2_m2m_cancel_job() holding dev_lock. irq_lock is the same lock the
@@ -496,16 +511,32 @@ Keep the existing decoder path and platform power resources.
 + *
 + * The buffers are returned with VB2_BUF_STATE_ERROR. By the time this runs the firmware's own
 + * watchdog window has long passed, so the block is not still writing into them.
++ *
++ * It acts only on the job it was armed for. finish_encode() cannot cancel it synchronously (it
++ * holds irq_lock, which this takes), so an expiry can be left waiting on irq_lock behind the
++ * completion it raced, and can then find no job, or the next job, in flight. Every case that is
++ * not "this job, armed, past its deadline" returns before m2m_ctx is read: a job in flight means
++ * the context is TRANS_RUNNING, which v4l2_m2m_ctx_release() waits out before freeing it, so the
++ * check is also what keeps a late expiry during close off a freed context.
 + */
 +static void wave5_vpu_enc_job_timeout(struct work_struct *work)
 +{
 +	struct vpu_instance *inst = container_of(to_delayed_work(work),
 +						 struct vpu_instance, job_timeout_work);
-+	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
++	struct v4l2_m2m_ctx *m2m_ctx;
 +	struct vb2_v4l2_buffer *src_buf;
 +	struct vb2_v4l2_buffer *dst_buf;
 +
 +	mutex_lock(&inst->dev->irq_lock);
++
++	if (!inst->enc_job_in_flight || !inst->enc_job_armed ||
++	    time_before(jiffies, inst->enc_job_deadline)) {
++		mutex_unlock(&inst->dev->irq_lock);
++		return;
++	}
++	inst->enc_job_in_flight = false;
++	inst->enc_job_armed = false;
++	m2m_ctx = inst->v4l2_fh.m2m_ctx;
 +
 +	inst->job_timeout_count++;
 +	if (!inst->job_timeout_warned) {
@@ -544,10 +575,22 @@ Keep the existing decoder path and platform power resources.
  	struct vb2_v4l2_buffer *dst_buf = NULL;
 +	bool recoverable_vlc_buf_full;
 +	enum vb2_buffer_state src_state;
-+
-+	cancel_delayed_work(&inst->job_timeout_work);
  
  	ret = wave5_vpu_enc_get_output_info(inst, &enc_output_info);
++
++	/* Called with irq_lock held. A report with no job in flight is one the timeout already
++	 * finished: it has been taken off the firmware's queue above, and there is nothing of
++	 * ours left to complete. Touching the queues here would complete a healthy buffer, or
++	 * one in a context release has freed, and finish a job that is not ours. */
++	if (!inst->enc_job_in_flight) {
++		dev_dbg(inst->dev->dev, "%s: report with no job in flight dropped\n", __func__);
++		return;
++	}
++	inst->enc_job_in_flight = false;
++	inst->enc_job_armed = false;
++	/* Not _sync: the work takes irq_lock. A run already waiting for it finds no job above. */
++	cancel_delayed_work(&inst->job_timeout_work);
++
  	if (ret) {
 -		dev_dbg(inst->dev->dev,
 -			"%s: vpu_enc_get_output_info fail: %d  reason: %u | info: %u\n",
@@ -598,7 +641,7 @@ Keep the existing decoder path and platform power resources.
  		return;
  	}
  
-@@ -281,6 +465,7 @@
+@@ -281,6 +498,7 @@
  			dev_warn(inst->dev->dev, "%s: no source buffer with index: %d found\n",
  				 __func__, enc_output_info.enc_src_idx);
  		}
@@ -606,7 +649,7 @@ Keep the existing decoder path and platform power resources.
  	}
  
  	dst_buf = v4l2_m2m_dst_buf_remove(m2m_ctx);
-@@ -401,6 +586,24 @@
+@@ -401,6 +619,24 @@
  
  	wave5_update_pix_fmt(&f->fmt.pix_mp, VPU_FMT_TYPE_CODEC,
  			     width, height, frmsize);
@@ -631,7 +674,7 @@ Keep the existing decoder path and platform power resources.
  	f->fmt.pix_mp.colorspace = inst->colorspace;
  	f->fmt.pix_mp.ycbcr_enc = inst->ycbcr_enc;
  	f->fmt.pix_mp.quantization = inst->quantization;
-@@ -484,11 +687,44 @@
+@@ -484,11 +720,66 @@
  	return 0;
  }
  
@@ -646,24 +689,46 @@ Keep the existing decoder path and platform power resources.
 + *
 + * Only a wider stride is taken. Every plane scales by the same ratio so chroma
 + * keeps its relation to luma, and each sizeimage grows with its stride.
++ *
++ * The stride comes from userspace, so it is bounded twice. W5_CMD_ENC_PIC_SRC_STRIDE
++ * carries the luma stride in 16 bits (chroma, never wider, in the other 16), so a
++ * stride past that is not one the VPU can be given and is ignored. And the new
++ * sizes are computed with overflow checks and committed only when every plane
++ * fits: a wrapped sizeimage would size the buffers far smaller than what the
++ * VPU then reads.
 + */
++#define W5_ENC_MAX_SRC_STRIDE	0xffffU
++
 +static void wave5_widen_src_stride(struct v4l2_pix_format_mplane *pix_mp, unsigned int stride)
 +{
 +	unsigned int base = pix_mp->plane_fmt[0].bytesperline;
++	unsigned int planes = min_t(unsigned int, pix_mp->num_planes, VIDEO_MAX_PLANES);
++	u32 bpl[VIDEO_MAX_PLANES];
++	u32 size[VIDEO_MAX_PLANES];
 +
-+	if (!base || stride <= base)
++	if (!base || stride <= base || stride > W5_ENC_MAX_SRC_STRIDE)
 +		return;
 +
-+	for (unsigned int i = 0; i < pix_mp->num_planes; i++) {
-+		unsigned int bpl = pix_mp->plane_fmt[i].bytesperline;
-+		unsigned int rows;
++	for (unsigned int i = 0; i < planes; i++) {
++		u32 old = pix_mp->plane_fmt[i].bytesperline;
++		u32 rows, wide;
 +
-+		if (!bpl)
++		bpl[i] = old;
++		size[i] = pix_mp->plane_fmt[i].sizeimage;
++		if (!old)
 +			continue;
 +
-+		rows = pix_mp->plane_fmt[i].sizeimage / bpl;
-+		pix_mp->plane_fmt[i].bytesperline = bpl * stride / base;
-+		pix_mp->plane_fmt[i].sizeimage = pix_mp->plane_fmt[i].bytesperline * rows;
++		rows = size[i] / old;
++		if (check_mul_overflow(old, (u32)stride, &wide))
++			return;
++		bpl[i] = wide / base;
++		if (check_mul_overflow(bpl[i], rows, &size[i]))
++			return;
++	}
++
++	for (unsigned int i = 0; i < planes; i++) {
++		pix_mp->plane_fmt[i].bytesperline = bpl[i];
++		pix_mp->plane_fmt[i].sizeimage = size[i];
 +	}
 +}
 +
@@ -676,7 +741,7 @@ Keep the existing decoder path and platform power resources.
  	int width, height;
  
  	dev_dbg(inst->dev->dev, "%s: fourcc: %u width: %u height: %u num_planes: %u field: %u\n",
-@@ -510,6 +746,7 @@
+@@ -510,6 +801,7 @@
  
  	wave5_update_pix_fmt(&f->fmt.pix_mp, VPU_FMT_TYPE_RAW,
  			     width, height, frmsize);
@@ -684,7 +749,7 @@ Keep the existing decoder path and platform power resources.
  	return 0;
  }
  
-@@ -518,6 +755,17 @@
+@@ -518,6 +810,17 @@
  	struct vpu_instance *inst = file_to_vpu_inst(file);
  	const struct vpu_format *vpu_fmt;
  	const struct v4l2_format_info *info;
@@ -702,7 +767,7 @@ Keep the existing decoder path and platform power resources.
  	int i, ret;
  
  	dev_dbg(inst->dev->dev, "%s: fourcc: %u width: %u height: %u num_planes: %u field: %u\n",
-@@ -566,8 +814,15 @@
+@@ -566,8 +869,15 @@
  		return -EINVAL;
  
  	wave5_update_pix_fmt(&inst->dst_fmt, VPU_FMT_TYPE_CODEC,
@@ -719,7 +784,7 @@ Keep the existing decoder path and platform power resources.
  	inst->conf_win.width = inst->dst_fmt.width;
  	inst->conf_win.height = inst->dst_fmt.height;
  
-@@ -684,6 +939,7 @@
+@@ -684,6 +994,7 @@
  static int wave5_vpu_enc_s_parm(struct file *file, void *fh, struct v4l2_streamparm *a)
  {
  	struct vpu_instance *inst = file_to_vpu_inst(file);
@@ -727,7 +792,7 @@ Keep the existing decoder path and platform power resources.
  
  	dev_dbg(inst->dev->dev, "%s: type: %u\n", __func__, a->type);
  
-@@ -702,6 +958,9 @@
+@@ -702,6 +1013,9 @@
  	dev_dbg(inst->dev->dev, "%s: numerator: %u | denominator: %u\n",
  		__func__, a->parm.output.timeperframe.numerator,
  		a->parm.output.timeperframe.denominator);
@@ -737,7 +802,7 @@ Keep the existing decoder path and platform power resources.
  
  	return 0;
  }
-@@ -746,6 +1005,8 @@
+@@ -746,6 +1060,8 @@
  static int wave5_vpu_enc_s_ctrl(struct v4l2_ctrl *ctrl)
  {
  	struct vpu_instance *inst = wave5_ctrl_to_vpu_inst(ctrl);
@@ -746,7 +811,7 @@ Keep the existing decoder path and platform power resources.
  
  	dev_dbg(inst->dev->dev, "%s: name: %s | value: %d\n", __func__, ctrl->name, ctrl->val);
  
-@@ -763,6 +1024,7 @@
+@@ -763,6 +1079,7 @@
  		inst->rot_angle = ctrl->val;
  		break;
  	case V4L2_CID_MPEG_VIDEO_VBV_SIZE:
@@ -754,7 +819,7 @@ Keep the existing decoder path and platform power resources.
  		inst->vbv_buf_size = ctrl->val;
  		break;
  	case V4L2_CID_MPEG_VIDEO_BITRATE_MODE:
-@@ -778,10 +1040,14 @@
+@@ -778,10 +1095,14 @@
  		}
  		break;
  	case V4L2_CID_MPEG_VIDEO_BITRATE:
@@ -769,7 +834,7 @@ Keep the existing decoder path and platform power resources.
  		break;
  	case V4L2_CID_MPEG_VIDEO_MULTI_SLICE_MODE:
  		inst->enc_param.independ_slice_mode = ctrl->val;
-@@ -1081,6 +1347,13 @@
+@@ -1081,6 +1402,13 @@
  		return -EINVAL;
  	}
  
@@ -783,7 +848,7 @@ Keep the existing decoder path and platform power resources.
  	return 0;
  }
  
-@@ -1156,9 +1429,21 @@
+@@ -1156,9 +1484,21 @@
  	else
  		open_param->src_format = FORMAT_420;
  
@@ -806,7 +871,7 @@ Keep the existing decoder path and platform power resources.
  	open_param->wave_param.skip_intra_trans = 1;
  	open_param->wave_param.intra_nx_n_enable = 1;
  	open_param->wave_param.nr_intra_weight_y = 7;
-@@ -1167,8 +1452,16 @@
+@@ -1167,8 +1507,16 @@
  	open_param->wave_param.nr_inter_weight_y = 4;
  	open_param->wave_param.nr_inter_weight_cb = 4;
  	open_param->wave_param.nr_inter_weight_cr = 4;
@@ -825,7 +890,7 @@ Keep the existing decoder path and platform power resources.
  
  	open_param->line_buf_int_en = true;
  	open_param->pic_width = inst->conf_win.width;
-@@ -1176,9 +1469,17 @@
+@@ -1176,9 +1524,17 @@
  	open_param->frame_rate_info = inst->frame_rate;
  	open_param->rc_enable = inst->rc_enable;
  	if (inst->rc_enable) {
@@ -844,7 +909,7 @@ Keep the existing decoder path and platform power resources.
  	}
  	open_param->wave_param.mb_level_rc_enable = input.mb_level_rc_enable;
  	open_param->wave_param.cu_level_rc_enable = input.cu_level_rc_enable;
-@@ -1212,6 +1513,14 @@
+@@ -1212,6 +1568,14 @@
  		}
  	} else {
  		open_param->wave_param.avc_idr_period = input.avc_idr_period;
@@ -859,7 +924,7 @@ Keep the existing decoder path and platform power resources.
  	}
  	open_param->wave_param.entropy_coding_mode = input.entropy_coding_mode;
  	open_param->wave_param.lossless_enable = input.lossless_enable;
-@@ -1343,17 +1652,20 @@
+@@ -1343,17 +1707,20 @@
  
  		ret = wave5_set_enc_openparam(&open_param, inst);
  		if (ret) {
@@ -884,7 +949,7 @@ Keep the existing decoder path and platform power resources.
  
  		if (inst->mirror_direction) {
  			wave5_vpu_enc_give_command(inst, ENABLE_MIRRORING, NULL);
-@@ -1376,6 +1688,17 @@
+@@ -1376,6 +1743,17 @@
  			dev_warn(inst->dev->dev, "Sequence not found: %d\n", ret);
  			goto return_buffers;
  		}
@@ -902,7 +967,7 @@ Keep the existing decoder path and platform power resources.
  		ret = switch_state(inst, VPU_INST_STATE_INIT_SEQ);
  		if (ret)
  			goto return_buffers;
-@@ -1390,6 +1713,7 @@
+@@ -1390,6 +1768,7 @@
  		}
  
  		ret = switch_state(inst, VPU_INST_STATE_PIC_RUN);
@@ -910,7 +975,7 @@ Keep the existing decoder path and platform power resources.
  	}
  	if (ret)
  		goto return_buffers;
-@@ -1429,10 +1753,28 @@
+@@ -1429,10 +1808,28 @@
  	v4l2_m2m_clear_state(m2m_ctx);
  }
  
@@ -939,7 +1004,7 @@ Keep the existing decoder path and platform power resources.
  
  	/*
  	 * Note that we don't need m2m_ctx->next_buf_last for this driver, so we
-@@ -1454,7 +1796,15 @@
+@@ -1454,7 +1851,15 @@
  		if (q_status.report_queue_count == 0)
  			break;
  
@@ -956,17 +1021,104 @@ Keep the existing decoder path and platform power resources.
  			break;
  
  		if (wave5_vpu_enc_get_output_info(inst, &enc_output_info))
-@@ -1520,6 +1870,9 @@
+@@ -1469,8 +1874,38 @@
+ 	pm_runtime_put_autosuspend(inst->dev->dev);
+ }
+ 
++/*
++ * Artosyn: start_encode() points the VPU at each source plane's DMA address plus its
++ * data_offset, and the VPU reads that plane's sizeimage from there. vb2 bounds data_offset
++ * only by bytesused, which says nothing about what follows it, so refuse a buffer whose
++ * offset leaves less than sizeimage before the end of the plane.
++ */
++static int wave5_vpu_enc_buf_prepare(struct vb2_buffer *vb)
++{
++	struct vpu_instance *inst = vb2_get_drv_priv(vb->vb2_queue);
++	unsigned int i;
++
++	if (vb->type != V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE)
++		return 0;
++
++	for (i = 0; i < vb->num_planes; i++) {
++		u64 end = (u64)vb->planes[i].data_offset + inst->src_fmt.plane_fmt[i].sizeimage;
++
++		if (end > vb2_plane_size(vb, i)) {
++			dev_dbg(inst->dev->dev,
++				"%s: plane %u: data_offset %u + sizeimage %u > plane size %lu\n",
++				__func__, i, vb->planes[i].data_offset,
++				inst->src_fmt.plane_fmt[i].sizeimage, vb2_plane_size(vb, i));
++			return -EINVAL;
++		}
++	}
++
++	return 0;
++}
++
+ static const struct vb2_ops wave5_vpu_enc_vb2_ops = {
+ 	.queue_setup = wave5_vpu_enc_queue_setup,
++	.buf_prepare = wave5_vpu_enc_buf_prepare,
+ 	.buf_queue = wave5_vpu_enc_buf_queue,
+ 	.start_streaming = wave5_vpu_enc_start_streaming,
+ 	.stop_streaming = wave5_vpu_enc_stop_streaming,
+@@ -1503,23 +1938,57 @@
+ {
+ 	struct vpu_instance *inst = priv;
+ 	struct v4l2_m2m_ctx *m2m_ctx = inst->v4l2_fh.m2m_ctx;
++	unsigned int timeout_ms = READ_ONCE(enc_job_timeout_ms);
++	u32 seq;
+ 	u32 fail_res = 0;
+ 	int ret = 0;
+ 
+ 	pm_runtime_resume_and_get(inst->dev->dev);
+ 	switch (inst->state) {
+ 	case VPU_INST_STATE_PIC_RUN:
++		/*
++		 * In flight before the frame is issued, so a completion that beats the arming
++		 * below finds its job and clears it. Not armed yet: a timeout run still waiting
++		 * on irq_lock from the previous job must not take this one.
++		 */
++		mutex_lock(&inst->dev->irq_lock);
++		seq = ++inst->enc_job_seq;
++		inst->enc_job_in_flight = true;
++		inst->enc_job_armed = false;
++		mutex_unlock(&inst->dev->irq_lock);
++
+ 		ret = start_encode(inst, &fail_res);
+ 		if (ret) {
++			mutex_lock(&inst->dev->irq_lock);
++			inst->enc_job_in_flight = false;
++			mutex_unlock(&inst->dev->irq_lock);
+ 			if (ret == -EINVAL)
+ 				dev_err(inst->dev->dev,
+ 					"Frame encoding on m2m context (%p), fail: %d (res: %d)\n",
+ 					m2m_ctx, ret, fail_res);
+ 			else if (ret == -EAGAIN)
+ 				dev_dbg(inst->dev->dev, "Missing buffers for encode, try again\n");
  			break;
  		}
  		dev_dbg(inst->dev->dev, "%s: leave with active job", __func__);
-+		if (enc_job_timeout_ms)
-+			schedule_delayed_work(&inst->job_timeout_work,
-+					      msecs_to_jiffies(enc_job_timeout_ms));
++		/*
++		 * Armed only once the frame is with the firmware, so it cannot fire while
++		 * start_encode() still holds the buffers, and only if this job is still the one in
++		 * flight: a completion that came first has already cleared it, and arming then
++		 * would leave a timeout nothing cancels. mod_, not schedule_: an arm still pending
++		 * must not keep its earlier expiry.
++		 */
++		if (timeout_ms) {
++			unsigned long delay = msecs_to_jiffies(timeout_ms);
++
++			mutex_lock(&inst->dev->irq_lock);
++			if (inst->enc_job_in_flight && inst->enc_job_seq == seq) {
++				inst->enc_job_deadline = jiffies + delay;
++				inst->enc_job_armed = true;
++				mod_delayed_work(system_percpu_wq, &inst->job_timeout_work, delay);
++			}
++			mutex_unlock(&inst->dev->irq_lock);
++		}
  		pm_runtime_put_autosuspend(inst->dev->dev);
  		return;
  	default:
-@@ -1558,8 +1911,23 @@
+@@ -1558,8 +2027,23 @@
  	return false;
  }
  
@@ -990,7 +1142,7 @@ Keep the existing decoder path and platform power resources.
  	.job_ready = wave5_vpu_enc_job_ready,
  };
  
-@@ -1579,6 +1947,7 @@
+@@ -1579,6 +2063,7 @@
  	inst->dev = dev;
  	inst->type = VPU_INST_TYPE_ENC;
  	inst->ops = &wave5_vpu_enc_inst_ops;
@@ -998,7 +1150,7 @@ Keep the existing decoder path and platform power resources.
  
  	inst->codec_info = kzalloc(sizeof(*inst->codec_info), GFP_KERNEL);
  	if (!inst->codec_info) {
-@@ -1590,6 +1959,7 @@
+@@ -1590,6 +2075,7 @@
  	v4l2_fh_add(&inst->v4l2_fh, filp);
  
  	INIT_LIST_HEAD(&inst->list);
@@ -1006,7 +1158,7 @@ Keep the existing decoder path and platform power resources.
  
  	inst->v4l2_m2m_dev = inst->dev->v4l2_m2m_enc_dev;
  	inst->v4l2_fh.m2m_ctx =
-@@ -1740,6 +2110,8 @@
+@@ -1740,6 +2226,8 @@
  	v4l2_ctrl_new_std(v4l2_ctrl_hdl, &wave5_vpu_enc_ctrl_ops,
  			  V4L2_CID_MPEG_VIDEO_PREPEND_SPSPPS_TO_IDR,
  			  0, 1, 1, 0);
@@ -1015,7 +1167,7 @@ Keep the existing decoder path and platform power resources.
  
  	if (v4l2_ctrl_hdl->error) {
  		ret = -ENODEV;
-@@ -1791,6 +2163,13 @@
+@@ -1791,6 +2279,13 @@
  
  static int wave5_vpu_enc_release(struct file *filp)
  {
@@ -1328,7 +1480,7 @@ Keep the existing decoder path and platform power resources.
  };
  
  struct vpu_instance;
-@@ -819,10 +827,26 @@
+@@ -819,10 +827,31 @@
  	bool cbcr_interleave;
  	bool nv21;
  	bool eos;
@@ -1348,6 +1500,11 @@ Keep the existing decoder path and platform power resources.
 +	 * release a task parked in v4l2_m2m_cancel_job(), which waits uninterruptibly with no
 +	 * timeout while holding the mutex both video nodes are registered with. */
 +	struct delayed_work job_timeout_work;
++	/* Under irq_lock. The work acts only on a job in flight, armed, and past its deadline. */
++	bool enc_job_in_flight;     /* device_run issued a frame; no completion or timeout yet */
++	bool enc_job_armed;         /* job_timeout_work was armed for the job in flight */
++	unsigned long enc_job_deadline; /* jiffies at which that job times out */
++	u32 enc_job_seq;            /* jobs started, so device_run arms only the one it started */
 +	bool job_timeout_warned;    /* latch: one warning per instance, not one per job */
 +	bool enc_fault_warned;      /* latch for the firmware's own error reports */
 +	u32 job_timeout_count;      /* jobs finished by the timeout above */
@@ -1355,7 +1512,7 @@ Keep the existing decoder path and platform power resources.
  
  	unsigned int min_src_buf_count;
  	unsigned int rot_angle;
-@@ -850,6 +874,14 @@
+@@ -850,6 +879,14 @@
  void wave5_vdi_free_sram(struct vpu_device *vpu_dev);
  
  int wave5_vpu_init_with_bitcode(struct device *dev, u8 *bitcode, size_t size);
@@ -1370,7 +1527,7 @@ Keep the existing decoder path and platform power resources.
  int wave5_vpu_flush_instance(struct vpu_instance *inst);
  int wave5_vpu_get_version_info(struct device *dev, u32 *revision, unsigned int *product_id);
  int wave5_vpu_dec_open(struct vpu_instance *inst, struct dec_open_param *open_param);
-@@ -879,6 +911,25 @@
+@@ -879,6 +916,25 @@
  					enum tiled_map_type map_type);
  int wave5_vpu_enc_start_one_frame(struct vpu_instance *inst, struct enc_param *param,
  				  u32 *fail_res);
