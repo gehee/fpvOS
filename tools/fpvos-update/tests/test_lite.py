@@ -52,6 +52,37 @@ def asw(sections, board=3, version=(18, 21, 10), upgrade=(1, 1, 1, 1, 1), types=
     return bytes(h) + payload
 
 
+def ubi_peb(data=b'', seq=1234):
+    """A UBI block: its erase-counter header (CRC'd as UBI does), DATA at the
+    data offset (4096), erased to the end."""
+    ec = b'UBI#' + bytes([1, 0, 0, 0]) + struct.pack('>QIII', 0, 2048, 4096, seq) + bytes(32)
+    ec += struct.pack('>I', ~zlib.crc32(ec) & 0xffffffff)
+    return (ec.ljust(4096, b'\xff') + data).ljust(BLOCK, b'\xff')
+
+
+def dent(name, inum=7, crc_ok=True):
+    """A UBIFS directory entry node, 8-byte padded."""
+    name = name.encode()
+    node = bytearray(struct.pack('<IIQIBBH', 0x06101831, 0, 1, 57 + len(name), 2, 0, 0))
+    node += bytes(16) + struct.pack('<QBBHI', inum, 0, 1, len(name), 0) + name + b'\0'
+    struct.pack_into('<I', node, 4, (~zlib.crc32(bytes(node[8:])) & 0xffffffff) ^ (0 if crc_ok else 1))
+    return bytes(node) + bytes(-len(node) % 8)
+
+
+STOCK_NAMES = ['fpv', 'ar_fpvhs_upgrade', 'ar_fpvhs_boardtype', 'fpv_run_cx482.sh', 'boot_ar8030']
+FPVOS_NAMES = STOCK_NAMES + ['air', 'VERSION', 'start.sh', 'fpvos-usb', 'ar_fpvhs_upgrade.stock']
+
+
+def bank_sections(names=STOCK_NAMES, kernel_magic=b'\xd0\x0d\xfe\xed'):
+    """A bank's kernel (a FIT header), rootfs and app volume (UBI, the app's
+    directory entries among its data): what stock_firmware reads."""
+    kernel = kernel_magic + struct.pack('>I', 3 * MiB) + os.urandom(3 * MiB - 8 + 1234)
+    rootfs = b''.join(ubi_peb(os.urandom(64 * KiB)) for _ in range(5))
+    app = b''.join(ubi_peb(os.urandom(512) + b''.join(dent(n) for n in names[i::3]) + os.urandom(512))
+                   for i in range(3)) + b''.join(ubi_peb(os.urandom(64 * KiB)) for _ in range(6))
+    return [kernel, rootfs, app]
+
+
 def frame(cmd, payload=b'', seq=1, retry=0):
     h = bytearray(struct.pack('<4sHHHHIHHIII', b'OTRA', 3292, 1, 0, 0xabcd, cmd, 2, 0,
                               len(payload), seq, retry)) + b'\0\0\0\0'
@@ -256,6 +287,16 @@ class Tests(unittest.TestCase):
         sections = [unit.boot if boot is None else boot, unit.env, os.urandom(3 * MiB + 1234),
                     os.urandom(5 * BLOCK), os.urandom(9 * BLOCK)]
         return sections, asw(sections, **kw)
+
+    def put_bank(self, unit, bank, sections):
+        """SECTIONS (kernel, rootfs, app) on BANK as an install leaves them."""
+        for data, n in zip(sections, BANK[bank]):
+            size = len(unit.mtd(n))
+            unit.put(n, (data + bytes(-len(data) % BLOCK)).ljust(size, b'\xff'))
+
+    def stock_helper(self, unit):
+        r = subprocess.run([str(unit.exe), 'stock'], env=unit.environ(FPVOS_LITE_HELPER='1'), capture_output=True, text=True)
+        return r.returncode, r.stderr
 
     def assert_bank(self, unit, bank, sections, bad=()):
         """Each section where the bank's partition starts (bad blocks skipped),
@@ -462,6 +503,141 @@ class Tests(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn('mtd8 is in use', (u.root / 'tmp/status').read_text())
         self.assertEqual({n: u.mtd(n) for n in range(10)}, before)
+
+    def test_stock_switches_to_the_stock_bank(self):
+        """Booted from bank 1 (fpvOS, installed from stock): 'stock' selects
+        bank 0, which holds stock, and reboots; nothing else is written."""
+        u = self.unit()
+        self.put_bank(u, 0, bank_sections())
+        self.put_bank(u, 1, bank_sections(FPVOS_NAMES))
+        before = {n: u.mtd(n) for n in range(10)}
+        u.start(clean=False)
+        self.assertEqual(u.reboot('stock'), (0, 'rebooting into stock firmware'))
+        self.assertTrue(u.rebooted())
+        self.assert_selected(u, 0)
+        for n in (0, 1, 3, 4, 5, 6, 7, 8, 9):
+            self.assertEqual(u.mtd(n), before[n], f'mtd{n} changed')
+        # From bank 0's side too, and in the clean system.
+        u.stop()
+        (u.root / 'rebooted').unlink()
+        (u.root / 'run/bootsel1').unlink()
+        (u.root / 'run/bootsel0').write_text('normal check\n')
+        self.put_bank(u, 0, bank_sections(FPVOS_NAMES))
+        self.put_bank(u, 1, bank_sections())
+        u.start(clean=True)
+        self.assertEqual(u.reboot('stock'), (0, 'rebooting into stock firmware'))
+        self.assertTrue(u.rebooted())
+        self.assert_selected(u, 1)
+
+    def test_stock_refused_after_an_fpvos_update(self):
+        """An fpvOS update writes over the stock bank: the other bank then holds
+        the previous fpvOS, and 'stock' is refused with nothing written."""
+        u = self.unit()
+        self.put_bank(u, 0, bank_sections())
+        self.put_bank(u, 1, bank_sections(FPVOS_NAMES))
+        sections, image = self.image_for(u)
+        sections[2:] = bank_sections(FPVOS_NAMES)
+        image = asw(sections)
+        u.start(clean=True)
+        self.assertEqual(u.upload(image), (0, 'OK'))
+        self.assertEqual(u.wait_installed()[0], 4)
+        self.assert_bank(u, 0, sections)
+        self.assertTrue(u.rebooted())
+        u.stop()
+        # The reboot: /tmp is new, and bank 0 is the booted one.
+        (u.root / 'rebooted').unlink()
+        (u.root / 'tmp/fpvos-update/status').unlink(missing_ok=True)
+        (u.root / 'run/bootsel1').unlink()
+        (u.root / 'run/bootsel0').write_text('normal check\n')
+        before = {n: u.mtd(n) for n in range(10)}
+        u.start(clean=False)
+        self.assertEqual(u.reboot('stock'), (-1, 'no stock firmware: the other bank holds fpvOS'))
+        time.sleep(1.5)
+        self.assertFalse((u.root / 'rebooted').exists())
+        self.assertEqual({n: u.mtd(n) for n in range(10)}, before)
+        self.assertEqual(u.find()['detail'], 'normal mode')
+
+    def test_stock_refused_without_an_intact_stock_bank(self):
+        """Anything but a whole stock bank is refused, nothing written: no
+        kernel, no UBI rootfs or app volume, no stock updater, an fpvOS name
+        left in an obsolete entry or a block past the volume, a partition in
+        use, an unknown booted bank. Entries with a bad CRC do not count."""
+        stock = bank_sections()
+        cases = {
+            'no kernel': [b'\xff' * BLOCK] + stock[1:],
+            'no rootfs': [stock[0], os.urandom(5 * BLOCK), stock[2]],
+            'no app': stock[:2] + [b'\xff' * BLOCK + stock[2][BLOCK:]],
+            'no updater': bank_sections(['fpv', 'boot_ar8030']),
+            'fpvOS name': stock[:2] + [stock[2] + ubi_peb(dent('air', inum=0))],
+            'bad CRC': stock[:2] + [b''.join(ubi_peb(dent(n, crc_ok=False)) for n in STOCK_NAMES)],
+        }
+        for case, sections in cases.items():
+            with self.subTest(case):
+                u = self.unit()
+                self.put_bank(u, 0, sections)
+                before = {n: u.mtd(n) for n in range(10)}
+                code, err = self.stock_helper(u)
+                self.assertEqual(code, 3 if case == 'fpvOS name' else 4, err)
+                self.assertEqual({n: u.mtd(n) for n in range(10)}, before)
+        # An fpvOS entry with a bad CRC is not fpvOS's: stock it is.
+        u = self.unit()
+        self.put_bank(u, 0, stock[:2] + [stock[2] + ubi_peb(dent('air', crc_ok=False))])
+        self.assertEqual(self.stock_helper(u)[0], 0)
+        self.assert_selected(u, 0)
+        # A legacy uImage kernel is a kernel.
+        u = self.unit()
+        self.put_bank(u, 0, bank_sections(kernel_magic=b'\x27\x05\x19\x56'))
+        self.assertEqual(self.stock_helper(u)[0], 0)
+        u = self.unit()
+        self.put_bank(u, 0, stock)
+        (u.root / 'sys/class/ubi/ubi3').mkdir()
+        (u.root / 'sys/class/ubi/ubi3/mtd_num').write_text('8\n')
+        self.assertEqual(self.stock_helper(u)[0], 4)
+        self.assert_selected(u, 1)
+        u = self.unit()
+        self.put_bank(u, 0, stock)
+        (u.root / 'run/bootsel0').write_text('')
+        self.assertEqual(self.stock_helper(u)[0], 4)
+        self.assert_selected(u, 1)
+        # The receiver's reply for the second kind.
+        u = self.unit()
+        u.start(clean=False)
+        self.assertEqual(u.reboot('stock'), (-1, 'no intact stock firmware on the other bank'))
+
+    def test_power_cut_never_leaves_a_stock_looking_bank(self):
+        """An install over a stock bank (here Caddx's own image, flashed from
+        fpvOS) cut off after any number of block writes: 'stock' refuses the
+        bank until it is whole, and selects it only then."""
+        u = self.unit()
+        self.put_bank(u, 0, bank_sections())
+        sections, _ = self.image_for(u)
+        sections[2:] = bank_sections()
+        image = asw(sections)
+        img = u.root / 'tmp/image'
+        state = {n: u.mtd(n) for n in range(10)}
+        allowed = 0
+        for cut in range(0, 2000):
+            for n, data in state.items():
+                u.put(n, data)
+            img.write_bytes(image)
+            r = subprocess.run([str(u.exe), 'install', str(img)], env=u.environ(FPVOS_LITE_HELPER='1', FPVOS_LITE_CUT_AFTER=str(cut)),
+                               capture_output=True)
+            if r.returncode == 0:
+                break
+            self.assertEqual(r.returncode, 99)
+            code, err = self.stock_helper(u)
+            if code == 0:
+                # Only a whole bank, and the switch is the one it would make.
+                self.assert_bank(u, 0, sections)
+                allowed += 1
+            else:
+                self.assertEqual(code, 4, f'cut {cut}: {err}')
+        self.assertGreater(cut, 50)
+        # Only the cuts after the app volume's first block, written last: in
+        # the boot record's eight blocks (an erase and a write each). The bank
+        # is whole by then.
+        self.assertLessEqual(allowed, 17)
+        print(f"power cut: {cut} cut points, {allowed} with a whole stock bank", file=sys.stderr)
 
     def test_power_cut_anywhere_keeps_the_booted_bank(self):
         """A power cut after any number of block writes: the boot bank stays the

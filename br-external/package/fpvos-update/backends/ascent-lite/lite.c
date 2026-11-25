@@ -11,6 +11,11 @@
  * switch, and leaves U-Boot and its environment alone when the image's are the
  * ones on the flash. See lite-updater-re/stock-updater.md for the stock side.
  *
+ * Back to stock: a first install from stock leaves stock on the other bank,
+ * and the receiver's "stock" switches the boot bank to it when it is really
+ * there (stock_firmware); after an fpvOS update that bank holds the previous
+ * fpvOS, and it is refused.
+ *
  * FPVOS_LITE_ROOT puts every path under a directory, for host tests: there
  * the MTD partitions are plain files with 128 KiB erase blocks, their bad
  * blocks listed in mtdN.bad, and FPVOS_LITE_CUT_AFTER=N stops the installer
@@ -600,45 +605,79 @@ static int retire_block(struct mtd *m, unsigned b)
 	return 0;
 }
 
+/* One block of section INDEX, from OFFSET, into block B (padded with zeros,
+ * read back): 0, 1 when B failed and was retired, -1 to stop. */
+static int write_block(struct mtd *m, const struct image *img, int index, unsigned b, uint32_t offset, uint32_t n)
+{
+	if (pread(img->fd, block, n, img->section[index].offset + offset) != (ssize_t)n) {
+		snprintf(failure, sizeof(failure), "cannot read the image");
+		return -1;
+	}
+	memset(block + n, 0, m->erasesize - n);
+	if (take_block(m, b, block, m->erasesize))
+		return retire_block(m, b) ? -1 : 1;
+	return 0;
+}
+
 /* Section INDEX into partition M as stock writes it (erase, write, bad blocks
  * skipped, the last block padded with zeros), each block read back; a block
- * that does not read back twice is marked bad and the data goes to the next
- * one. TAIL: the good blocks after the data are erased too, so UBI finds them
+ * that does not read back is marked bad and the data goes to the next one.
+ * TAIL: the good blocks after the data are erased too, so UBI finds them
  * empty (stock leaves them as they were). PROGRESS: counted in the status.
- * -1 with FAILURE empty: the section did not fit. */
-static int write_section(struct mtd *m, const struct image *img, int index, int tail, int progress)
+ * FIRST_LAST: the first block stays erased until every other one is written,
+ * so a bank cut off part way has no UBI header where one must be (see
+ * stock_firmware); if it then does not take its data, the section is written
+ * again from the next good block. */
+static int write_section(struct mtd *m, const struct image *img, int index, int tail, int progress, int first_last)
 {
-	uint32_t length = img->section[index].length, used = 0;
+	uint32_t length = img->section[index].length;
+	uint64_t done_before = done_bytes;
 	if (length > m->size)
 		return -1;
-	for (unsigned b = 0; b < mtd_blocks(m); b++) {
-		if (used >= length && !tail)
-			break;
-		if (mtd_bad(m, b))
-			continue;
-		if (used >= length) {
-			if (mtd_erase(m, b) && mtd_erase(m, b) && retire_block(m, b))
-				return -1;
-			continue;
+	for (;;) {
+		uint32_t used = 0, first_n = 0;
+		int first = -1;
+		done_bytes = done_before;
+		for (unsigned b = 0; b < mtd_blocks(m); b++) {
+			if (used >= length && !tail)
+				break;
+			if (mtd_bad(m, b))
+				continue;
+			if (used >= length) {
+				if (mtd_erase(m, b) && mtd_erase(m, b) && retire_block(m, b))
+					return -1;
+				continue;
+			}
+			uint32_t n = length - used < m->erasesize ? length - used : m->erasesize;
+			if (first_last && first < 0) {
+				if (mtd_erase(m, b) && mtd_erase(m, b)) {
+					if (retire_block(m, b))
+						return -1;
+					continue;
+				}
+				first = (int)b;
+				first_n = n;
+			} else {
+				int r = write_block(m, img, index, b, used, n);
+				if (r < 0)
+					return -1;
+				if (r)
+					continue;
+			}
+			used += n;
+			if (progress) {
+				done_bytes += n;
+				status(5 + (unsigned)(done_bytes * 85 / all_bytes), 3, "writing the %s", section_names[index]);
+			}
 		}
-		uint32_t n = length - used < m->erasesize ? length - used : m->erasesize;
-		if (pread(img->fd, block, n, img->section[index].offset + used) != (ssize_t)n) {
-			snprintf(failure, sizeof(failure), "cannot read the image");
+		if (used != length)
 			return -1;
-		}
-		memset(block + n, 0, m->erasesize - n);
-		if (take_block(m, b, block, m->erasesize)) {
-			if (retire_block(m, b))
-				return -1;
-			continue;
-		}
-		used += n;
-		if (progress) {
-			done_bytes += n;
-			status(5 + (unsigned)(done_bytes * 85 / all_bytes), 3, "writing the %s", section_names[index]);
-		}
+		if (first < 0)
+			return 0;
+		int r = write_block(m, img, index, (unsigned)first, 0, first_n);
+		if (r <= 0)
+			return r;
 	}
-	return used == length ? 0 : -1;
 }
 
 /* Whether section INDEX is already what partition M starts with, reading it
@@ -692,6 +731,152 @@ static int select_bank(int bank)
 /* Bank b's kernel, rootfs and app volume (stock's /proc/mtd). */
 static const int bank_mtd[2][SECTIONS] = {{0, 1, 3, 6, 8}, {0, 1, 4, 7, 9}};
 
+/* ---------------------------------------------------- back to stock ---- */
+
+/* The first good block of M, or -1. */
+static int first_good(struct mtd *m)
+{
+	for (unsigned b = 0; b < mtd_blocks(m); b++)
+		if (!mtd_bad(m, b))
+			return (int)b;
+	return -1;
+}
+
+/* A UBI erase-counter header with its CRC (UBI's CRC-32: ~0 in, no final
+ * complement), at the start of a block: its data offset, else 0. */
+static uint32_t ubi_data_offset(const struct mtd *m, const unsigned char *b)
+{
+	if (memcmp(b, "UBI#", 4) || fpvos_get_be32(b + 60) != fpvos_crc32_update(~0U, b, 60))
+		return 0;
+	uint32_t d = fpvos_get_be32(b + 20);
+	return d >= 64 && d < m->erasesize && !(d % 8) ? d : 0;
+}
+
+/* What every fpvOS app volume has and no stock one does: the air/ directory
+ * (every fpvOS image since the first) and what is in it, and the stock
+ * updater moved aside. */
+static const char *const fpvos_names[] = {"air", "fpvos-usb", "kestrel-air.version", "ar_fpvhs_upgrade.stock"};
+
+/* The names in the UBIFS directory entries of app volume M, read off the
+ * flash (nothing attached): *fpvos 1 when one is fpvOS's, *updater 1 when
+ * stock's ar_fpvhs_upgrade is there. Each entry's CRC is checked; obsolete
+ * entries count too, so an fpvOS name anywhere is fpvOS. -1 when the
+ * volume's first good block has no UBI header. */
+static int app_names(struct mtd *m, int *fpvos, int *updater)
+{
+	int first = first_good(m);
+	*fpvos = *updater = 0;
+	if (first < 0 || mtd_read(m, (unsigned)first, back, m->erasesize) || !ubi_data_offset(m, back))
+		return -1;
+	for (unsigned b = (unsigned)first; b < mtd_blocks(m); b++) {
+		uint32_t d;
+		if (mtd_bad(m, b) || mtd_read(m, b, back, m->erasesize) || !(d = ubi_data_offset(m, back)))
+			continue;
+		/* UBIFS nodes are 8-byte aligned in the LEB; a directory entry
+		 * (2) or an extended attribute entry (3) is 56 bytes, the name
+		 * and its NUL. */
+		for (uint32_t o = d; o + 57 <= m->erasesize; o += 8) {
+			const unsigned char *p = back + o;
+			if (fpvos_get_le32(p) != 0x06101831 || (p[20] != 2 && p[20] != 3))
+				continue;
+			uint32_t len = fpvos_get_le32(p + 16), nlen = p[50] | p[51] << 8;
+			if (len != 57 + nlen || len > m->erasesize - o ||
+			    fpvos_get_le32(p + 4) != fpvos_crc32_update(~0U, p + 8, len - 8))
+				continue;
+			for (unsigned i = 0; i < sizeof(fpvos_names) / sizeof(*fpvos_names); i++)
+				if (nlen == strlen(fpvos_names[i]) && !memcmp(p + 56, fpvos_names[i], nlen))
+					*fpvos = 1;
+			if (nlen == 16 && !memcmp(p + 56, "ar_fpvhs_upgrade", 16))
+				*updater = 1;
+		}
+	}
+	return 0;
+}
+
+/* Whether BANK holds stock firmware, whole: a kernel (FIT or legacy uImage,
+ * as far as its header goes), a UBI rootfs, and a UBI app volume with stock's
+ * updater (the way back to fpvOS) and nothing of fpvOS's. 0 yes, 3 it holds
+ * fpvOS, 4 no intact stock; WHY says what. A bank fpvOS's installer was cut
+ * off writing has no UBI header in its app volume's first block (written
+ * last), so it is never taken for stock. */
+static int stock_firmware(int bank, char *why, size_t why_size)
+{
+	struct mtd m;
+	int first, fpvos, updater;
+	for (int i = 2; i < SECTIONS; i++)
+		if (mtd_in_use(bank_mtd[bank][i])) {
+			snprintf(why, why_size, "mtd%d is in use", bank_mtd[bank][i]);
+			return 4;
+		}
+	if (mtd_open(&m, bank_mtd[bank][2])) {
+		snprintf(why, why_size, "cannot open mtd%d", bank_mtd[bank][2]);
+		return 4;
+	}
+	first = first_good(&m);
+	int kernel = first >= 0 && !mtd_read(&m, (unsigned)first, back, m.erasesize) &&
+		(!memcmp(back, "\xd0\x0d\xfe\xed", 4) || !memcmp(back, "\x27\x05\x19\x56", 4)) &&
+		fpvos_get_be32(back + 4) >= 64 && fpvos_get_be32(back + 4) <= m.size;
+	close(m.fd);
+	if (!kernel) {
+		snprintf(why, why_size, "no kernel in bank %d", bank);
+		return 4;
+	}
+	if (mtd_open(&m, bank_mtd[bank][3])) {
+		snprintf(why, why_size, "cannot open mtd%d", bank_mtd[bank][3]);
+		return 4;
+	}
+	first = first_good(&m);
+	int rootfs = first >= 0 && !mtd_read(&m, (unsigned)first, back, m.erasesize) && ubi_data_offset(&m, back);
+	close(m.fd);
+	if (!rootfs) {
+		snprintf(why, why_size, "no root filesystem in bank %d", bank);
+		return 4;
+	}
+	if (mtd_open(&m, bank_mtd[bank][4])) {
+		snprintf(why, why_size, "cannot open mtd%d", bank_mtd[bank][4]);
+		return 4;
+	}
+	int r = app_names(&m, &fpvos, &updater);
+	close(m.fd);
+	if (r) {
+		snprintf(why, why_size, "no app volume in bank %d", bank);
+		return 4;
+	}
+	if (fpvos) {
+		snprintf(why, why_size, "bank %d holds fpvOS", bank);
+		return 3;
+	}
+	if (!updater) {
+		snprintf(why, why_size, "bank %d has no stock updater", bank);
+		return 4;
+	}
+	snprintf(why, why_size, "bank %d holds stock firmware", bank);
+	return 0;
+}
+
+/* The receiver's "stock": the boot bank switched to the other one, only when
+ * that holds stock firmware (a first install from stock leaves it there; an
+ * fpvOS update writes over it). The reboot follows the reply. */
+static int stock_return(void)
+{
+	char why[96];
+	if (exists("/run/bootsel0") == exists("/run/bootsel1")) {
+		fprintf(stderr, "fpvos-update: stock: the booted bank is unknown\n");
+		return 4;
+	}
+	int bank = !exists("/run/bootsel1");
+	int r = stock_firmware(bank, why, sizeof(why));
+	fprintf(stderr, "fpvos-update: stock: %s\n", why);
+	if (r)
+		return r;
+	if (select_bank(bank)) {
+		fprintf(stderr, "fpvos-update: stock: the boot bank record did not write\n");
+		return 1;
+	}
+	fprintf(stderr, "fpvos-update: stock: bank %d selected\n", bank);
+	return 0;
+}
+
 static int install(const char *path)
 {
 	struct image img;
@@ -727,14 +912,40 @@ static int install(const char *path)
 		status(0, -1, "install failed: the image lacks a kernel, rootfs or app volume");
 		return 1;
 	}
-	status(5, 3, "writing bank %d", bank);
 	for (int i = 2; i < SECTIONS; i++) {
 		struct mtd m;
 		if (mtd_open(&m, bank_mtd[bank][i])) {
 			status(0, -1, "install failed: cannot open mtd%d", bank_mtd[bank][i]);
 			return 1;
 		}
-		int r = write_section(&m, &img, i, 1, 1);
+		int fits = img.section[i].length <= m.size;
+		close(m.fd);
+		if (!fits) {
+			status(0, -1, "install failed: the %s does not fit mtd%d", section_names[i], bank_mtd[bank][i]);
+			return 1;
+		}
+	}
+	status(5, 3, "writing bank %d", bank);
+	/* First the app volume's first block erased: from here until it is
+	 * written, last, the bank is never taken for stock (stock_firmware). */
+	{
+		struct mtd m;
+		int first;
+		if (mtd_open(&m, bank_mtd[bank][4])) {
+			status(0, -1, "install failed: cannot open mtd%d", bank_mtd[bank][4]);
+			return 1;
+		}
+		while ((first = first_good(&m)) >= 0 && mtd_erase(&m, (unsigned)first))
+			mtd_mark_bad(&m, (unsigned)first);
+		close(m.fd);
+	}
+	for (int i = 2; i < SECTIONS; i++) {
+		struct mtd m;
+		if (mtd_open(&m, bank_mtd[bank][i])) {
+			status(0, -1, "install failed: cannot open mtd%d", bank_mtd[bank][i]);
+			return 1;
+		}
+		int r = write_section(&m, &img, i, 1, 1, i == 4);
 		close(m.fd);
 		if (r && failure[0]) {
 			status(0, -1, "install failed: %s", failure);
@@ -763,7 +974,7 @@ static int install(const char *path)
 				section_names[i]);
 		} else {
 			status(91 + i * 3, 3, "writing the %s", section_names[i]);
-			r = write_section(&m, &img, i, 0, 0);
+			r = write_section(&m, &img, i, 0, 0, 0);
 		}
 		close(m.fd);
 		if (r) {
@@ -842,6 +1053,8 @@ static int helper(int argc, char **argv)
 		return do_reboot();
 	if (!strcmp(op, "install"))
 		return install(file);
+	if (!strcmp(op, "stock"))
+		return stock_return();
 	if (!strcmp(op, "verify"))
 		return verify(file);
 	if (!strcmp(op, "normal") || !strcmp(op, "bridge")) {

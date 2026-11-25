@@ -20,7 +20,7 @@ device stands, released or in development, and how it installs is in the
 | Flight controller telemetry over MSP (battery, altitude, GPS, modes) | ✅ | ✅ | ? |
 | A cap on the video bitrate | ✅ | ✅ | ? |
 | USB network (CDC-NCM) and SSH | ✅ | ✅ | ✅ |
-| Back to stock | ✅ Caddx's own update | ✅ Caddx's own update | ✅ stock kept on its other bank |
+| Back to stock | ✅ stock kept on the other bank until an fpvOS update, else Caddx's own update | ✅ stock kept on the other bank until an fpvOS update, else Caddx's own update | ✅ stock kept on its other bank |
 
 **Receivers and goggles**
 

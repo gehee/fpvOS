@@ -490,7 +490,13 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		for (unsigned i = 6; i < 32; i++)
 			if (payload[i]) return ack(h, -1, "invalid stock request");
 		if (file >= 0) return ack(h, -1, "transfer active");
-		if (run_helper("stock")) return ack(h, -1, "stock return unsupported or preparation failed");
+		/* A board's helper: 3 the other bank holds fpvOS, 4 no intact
+		 * stock there (the Ascent Lite's); anything else, no stock return
+		 * on this firmware or its preparation failed. */
+		int stock_result = run_helper("stock");
+		if (stock_result == 3) return ack(h, -1, "no stock firmware: the other bank holds fpvOS");
+		if (stock_result == 4) return ack(h, -1, "no intact stock firmware on the other bank");
+		if (stock_result) return ack(h, -1, "stock return unsupported or preparation failed");
 		int result = ack(h, 0, "rebooting into stock firmware");
 		if (!result) reboot_after_ack();
 		return result;

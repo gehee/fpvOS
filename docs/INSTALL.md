@@ -153,8 +153,13 @@ The air unit is updated the same way: flash the newer
 **The goggle:** power off, remove the card, power on. The goggle boots its
 internal firmware exactly as it did before: fpvOS never writes to its memory.
 
-**The air unit:** flash Caddx's own Ascent air unit update, the same way you
-flashed ours. The flasher takes Caddx's `.zip` download as it is. A unit with the
+**The air unit:** if fpvOS went on over the stock firmware, the unit still keeps
+stock on its other bank. Connect it to the flasher, open Advanced and press
+**Switch to stock firmware** (from fpvOS 2026.10.beta4-100 on): it restarts into
+stock, and installing fpvOS from the flasher brings fpvOS back. An fpvOS update
+writes over that bank, and the unit then says it holds no stock firmware: then
+flash Caddx's own Ascent air unit update, the same way you flashed ours. The
+flasher takes Caddx's `.zip` download as it is. A unit with the
 fpvOS air image that you've connected to over SSH can also be switched to the
 stock app without flashing, with `touch /usrdata/fpv/air/disable`, from the
 next boot.
