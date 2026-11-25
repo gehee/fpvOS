@@ -61,7 +61,7 @@ CONFIG_SQUASHFS_XZ=y
 CONFIG_CMDLINE="console=ttyS0,1152000 earlycon loglevel=7 rdinit=/init clk_ignore_unused"
 CONFIG_CMDLINE_FORCE=y
 
-# Bring-up: register access from userspace (devmem) while display and radio
-# setup still depend on comparing with the stock firmware.
-CONFIG_DEVMEM=y
-# CONFIG_IO_STRICT_DEVMEM is not set
+# No /dev/mem, as on the other AR9311 boards (common linux.defconfig): nothing
+# in the image uses it, and it gave root raw access to every register and to
+# all of RAM. A bring-up build that needs it can set CONFIG_DEVMEM again here.
+# CONFIG_DEVMEM is not set

@@ -139,7 +139,7 @@ installed kernel booting with HDMI and live video). The any-bank choice
 (an fpvOS bank, else the bank not booted) is covered by the simulators but not
 yet tried on a unit. An SD card with one filesystem is mounted at boot and
 takes the recordings; DVR > Format SD Card makes any card one exFAT partition.
-Not yet: removing the bring-up `/dev/mem`.
+`/dev/mem` is off, as on the other AR9311 boards.
 
 Also checked: 720p video at 720p60 and 720p120 without colour artefacts
 (kernel patch 0031), 1080p scaled onto a 720p60 screen, the Video Mode list and
