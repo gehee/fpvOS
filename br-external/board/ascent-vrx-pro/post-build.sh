@@ -4,9 +4,12 @@
 # The proprietary pieces fpvOS cannot ship (AR8030 baseband userland + firmware,
 # libmali, librga) are fetched by scripts/extract-ascent-vrx-pro-firmware.py into vendor/rootfs/.
 # They are laid over the target here rather than through BR2_ROOTFS_OVERLAY so
-# that a build with NO vendor blobs still succeeds: CI builds the open tree
-# without them and the image simply comes up with kestrel unable to reach the
-# radio or the GPU until they are supplied.
+# that each file can be dropped or kept (below). This image does not build
+# without them: fpvos-vendor-libs and fpvos-bootchain take their sources from
+# vendor/, open8030's gnd-config.py reads the stock radio config there, and
+# ./build.sh refuses to start (need_vendor) until the extraction has run. The
+# "vendor runtime absent" exit further down only covers this hook being run
+# on its own.
 #
 # $1 is TARGET_DIR (Buildroot passes it).
 set -e
@@ -33,12 +36,22 @@ SKIP='librockchip_mpp'
 #                      partition when a mount fails. S50factory reads it
 #                      read-only instead.
 #
-# With ar-libre (arlink.ko in the target), Artosyn's radio host stack is not
+# With ar-libre (BR2_PACKAGE_AR_LIBRE), Artosyn's radio host stack is not
 # shipped either: arlink.ko, its library and bb_only.sh replace the stock
 # driver, the client library and the daemon. Only the chip's own firmware and
-# config are still Artosyn's.
+# config are still Artosyn's. Decided by the configuration, not by looking for
+# the module: a module that landed somewhere unexpected would otherwise have
+# Artosyn's library laid over ar-libre's without a word. A configuration that
+# selects ar-libre and a target without its module is a broken build.
+[ -r "$BR2_CONFIG" ] || { echo ">>> ERROR: BR2_CONFIG is not set (run by Buildroot)" >&2; exit 1; }
 OPEN_RADIO=
-ls "$TARGET"/lib/modules/*/*/arlink.ko >/dev/null 2>&1 && OPEN_RADIO=1
+if grep -q '^BR2_PACKAGE_AR_LIBRE=y' "$BR2_CONFIG"; then
+    OPEN_RADIO=1
+    if [ -z "$(find "$TARGET/lib/modules" -name 'arlink.ko*' 2>/dev/null | head -n 1)" ]; then
+        echo ">>> ERROR: ar-libre is selected but no arlink.ko is in $TARGET/lib/modules" >&2
+        exit 1
+    fi
+fi
 
 # /factory/user_cfg.json is the goggle's pairing list: the bb_mac_addr_N
 # entries are the air units it may link with. kestrel seeds BB_SET_CANDIDATES
@@ -153,7 +166,8 @@ grep -q '^BR2_PACKAGE_MESA3D=y' "$BR2_CONFIG" 2>/dev/null && NO_MALI=1
 # load into a kernel built exactly like stock's. With a kernel built from
 # source for another release they are dead weight, and a fallback that cannot
 # work: leave them out. (No kernel built, as with the stock kernel: keep them.)
-KREL=$(cd "$TARGET/lib/modules" 2>/dev/null && ls -d */ 2>/dev/null | head -1)
+# (|| true: with no lib/modules at all, set -e would otherwise stop here.)
+KREL=$(cd "$TARGET/lib/modules" 2>/dev/null && ls -d */ 2>/dev/null | head -1) || true
 KREL=${KREL%/}
 
 # A file left out is also removed from the target: Buildroot never cleans it,

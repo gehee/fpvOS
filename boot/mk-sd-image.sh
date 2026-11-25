@@ -29,9 +29,12 @@ OUT="${OUT:-$BR/sdcard.img}"
 COMPRESS="${COMPRESS:-1}"
 
 IMG_MB=1100
+LOADER_SECTOR=16384; LOADER_SIZE=8192  # the patched loader, at 0x4000, 4M
 P1_START=32768;   P1_SIZE=131072     # bootfat, 64M
 P2_START=163840;  P2_SIZE=1267712    # rootfs,  619M
 P3_START=2000896; P3_SIZE=131072     # boot,    64M  (the FIT)
+# p1 is FAT32: what its tables and directories take, at most, besides the files.
+P1_OVERHEAD=$((4 * 1024 * 1024))
 
 for f in "$V/uboot-patched.bin" "$V/boot-sd3.img" "$V/Image" \
          "$V/rk3568-pro-patched.dtb" "$BR/rootfs.ext2"; do
@@ -39,9 +42,35 @@ for f in "$V/uboot-patched.bin" "$V/boot-sd3.img" "$V/Image" \
         echo "  run ./build.sh - it builds the boot chain and rootfs.ext2 (after" >&2
         echo "  scripts/extract-ascent-vrx-pro-firmware.py has filled vendor/)" >&2; exit 1; }
 done
+
+# Everything below is a plain write at an offset, which would run over the
+# next region without a word: check each piece fits where it goes first.
+size() { wc -c < "$1" | tr -d ' '; }
+fits() {   # what, its bytes, the room in bytes, where
+    [ "$2" -le "$3" ] || { echo "TOO BIG: $1 is $2 bytes; $4 holds $3" >&2; exit 1; }
+}
+# The layout itself: in order, apart, and inside the image with room for the
+# backup GPT (33 sectors) at its end.
+[ $((LOADER_SECTOR + LOADER_SIZE)) -le $P1_START ] &&
+[ $((P1_START + P1_SIZE)) -le $P2_START ] &&
+[ $((P2_START + P2_SIZE)) -le $P3_START ] &&
+[ $((P3_START + P3_SIZE + 33)) -le $((IMG_MB * 2048)) ] ||
+    { echo "mk-sd-image.sh: the partition layout overlaps itself" >&2; exit 1; }
+fits uboot-patched.bin "$(size "$V/uboot-patched.bin")" $((LOADER_SIZE * 512)) "the loader area"
+fits rootfs.ext2 "$(size "$BR/rootfs.ext2")" $((P2_SIZE * 512)) "p2 (rootfs)"
+fits boot-sd3.img "$(size "$V/boot-sd3.img")" $((P3_SIZE * 512)) "p3 (boot)"
+fits "Image + rk3568-pro.dtb" $(( $(size "$V/Image") + $(size "$V/rk3568-pro-patched.dtb") )) \
+     $((P1_SIZE * 512 - P1_OVERHEAD)) "p1 (bootfat), after FAT32's own tables,"
+
 for t in sfdisk mformat mcopy mmd dd truncate $([ "$COMPRESS" = 1 ] && echo xz); do
     command -v "$t" >/dev/null || { echo "need '$t' (Debian/Ubuntu: apt install mtools fdisk xz-utils)" >&2; exit 1; }
 done
+
+# On any failure: no temporary files left behind, and no half-written image
+# where a finished one is expected.
+P1=; EXT=; finished=
+trap 'rm -f ${P1:+"$P1"} ${EXT:+"$EXT"}; [ -n "$finished" ] || rm -f "$OUT"' EXIT
+trap 'exit 1' HUP INT TERM
 
 rm -f "$OUT"; truncate -s ${IMG_MB}M "$OUT"
 sfdisk "$OUT" >/dev/null <<EOF
@@ -53,7 +82,7 @@ start=${P3_START}, size=${P3_SIZE}, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, n
 EOF
 
 # Patched loader at sector 0x4000, and the FIT into p3 - plain byte writes.
-dd if="$V/uboot-patched.bin" of="$OUT" bs=512 seek=16384       count=8192 conv=notrunc status=none
+dd if="$V/uboot-patched.bin" of="$OUT" bs=512 seek=${LOADER_SECTOR} count=${LOADER_SIZE} conv=notrunc status=none
 dd if="$V/boot-sd3.img"      of="$OUT" bs=512 seek=${P3_START}            conv=notrunc status=none
 
 # p1: a FAT32 fallback boot partition, built with mtools then blitted in.
@@ -79,6 +108,7 @@ dd if="$P1" of="$OUT" bs=512 seek=${P1_START} conv=notrunc status=none
 dd if="$BR/rootfs.ext2" of="$OUT" bs=512 seek=${P2_START} conv=notrunc status=none
 
 rm -f "$P1" "$EXT"
+finished=1
 echo "=== SD image: $OUT ($(du -h "$OUT" | cut -f1)) ==="
 
 if [ "$COMPRESS" = 1 ]; then

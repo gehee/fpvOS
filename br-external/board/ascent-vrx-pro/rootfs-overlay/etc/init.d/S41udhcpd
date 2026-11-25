@@ -3,7 +3,16 @@
 # Runs after S40network so usb0 already carries its static 192.168.3.1.
 DAEMON=/usr/sbin/udhcpd
 CONF=/etc/udhcpd.conf
-PIDF=/var/run/udhcpd.pid
+
+# This link's udhcpd, found by its config path: this busybox has no pidfile
+# support (CONFIG_FEATURE_PIDFILE is off), so the config's "pidfile" line is
+# ignored. The WiFi access point's udhcpd (usr/sbin/fpvos-wifi) runs with its
+# own config and is left alone.
+ours() {
+    for p in $(pidof udhcpd); do
+        tr '\0' '\n' < /proc/$p/cmdline 2>/dev/null | grep -qxF "$CONF" && echo $p
+    done
+}
 
 case "$1" in
   start|"")
@@ -17,8 +26,7 @@ case "$1" in
     ;;
   stop)
     printf "Stopping udhcpd: "
-    [ -f "$PIDF" ] && kill "$(cat $PIDF)" 2>/dev/null
-    killall udhcpd 2>/dev/null
+    for p in $(ours); do kill $p 2>/dev/null; done
     echo "OK"
     ;;
   restart|reload) "$0" stop; sleep 1; "$0" start ;;

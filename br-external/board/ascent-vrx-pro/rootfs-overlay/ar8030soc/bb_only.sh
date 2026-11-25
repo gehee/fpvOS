@@ -10,41 +10,62 @@
 # (Artosyn's binary artosyn_drv.ko only loads into the stock 5.10 kernel, so
 # an image with a kernel built from source has no other stack to fall back on.)
 
-# Which baseband profile to upload with the firmware.
+# The baseband firmware and the radio config uploaded with it. They come as a
+# pair - a config is written for one firmware - and are chosen together:
 #
-#   caddx  - the stock Ascent/Caddx profile, for the original air unit.
+#   Open8030, the open-source baseband firmware, with its own open8030.json:
+#     the default when its image is on the unit and kestrel-gnd's RADIO >
+#     Radio Firmware does not say STOCK (ar8030_firmware: 0). kestrel-gnd
+#     decides the same way, so it knows which firmware it is talking to.
+#   Stock's bb_demo_cx485_2PA.img otherwise, with the config of the baseband
+#   profile:
+#     caddx  - bb_config_gnd_pro.json, the stock Ascent/Caddx profile.
+#     try    - bb_config_try.json, an ad-hoc config to experiment with.
 #
-# Boot always uses `caddx` unless /usrdata/bb_profile says otherwise. Experiment
-# without touching the boot path by passing the profile in the environment:
+# The profile is /usrdata/bb_profile, or caddx without one; an unknown one
+# falls back to caddx, with a line in the log. The profiles are configs for
+# stock's firmware: with Open8030 one other than caddx does not apply, and the
+# log says so (RADIO > Radio Firmware: STOCK uses it).
 #
-#   BB_PROFILE=try BB_CFG=bb_config_try.json /ar8030soc/bb_only.sh   # ad-hoc config
+# BB_FW / BB_CFG in the environment still win, each over its half of the pair,
+# so a newer baseband build or a config can be tried without a rebuild:
+#   BB_PROFILE=try /ar8030soc/bb_only.sh
+#   BB_FW=bb_demo_cx485_2PA_18.21.10.img BB_PROFILE=try /ar8030soc/bb_only.sh
+# The driver uploads both to the chip's RAM on every bring-up - nothing is
+# written to the AR8030 permanently, so a reboot always returns to the default.
 #
 # A config the baseband firmware cannot run does NOT fail cleanly: the chip
 # resets back into BL1, the resident driver re-probes it and re-uploads, and
 # the two spin at ~2 Hz flooding the console. See the guard after the wait loop.
-BB_PROFILE="${BB_PROFILE:-$(cat /usrdata/bb_profile 2>/dev/null || echo caddx)}"
-# Open8030, the open-source baseband firmware, with its own radio config, is the
-# default when its image is on the unit; stock's when kestrel-gnd's RADIO >
-# Radio Firmware says STOCK (ar8030_firmware: 0), or without the image.
-# kestrel-gnd decides the same way. BB_FW / BB_CFG in the environment still win.
-if [ -z "$BB_FW" ] && ! grep -q '^ar8030_firmware: 0$' /etc/kestrel/kestrel-gnd.yaml 2>/dev/null &&
-   [ -f /lib/firmware/open8030.img ]; then
-    BB_FW=open8030.img
-    BB_CFG="${BB_CFG:-open8030.json}"
-fi
-case "$BB_PROFILE" in
-    caddx) BB_CFG="${BB_CFG:-bb_config_gnd_pro.json}" ;;
-    try)   BB_CFG="${BB_CFG:-bb_config_try.json}" ;;
-    *)     echo ">> unknown bb profile '$BB_PROFILE', falling back to caddx"
-           BB_PROFILE=caddx; BB_CFG=bb_config_gnd_pro.json ;;
-esac
-
-# The firmware blob is not profile-dependent; only the config changes.
-# Overridable so a newer baseband build can be tried without a rebuild:
-#   BB_FW=bb_demo_cx485_2PA_18.21.10.img BB_PROFILE=try /ar8030soc/bb_only.sh
-# The driver uploads this to the chip's RAM on every bring-up - nothing is
-# written to the AR8030 permanently, so a reboot always returns to the default.
-BB_FW="${BB_FW:-bb_demo_cx485_2PA.img}"
+select_pair() {
+    BB_PROFILE="${BB_PROFILE:-$(cat /usrdata/bb_profile 2>/dev/null || echo caddx)}"
+    case "$BB_PROFILE" in
+        caddx|try) ;;
+        *) echo ">> unknown bb profile '$BB_PROFILE', falling back to caddx"
+           BB_PROFILE=caddx ;;
+    esac
+    if [ -z "$BB_FW" ]; then
+        if ! grep -q '^ar8030_firmware: 0$' /etc/kestrel/kestrel-gnd.yaml 2>/dev/null &&
+           [ -f /lib/firmware/open8030.img ]; then
+            BB_FW=open8030.img
+        else
+            BB_FW=bb_demo_cx485_2PA.img
+        fi
+    fi
+    [ -n "$BB_CFG" ] && return 0
+    case "$BB_FW" in
+        open8030*)
+            BB_CFG=open8030.json
+            [ "$BB_PROFILE" = caddx ] ||
+                echo ">> bb profile '$BB_PROFILE' is a config for stock's firmware; Open8030 runs with $BB_CFG (RADIO > Radio Firmware: STOCK to use it)" ;;
+        *)
+            case "$BB_PROFILE" in
+                try) BB_CFG=bb_config_try.json ;;
+                *)   BB_CFG=bb_config_gnd_pro.json ;;
+            esac ;;
+    esac
+}
+select_pair
 
 # One bring-up at a time. kestrel-gnd asks for one (S60ar8030 restart) each
 # time it cannot connect, and in a crash loop it can ask again before the last
@@ -94,7 +115,7 @@ echo in > /sys/class/gpio/gpio83/direction
 echo in > /sys/class/gpio/gpio82/direction
 
 [ -e /usr/lib/firmware ] || { mkdir -p /usr/lib; ln -s /lib/firmware /usr/lib/firmware; }
-echo ">> baseband profile: $BB_PROFILE ($BB_CFG)"
+echo ">> baseband profile: $BB_PROFILE (firmware $BB_FW, config $BB_CFG)"
 
 # Stock also starts ar_fpv_upgrade here, twice: -c 1, its firmware upgrade
 # agent (flash_erase / nandwrite / mtd_write, reboot to recovery), and -x, a

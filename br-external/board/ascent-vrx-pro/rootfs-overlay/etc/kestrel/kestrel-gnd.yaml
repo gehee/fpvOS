@@ -28,15 +28,18 @@ enable_osd: true
 # --- recording --------------------------------------------------------------
 dvr_dir: /media/dvr
 # true (default) = record the screen: video and HUD as the pilot sees them,
-# re-encoded to H.264 at 60 fps. false = record the FPV stream as it arrives
-# from the air unit (H.265, the camera's own rate, no HUD).
+# re-encoded - H.265 unless dvr_screen_codec says h264. false = record the FPV
+# stream as it arrives from the air unit (H.265, the camera's own rate, no
+# HUD).
 # Each frame of a screen recording is rebuilt from what the screen showed -
 # the decoded picture and the HUD, blended with the RGA - without touching
 # the display, so no live picture is lost to it. Measured on the live feed
 # while recording: about +1 ms median latency at 1080p60 and +0.7 ms at
-# 1080p100, from the memory traffic. Recording FPV costs nothing. The file
-# runs at a constant 60 fps (repeat frames fill the gaps), so it plays in
-# real time.
+# 1080p100, from the memory traffic. Recording FPV costs nothing. The screen
+# is sampled at most dvr_screen_fps times a second (default 100), and the file
+# runs at a constant rate of at most 60 fps - every refresh of a 60 Hz screen,
+# every other one of a 120 Hz screen - with repeat frames filling the gaps, so
+# it plays in real time.
 dvr_screen: true
 # fmp4 (default): fragmented MP4 - a recording cut short by a power loss
 # still plays up to about its last second. mp4 writes its index only when

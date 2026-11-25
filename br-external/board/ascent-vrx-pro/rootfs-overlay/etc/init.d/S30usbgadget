@@ -31,10 +31,18 @@ start(){
   fi
   mkdir -p functions/acm.usb0
   ln -s functions/acm.usb0 configs/c.1/ 2>/dev/null
-  ls /sys/class/udc | head -n1 > UDC
+  udc=$(ls /sys/class/udc 2>/dev/null | head -n1)
+  [ -n "$udc" ] || { echo "usbgadget: no USB device controller - NCM+ACM not bound"; return 1; }
+  echo "$udc" > UDC 2>/dev/null || { echo "usbgadget: binding NCM+ACM to $udc failed"; return 1; }
   sleep 1
-  for i in 1 2 3 4 5 6 7 8; do ifconfig usb0 192.168.3.1 netmask 255.255.255.0 up 2>/dev/null && break; sleep 1; done
-  echo "usbgadget: NCM+ACM up, usb0=192.168.3.1"
+  up=
+  for i in 1 2 3 4 5 6 7 8; do ifconfig usb0 192.168.3.1 netmask 255.255.255.0 up 2>/dev/null && { up=1; break; }; sleep 1; done
+  if [ -n "$up" ]; then
+    echo "usbgadget: NCM+ACM up on $udc, usb0=192.168.3.1"
+  else
+    echo "usbgadget: NCM+ACM bound to $udc, but usb0 never came up - no USB network"
+    return 1
+  fi
 }
 stop(){ [ -d "$G" ] && { echo "" > "$G/UDC" 2>/dev/null; rm -rf "$G"; }; }
 case "$1" in start|"") start;; stop) stop;; restart) stop; start;; esac

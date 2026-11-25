@@ -6,9 +6,10 @@
 # kernel's own rtl8xxxu, which has access-point mode for the RTL8188F from 6.12
 # (the stock firmware's binary RTL8189FU.ko only loads into the stock kernel).
 #
-# kestrel's SYSTEM > WiFi AP setting runs this - at startup when the setting is
-# on, and whenever it is toggled. Nothing else starts it, and it is off by
-# default: it is a 2.4 GHz transmitter sitting next to the RC link.
+# kestrel's SYSTEM > WiFi AP menu item runs this whenever it is toggled, and
+# the AP stays up for that session only: nothing starts it at boot (/run, where
+# its state lives, is empty after every boot), so it is always off after a
+# reboot. It is a 2.4 GHz transmitter sitting next to the RC link.
 #
 # Network: SSID fpvOS-XXXX (the chip's MAC), WPA2 with the passphrase 12345678 -
 # the shortest WPA2 allows, and what stock uses. It keeps nobody out and is not
@@ -65,13 +66,43 @@ power() {
     echo "$1" > /sys/class/gpio/gpio$GPIO/value
 }
 
-# The network's name and passphrase, written the first time the AP starts and
-# left alone after that, so an edit to the file sticks.
+# A KEY= line of /etc/fpvos/wifi-ap, as text: everything after the first
+# "KEY=" to the end of the line, as kestrel reads it for its menu and QR code.
+# The file is never sourced as shell, so a name with spaces or a passphrase
+# with $ or ` in it is taken as written, not run.
+ident_key() { sed -n "s/^$1=//p" "$IDENT" 2>/dev/null | head -n 1; }
+
+# What WPA2 and hostapd can use: an SSID of 1-32 bytes with no control
+# characters, a passphrase of 8-63 printable ASCII characters.
+ssid_ok() {
+    n=$(printf '%s' "$1" | wc -c | tr -dc 0-9)
+    c=$(printf '%s' "$1" | tr -d '\001-\037\177' | wc -c | tr -dc 0-9)
+    [ "$n" -ge 1 ] && [ "$n" -le 32 ] && [ "$c" = "$n" ]
+}
+passphrase_ok() {
+    n=$(printf '%s' "$1" | wc -c | tr -dc 0-9)
+    [ "$n" -ge 8 ] && [ "$n" -le 63 ] && [ -z "$(printf '%s' "$1" | tr -d '\040-\176')" ]
+}
+
+# The network's name and passphrase into SSID and PASSPHRASE. The file is
+# written the first time the AP starts and left alone after that, so an edit
+# to it sticks - unless a value in it cannot be used (an empty or damaged file,
+# a passphrase too short for WPA2): that one is replaced by the default and the
+# file written afresh, rather than the AP never starting.
 identity() {
-    [ -f "$IDENT" ] && return 0
-    mac=$(tr -d ':' < /sys/class/net/wlan0/address | tr 'a-f' 'A-F')
+    SSID=$(ident_key SSID); PASSPHRASE=$(ident_key PASSPHRASE)
+    ssid_ok "$SSID" && passphrase_ok "$PASSPHRASE" && return 0
+    if [ -e "$IDENT" ]; then
+        ssid_ok "$SSID" || log "$IDENT: no usable SSID (1-32 bytes) - back to the default"
+        passphrase_ok "$PASSPHRASE" || log "$IDENT: no usable PASSPHRASE (8-63 printable ASCII) - back to the default"
+    fi
+    if ! ssid_ok "$SSID"; then
+        mac=$(tr -d ':' < /sys/class/net/wlan0/address | tr 'a-f' 'A-F')
+        SSID=fpvOS-$(echo "$mac" | cut -c9-12)
+    fi
+    passphrase_ok "$PASSPHRASE" || PASSPHRASE=12345678
     mkdir -p "$(dirname "$IDENT")"
-    printf 'SSID=fpvOS-%s\nPASSPHRASE=12345678\n' "$(echo "$mac" | cut -c9-12)" > "$IDENT.new"
+    printf 'SSID=%s\nPASSPHRASE=%s\n' "$SSID" "$PASSPHRASE" > "$IDENT.new"
     chmod 600 "$IDENT.new" && mv "$IDENT.new" "$IDENT" && sync
 }
 
@@ -114,7 +145,6 @@ start() {
 
     guard || { log "cannot keep the AP off SSH and the USB link (iptables); not starting it"; stop; return 1; }
     identity
-    . "$IDENT"
     ifconfig wlan0 up
     ch=$(pick_channel)
     [ -n "$ch" ] || ch=6
@@ -190,8 +220,7 @@ stop() {
 
 status() {
     if running; then
-        . "$IDENT"
-        echo "on $SSID $(cat "$RUN/state" 2>/dev/null)"
+        echo "on $(ident_key SSID) $(cat "$RUN/state" 2>/dev/null)"
     else
         echo "off"
     fi

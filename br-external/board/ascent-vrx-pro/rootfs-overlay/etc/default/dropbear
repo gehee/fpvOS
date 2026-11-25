@@ -10,6 +10,7 @@
 #
 # S30usbgadget brings usb0 up with 192.168.3.1 before this starts. If the
 # gadget failed, dropbear fails to bind and there is no SSH - closed, not open.
-# The serial console (ttyFIQ0, and the ACM function on the same USB port) is
-# unaffected.
+# The serial console, the getty on ttyFIQ0 (the debug UART), is unaffected.
+# The ACM function on the USB port (ttyGS0) is not a console: it carries
+# fpvos-update-service, for the host tools.
 DROPBEAR_ARGS="-p 192.168.3.1:22"

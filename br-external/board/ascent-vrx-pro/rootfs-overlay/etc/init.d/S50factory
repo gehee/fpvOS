@@ -129,7 +129,10 @@ start() {
     for t in mtdpart ubiattach ubidetach; do
         command -v "$t" >/dev/null || { log "$t missing - skipping"; return 0; }
     done
+    # cleanup on every way out: each return below ends in the exit at the
+    # bottom, and a signal exits too, so the EXIT trap runs.
     trap cleanup EXIT
+    trap 'exit 1' HUP INT TERM
 
     mtdpart add "/dev/mtd$master" "$NAME" "$OFF" "$SIZE" || { log "mtdpart add failed"; return 0; }
     part=$(mtd_num "$NAME")
@@ -143,17 +146,25 @@ start() {
     nand="$MNT/user_cfg.json"
     [ -f "$nand" ] || { log "stock has no pairing list yet"; return 0; }
 
-    mkdir -p /factory
+    mkdir -p "$(dirname "$SD")"
     if [ ! -f "$SD" ]; then
-        cp "$nand" "$SD.new" && chmod 600 "$SD.new" && sync && mv "$SD.new" "$SD" && sync
-        log "no SD pairing list - copied stock's"
+        if cp "$nand" "$SD.new" && chmod 600 "$SD.new" && sync && mv "$SD.new" "$SD" && sync; then
+            log "no SD pairing list - copied stock's"
+        else
+            rm -f "$SD.new"
+            log "no SD pairing list, and copying stock's failed - none yet"
+        fi
         return 0
     fi
 
     merge "$SD" "$nand" >"$SD.new" 2>>"$LOG"
     case $? in
-        0) chmod 600 "$SD.new" && sync && mv "$SD.new" "$SD" && sync
-           log "merged stock's pairings into $SD" ;;
+        0) if chmod 600 "$SD.new" && sync && mv "$SD.new" "$SD" && sync; then
+               log "merged stock's pairings into $SD"
+           else
+               rm -f "$SD.new"
+               log "writing the merged list failed - $SD left as it was"
+           fi ;;
         3) rm -f "$SD.new"; log "pairings already up to date" ;;
         *) rm -f "$SD.new"; log "merge failed - $SD left as it was" ;;
     esac

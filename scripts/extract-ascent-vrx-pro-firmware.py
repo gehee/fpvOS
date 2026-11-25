@@ -26,6 +26,8 @@ The Ascent VRX (AR9311) build does not use this script: the ar9311-firmware
 Buildroot package downloads its codec firmware and extracts it itself
 (br-external/package/ar9311-firmware/extract-ascent-vrx-firmware.py: OTRA image, SquashFS root).
 """
+from __future__ import annotations   # "Path | None" on Python before 3.10
+
 import argparse
 import hashlib
 import struct
@@ -38,6 +40,7 @@ import sys
 import tempfile
 import urllib.request
 import zipfile
+import zlib
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 VENDOR = ROOT / "vendor"
@@ -254,6 +257,8 @@ def _drive_direct(url: str) -> str:
 
 
 def _http_download(url: str, dest: pathlib.Path) -> None:
+    """Download url to dest, through dest.part: dest only ever appears
+    complete - as long as the server said it would be, when it says."""
     tmp = dest.with_suffix(dest.suffix + ".part")
     req = urllib.request.Request(url, headers={"User-Agent": "fpvos-extract"})
     try:
@@ -269,6 +274,9 @@ def _http_download(url: str, dest: pathlib.Path) -> None:
     except Exception as e:
         tmp.unlink(missing_ok=True)
         sys.exit(f"download failed: {e}")
+    if total and done != total:
+        tmp.unlink(missing_ok=True)
+        sys.exit(f"download incomplete: {done} of {total} bytes. Try again.")
     # Guard against Drive quota / login pages served as HTML instead of the file.
     with open(tmp, "rb") as f:
         head = f.read(4)
@@ -276,43 +284,79 @@ def _http_download(url: str, dest: pathlib.Path) -> None:
         tmp.unlink(missing_ok=True)
         sys.exit("download did not return firmware (Google Drive quota, or the "
                  "link changed). Try again later, or use --from-device.")
-    tmp.rename(dest)
+    tmp.replace(dest)
 
 
 def release_download() -> pathlib.Path:
     """Return the cached stock Caddx release (a zip, or a raw image), downloading
-    it on first use so the user never fetches firmware by hand."""
+    it on first use so the user never fetches firmware by hand.
+
+    The cache is the download of one URL, recorded beside it (.url): pointing
+    FPVOS_FIRMWARE_URL at another release downloads that one rather than
+    extracting the old file again. With FPVOS_FIRMWARE_SHA256 set, the hash
+    alone decides whether the cached file is the one wanted."""
     if not FIRMWARE_URL:
         sys.exit("No firmware URL configured. Set FPVOS_FIRMWARE_URL, or use "
                  "--from-ota <file> / --from-device root@<ip>.")
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     url = _drive_direct(FIRMWARE_URL)
     dl = CACHE_DIR / "caddx_release.bin"      # zip or raw image
-    if not (dl.is_file() and (not FIRMWARE_SHA256 or _sha256(dl) == FIRMWARE_SHA256)):
+    record = dl.with_name(dl.name + ".url")   # the URL it was downloaded from
+    if not dl.is_file():
+        cached = False
+    elif FIRMWARE_SHA256:
+        cached = _sha256(dl) == FIRMWARE_SHA256
+    else:
+        cached = record.is_file() and record.read_text().strip() == FIRMWARE_URL
+    if not cached:
         print(f"downloading stock Caddx firmware:\n  {FIRMWARE_URL}\n  -> {dl}")
+        record.unlink(missing_ok=True)
         _http_download(url, dl)
         if FIRMWARE_SHA256 and _sha256(dl) != FIRMWARE_SHA256:
             dl.unlink(missing_ok=True)
             sys.exit(f"checksum mismatch (expected {FIRMWARE_SHA256})")
+        record.write_text(FIRMWARE_URL + "\n")
         print(f"cached: {dl}")
     else:
         print(f"using cached download: {dl}")
     return dl
 
 
+def _is_member(img: pathlib.Path, info: zipfile.ZipInfo) -> bool:
+    """img holds exactly the zip member info describes: its size and CRC-32."""
+    if not img.is_file() or img.stat().st_size != info.file_size:
+        return False
+    crc = 0
+    with open(img, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            crc = zlib.crc32(chunk, crc)
+    return crc == info.CRC
+
+
 def release_member(dl: pathlib.Path, glob: str) -> pathlib.Path | None:
-    """Extract the release zip's member matching glob into the cache."""
+    """Extract the release zip's member matching glob into the cache. A copy
+    already there is used only when it matches the member (size and CRC-32);
+    a new one is written to .part and renamed once complete, so an
+    interrupted extraction never leaves a truncated image behind."""
     import fnmatch
     with zipfile.ZipFile(dl) as z:
         member = next((n for n in z.namelist()
                        if fnmatch.fnmatch(pathlib.PurePosixPath(n).name, glob)), None)
         if not member:
             return None
+        info = z.getinfo(member)
         img = CACHE_DIR / pathlib.PurePosixPath(member).name
-        if not img.is_file():
-            print(f"extracting {pathlib.PurePosixPath(member).name} from the release zip")
-            with z.open(member) as src, open(img, "wb") as f:
-                shutil.copyfileobj(src, f, 1 << 20)
+        if not _is_member(img, info):
+            print(f"extracting {img.name} from the release zip")
+            part = img.with_name(img.name + ".part")
+            try:
+                # zipfile checks the CRC-32 as it reads the member's end.
+                with z.open(member) as src, open(part, "wb") as f:
+                    shutil.copyfileobj(src, f, 1 << 20)
+            except BaseException:
+                part.unlink(missing_ok=True)
+                raise
+            part.replace(img)
         return img
 
 

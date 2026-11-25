@@ -9,8 +9,10 @@
 # exFAT has no resize tool at all.
 #
 # The filesystem is exFAT so recordings can be pulled off the card on Windows
-# and macOS without extra drivers. The stock kernel has exFAT built in, and
-# mkfs.exfat comes from buildroot's exfatprogs package. The partition is given
+# and macOS without extra drivers. fpvOS's kernel has exFAT built in
+# (CONFIG_EXFAT_FS=y, from the stock configuration linux.fragment builds on),
+# and mkfs.exfat, exfatlabel and fsck.exfat come from buildroot's exfatprogs
+# package. The partition is given
 # the Microsoft basic data GPT type for the same reason - a Linux-filesystem
 # type code makes other systems ignore the partition even when they can read
 # exFAT perfectly well.
@@ -73,6 +75,77 @@ create() {
         echo "dvrpart: sfdisk failed"; return 1; }
 }
 
+# exFAT names itself in its boot sector: bytes 3-10 are "EXFAT   ", in the
+# main boot sector (sector 0) and again in the backup (sector 12). 0: sector $1
+# carries it; 1: the sector was read and does not; 2: it could not be read.
+exfat_at() {
+    n=$(dd if="$PART" bs=512 skip="$1" count=1 2>/dev/null | wc -c | tr -dc 0-9)
+    [ "${n:-0}" -eq 512 ] || return 2
+    [ "$(dd if="$PART" bs=1 skip=$(( $1 * 512 + 3 )) count=8 2>/dev/null)" = "EXFAT   " ]
+}
+
+# fsck.exfat (exfatprogs) -p repairs what it safely can, without asking.
+repair() {
+    command -v fsck.exfat >/dev/null || { echo "dvrpart: $PART: $1, and no fsck.exfat to repair it"; return 1; }
+    echo "dvrpart: $PART: $1 - checking it (fsck.exfat -p)"
+    fsck.exfat -p "$PART" >/dev/null 2>&1
+    rc=$?
+    case $rc in
+        0) echo "dvrpart: fsck.exfat found nothing to repair" ;;
+        1) echo "dvrpart: fsck.exfat repaired $PART" ;;
+        *) echo "dvrpart: fsck.exfat could not repair $PART (exit $rc)"; return 1 ;;
+    esac
+}
+
+# Format p4 only when it is positively not exFAT, then mount it.
+#
+# The test is the boot-sector signature, read straight off the partition: it
+# is there on any exFAT filesystem however damaged the rest of it is, so
+# "already formatted" is a positive test. Formatting is reachable only when
+# both boot sectors were read and neither names exFAT - a newly carved region,
+# or one still holding whatever the card had before (this one still had an
+# ext4 signature from a Radxa image). An exFAT filesystem that exfatlabel or
+# the kernel cannot read (a power cut mid-write, an I/O error) is repaired
+# with fsck.exfat or left unmounted, never formatted; a wrong label on a good
+# filesystem is corrected in place. Getting this backwards would destroy every
+# recording on the card.
+prepare() {
+    exfat_at 0; main=$?
+    exfat_at 12; backup=$?
+    if [ "$main" = 0 ] || [ "$backup" = 0 ]; then
+        :
+    elif [ "$main" = 1 ] && [ "$backup" = 1 ]; then
+        echo "dvrpart: formatting $PART exFAT (no exFAT filesystem on it)"
+        mkfs.exfat -L dvr "$PART" >/dev/null 2>&1 || { echo "dvrpart: mkfs failed"; return 0; }
+    else
+        echo "dvrpart: cannot read $PART's boot sectors - leaving it alone"
+        return 0
+    fi
+
+    repaired=
+    if ! exfatlabel "$PART" >/dev/null 2>&1; then
+        repaired=1
+        repair "exFAT, but exfatlabel cannot read it" || {
+            echo "dvrpart: $PART left unmounted, not formatted - its recordings are as they were"
+            return 0; }
+    fi
+    # exfatlabel prints a version banner, then "label: <name>".
+    if LBL=$(exfatlabel "$PART" 2>/dev/null); then
+        LBL=$(echo "$LBL" | tail -1 | sed 's/^label: *//')
+        if [ "$(echo "$LBL" | tr 'A-Z' 'a-z')" != "dvr" ]; then
+            echo "dvrpart: relabelling $PART (was: ${LBL:-unlabelled})"
+            exfatlabel "$PART" dvr >/dev/null 2>&1
+        fi
+    fi
+    if mount -t exfat -o noatime "$PART" "$MNT" 2>/dev/null ||
+       { [ -z "$repaired" ] && repair "exFAT, but it does not mount" &&
+         mount -t exfat -o noatime "$PART" "$MNT" 2>/dev/null; }; then
+        echo "dvrpart: $MNT ready"
+    else
+        echo "dvrpart: $PART left unmounted, not formatted - its recordings are as they were"
+    fi
+}
+
 case "$1" in
   start|"")
     [ -b "$DEV" ] || exit 0
@@ -97,30 +170,8 @@ case "$1" in
 
     # Phase 2 (and steady state): the node exists - format it if it is blank,
     # then mount.
-    if [ -b "$PART" ]; then
-        # Probe with exfatlabel rather than by reading a label: it exits 0
-        # only on a real exFAT filesystem, so "already formatted" is a positive
-        # test. Reformatting is therefore reachable only when the partition is
-        # genuinely not exFAT - a newly carved region, or one still holding
-        # whatever the card had before (this one still had an ext4 signature
-        # from a Radxa image). A wrong label on a good filesystem is corrected
-        # in place, never by mkfs; getting that backwards would silently
-        # destroy every recording on the card, once per boot.
-        if exfatlabel "$PART" >/dev/null 2>&1; then
-            # exfatlabel prints a version banner, then "label: <name>".
-            LBL=$(exfatlabel "$PART" 2>/dev/null | tail -1 | sed 's/^label: *//')
-            if [ "$(echo "$LBL" | tr 'A-Z' 'a-z')" != "dvr" ]; then
-                echo "dvrpart: relabelling $PART (was: ${LBL:-unlabelled})"
-                exfatlabel "$PART" dvr >/dev/null 2>&1
-            fi
-        else
-            echo "dvrpart: formatting $PART exFAT (no exFAT filesystem found)"
-            mkfs.exfat -L dvr "$PART" >/dev/null 2>&1 || { echo "dvrpart: mkfs failed"; exit 0; }
-        fi
-        mount -t exfat -o noatime "$PART" "$MNT" 2>/dev/null && echo "dvrpart: $MNT ready" \
-            || echo "dvrpart: mount of $PART failed"
-        exit 0
-    fi
+    [ -b "$PART" ] && prepare
+    exit 0
     ;;
   stop)   umount "$MNT" 2>/dev/null ;;
   restart|reload) "$0" stop; "$0" start ;;

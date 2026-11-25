@@ -4,3 +4,10 @@
 # and on the USB network link (etc/init.d/S41udhcpd, which skipped itself
 # while the applet was missing).
 CONFIG_UDHCPD=y
+
+# Nothing that writes the NAND, as for mtd-utils in the defconfig. Buildroot's
+# busybox.config already leaves flash_eraseall, flash_lock/unlock, flashcp,
+# nandwrite/nanddump and ubiattach/detach/mkvol/rmvol/rsvol/updatevol out, but
+# turns ubirename on, which rewrites a UBI device's volume table. S50factory's
+# ubiattach, ubidetach and mtdpart come from mtd-utils, not busybox.
+# CONFIG_UBIRENAME is not set

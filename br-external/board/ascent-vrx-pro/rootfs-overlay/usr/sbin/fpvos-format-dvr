@@ -10,11 +10,17 @@
 #
 # The outcome is the one line in /run/fpvos-format-dvr.status: "running",
 # "ok <what>" or "failed <why>"; kestrel-gnd shows it once it is back.
+#
+# One format at a time: start takes /run/fpvos-format-dvr.lock (fd 8) and the
+# worker keeps it to the end, so a second start (SSH during the UI's, say) is
+# refused instead of formatting beside it. Nothing the worker starts may keep
+# fd 8, or the restarted receiver would hold the lock for good.
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 status=/run/fpvos-format-dvr.status
 DEV=/dev/mmcblk1
 PART=${DEV}p4
 MNT=/media/dvr
+lock=/run/fpvos-format-dvr.lock
 
 size_text() {
 	awk -v s="$(cat /sys/class/block/${PART##*/}/size)" 'BEGIN { printf "%.1f GB", s * 512 / 1e9 }'
@@ -31,12 +37,14 @@ check() {
 }
 
 worker() {
+	# Only under start's lock, never beside another worker.
+	flock -n 8 2>/dev/null || exit 1
 	echo running > "$status"
 	what="Recordings partition, $(size_text)"
 	fail() {
 		echo "failed $*" > "$status"
 		mountpoint -q "$MNT" || mount -t exfat -o noatime "$PART" "$MNT" 2>/dev/null
-		/etc/init.d/S70kestrel start >/dev/null 2>&1
+		/etc/init.d/S70kestrel start >/dev/null 2>&1 8>&-
 		exit 1
 	}
 	/etc/init.d/S70kestrel stop >/dev/null 2>&1 || fail "could not stop the receiver"
@@ -47,12 +55,14 @@ worker() {
 	sync
 	mount -t exfat -o noatime "$PART" "$MNT" || fail "the new partition did not mount"
 	echo "ok $what formatted" > "$status"
-	/etc/init.d/S70kestrel start >/dev/null 2>&1
+	/etc/init.d/S70kestrel start >/dev/null 2>&1 8>&-
 }
 
 case "${1:-}" in
 	check) check ;;
 	start)
+		exec 8>>"$lock"
+		flock -n 8 || { echo "A format is already running"; exit 1; }
 		why=$(check) || { echo "$why"; exit 1; }
 		echo running > "$status"
 		setsid "$0" worker </dev/null >/dev/null 2>&1 &
