@@ -2,11 +2,14 @@ BR2_aarch64=y
 BR2_cortex_a55=y
 BR2_TOOLCHAIN_BUILDROOT_GLIBC=y
 BR2_TOOLCHAIN_BUILDROOT_CXX=y
-# The toolchain's headers stay Buildroot's latest, as before the kernel was
-# built here. Left to default, building a kernel switches them to "same as
-# the kernel", guesses a custom tree is 2.x, and glibc - which needs 3.2 or
-# later - silently gives way to uClibc.
-BR2_KERNEL_HEADERS_6_18=y
+# The toolchain's headers are the kernel's own (Rockchip's 6.12 tree, below),
+# so glibc and every package are built for the kernel the goggle runs: with
+# newer headers glibc is configured for a newer kernel (--enable-kernel) and
+# may use what 6.12 does not have. The version is named: left to guess, a
+# custom tree is taken for 2.x, and glibc - which needs 3.2 or later -
+# silently gives way to uClibc.
+BR2_KERNEL_HEADERS_AS_KERNEL=y
+BR2_PACKAGE_HOST_LINUX_HEADERS_CUSTOM_6_12=y
 BR2_TARGET_GENERIC_HOSTNAME="vrxpro"
 BR2_TARGET_GENERIC_ISSUE="fpvOS VRX Pro (RK3568)"
 BR2_TARGET_GENERIC_ROOT_PASSWD="fpvos"
