@@ -47,5 +47,7 @@ mkimage -A arm64 -O linux -T kernel -C lz4 -a 0x20200000 -e 0x20200000 \
     -n 'fpvOS SteadyDigital recovery' \
     -d "$images/Image-recovery.lz4" "$images/kernel-recovery.uImage" >/dev/null
 python3 "$repo_dir/boot/mkar9311img.py" "$images/kernel-recovery.uImage" "$images/kernel-recovery.img"
-[ "$(stat -c %s "$images/kernel-recovery.img")" -le 6291456 ]
-echo "kernel-recovery.img: $(stat -c %s "$images/kernel-recovery.img") bytes, sha256 $(sha256sum "$images/kernel-recovery.img" | cut -d' ' -f1)"
+[ "$(stat -L -c %s "$images/kernel-recovery.img")" -le 6291456 ]
+echo "kernel-recovery.img: $(stat -L -c %s "$images/kernel-recovery.img") bytes, sha256 $(sha256sum "$images/kernel-recovery.img" | cut -d' ' -f1)"
+# Its release name carries the fpvOS version of the build it comes from.
+"$repo_dir/boot/versioned-name.sh" "$images/kernel-recovery.img" "$(cat "$out/target/etc/fpvos-version")" fpvos-steadydigital-recovery

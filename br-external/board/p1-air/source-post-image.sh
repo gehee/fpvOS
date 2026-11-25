@@ -9,5 +9,8 @@ python3 "$boot/p1-bootguard.py" "$BINARIES_DIR/Image" "$BINARIES_DIR/p1-bootguar
     -n 'fpvOS P1 recovery' -d "$BINARIES_DIR/Image.guarded.lz4" "$BINARIES_DIR/uImage"
 python3 "$boot/mkar9311img.py" "$BINARIES_DIR/uImage" "$BINARIES_DIR/kernel.img"
 [ "$(stat -c %s "$BINARIES_DIR/kernel.img")" -le 6291456 ]
-python3 "$BR2_EXTERNAL_FPVOS_PATH/../tools/fpvos-update/package.py" --board p1-air \
+# Its label and its file name carry the fpvOS version (scripts/fpvos-version).
+version=$(cat "$TARGET_DIR/etc/fpvos-version")
+python3 "$BR2_EXTERNAL_FPVOS_PATH/../tools/fpvos-update/package.py" --board p1-air --release "$version" \
     "$BINARIES_DIR" "$BINARIES_DIR/fpvos-p1-air.fwu" --replace
+"$boot/versioned-name.sh" "$BINARIES_DIR/fpvos-p1-air.fwu" "$version"

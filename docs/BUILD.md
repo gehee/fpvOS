@@ -213,8 +213,20 @@ Sub-commands for iterating:
 The VRX Pro images are in `output/ascent-vrx-pro/images/`:
 
 - `sdcard.img` — the raw image, for `dd`
-- `sdcard.img.xz` — the same image compressed, for balenaEtcher or Raspberry
-  Pi Imager, and the one to copy around
+- `fpvos-vrxpro-<version>.img.xz` — the same image compressed, for balenaEtcher
+  or Raspberry Pi Imager, and the one to copy around (`sdcard.img.xz` is a link
+  to it)
+
+Every image an fpvOS build hands out carries the fpvOS version in its name
+(`scripts/fpvos-version`: `2026.11.beta1` on the tag, `2026.11.beta1+g<commit>`
+between tags): `fpvos-ascent-vrx-<version>.fwu`, `fpvos-p1-air-<version>.fwu`,
+`fpvos-p1-goggle-<version>.fwu`, `fpvos-steadydigital-<version>.fwu`, and the
+recovery kernels `fpvos-p1-air-recovery-<version>.img` and
+`fpvos-steadydigital-recovery-<version>.img`. The plain names (`fpvos-p1-air.fwu`,
+`kernel-recovery.img`, `sdcard.img.xz`) are links to them, and a build removes
+the earlier versions' copies. The Ascent Lite's `Ascent_H_Sky_18_21_10.img`
+keeps its name: the Flasher and Caddx's PC tool match it. A bundle's release
+label is the same version.
 
 `COMPRESS=0 ./build.sh` skips the `.xz` when you're iterating and only `dd`.
 

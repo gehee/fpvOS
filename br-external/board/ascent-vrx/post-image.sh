@@ -14,5 +14,8 @@ python3 "$repo_dir/boot/mkar9311img.py" \
     "$images/kernel.uImage" "$images/kernel.img"
 
 # Development bundle uses vendor USB framing, without release/signature policy.
-python3 "$repo_dir/tools/fpvos-update/package.py" \
+# Its label and its file name carry the fpvOS version (scripts/fpvos-version).
+version=$(cat "$TARGET_DIR/etc/fpvos-version")
+python3 "$repo_dir/tools/fpvos-update/package.py" --release "$version" \
     --board ascent-vrx "$images" "$images/fpvos-ascent-vrx.fwu" --replace
+"$repo_dir/boot/versioned-name.sh" "$images/fpvos-ascent-vrx.fwu" "$version"

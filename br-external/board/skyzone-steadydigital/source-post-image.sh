@@ -42,5 +42,8 @@ python3 "$repo_dir/boot/mkar9311img.py" "$images/kernel.uImage" "$images/kernel.
 # kernel.img must fit the GPT kernel1 partition (0x600000).
 [ "$(stat -c %s "$images/kernel.img")" -le 6291456 ]
 
-python3 "$repo_dir/tools/fpvos-update/package.py" --board skyzone-steadydigital \
+# Its label and its file name carry the fpvOS version (scripts/fpvos-version).
+version=$(cat "$TARGET_DIR/etc/fpvos-version")
+python3 "$repo_dir/tools/fpvos-update/package.py" --board skyzone-steadydigital --release "$version" \
     "$images" "$images/fpvos-steadydigital.fwu" --replace
+"$repo_dir/boot/versioned-name.sh" "$images/fpvos-steadydigital.fwu" "$version"

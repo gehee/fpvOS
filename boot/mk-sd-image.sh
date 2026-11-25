@@ -127,7 +127,14 @@ if [ "$COMPRESS" = 1 ]; then
     # Keep the raw image (-k) for dd and for iterating; the .xz is what gets
     # flashed with a GUI tool or handed to someone else.
     xz -T0 -k -f "$OUT"
-    echo "=== compressed: $OUT.xz ($(du -h "$OUT.xz" | cut -f1)) ==="
-    echo "flash:  balenaEtcher -> Flash from file -> $(basename "$OUT").xz"
+    # Its release name carries the fpvOS version, when the build left one
+    # (fpvos-vrxpro-<version>.img.xz; $OUT.xz stays, as a link to it).
+    flash=$OUT.xz
+    VERSION_FILE=${VERSION_FILE:-$BR/../target/etc/fpvos-version}
+    if [ -f "$VERSION_FILE" ]; then
+        flash=$("$ROOT/boot/versioned-name.sh" "$OUT.xz" "$(cat "$VERSION_FILE")" fpvos-vrxpro)
+    fi
+    echo "=== compressed: $flash ($(du -hL "$flash" | cut -f1)) ==="
+    echo "flash:  balenaEtcher -> Flash from file -> $(basename "$flash")"
 fi
 echo "   or:  sudo dd if=$OUT of=/dev/sdX bs=4M conv=fsync"
