@@ -66,6 +66,7 @@ jobs:
         run: |
           python3 -m py_compile boot/mkar9311img.py boot/p1-bootguard.py scripts/ar9311-ram-transfer.py
           python3 -m unittest discover -s tools/fpvos-update/tests -v
+          python3 scripts/tests/test_fpvos_version.py -v
 
       - name: AR9311 firmware extraction tests
         run: python3 -m unittest discover -s br-external/package/ar9311-firmware/tests -v

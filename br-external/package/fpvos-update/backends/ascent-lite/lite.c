@@ -190,7 +190,7 @@ static int cpu_temperature(void)
 static char serial_number[64], hardware[64];
 
 /* The firmware field keeps stock's name and version for the vendor's PC tool;
- * fpvOS's own version (git describe of the build) goes in the SDK field, which
+ * fpvOS's own version (scripts/fpvos-version) goes in the SDK field, which
  * the PC tool does not check. */
 #define VERSION_FILE "/usrdata/fpv/air/VERSION"
 

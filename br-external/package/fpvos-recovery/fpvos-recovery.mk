@@ -17,6 +17,7 @@ define FPVOS_RECOVERY_BUILD_CMDS
 		$(TARGET_STRIP) $(HOST_DIR)/bin/mkpasswd \
 		$(FPVOS_UPDATE_SITE)/backends/$(FPVOS_UPDATE_BOARD)/profile.json \
 		$(call qstrip,$(BR2_ROOTFS_OVERLAY))
+	$(BR2_EXTERNAL_FPVOS_PATH)/../scripts/fpvos-version > $(@D)/root/etc/fpvos-version
 endef
 
 $(eval $(generic-package))

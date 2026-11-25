@@ -306,6 +306,7 @@ def main():
                 elif kind == 0:
                     fd, client, info = reconnect(args.port, board, image_hash=result['sha256'])
                     result['boot_verified'] = True
+                    result['fpvos_version'] = info['sdk']
                 else:
                     result['boot_verified'] = False
                     result['note'] = 'Vendor USB identity differs; verify the stock boot separately.'

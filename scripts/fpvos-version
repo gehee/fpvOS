@@ -1,0 +1,25 @@
+#!/bin/sh
+# The fpvOS version a build reports, the same for every image:
+#   on a release tag, clean:  the tag              2026.11.beta1
+#   anywhere else:            VERSION + commit     2026.11.beta1+g304b4c7a[-dirty]
+#   no git (a tarball, a container that cannot read .git): VERSION alone
+# It goes into /etc/fpvos-version (the Lite: /usrdata/fpv/air/VERSION), which
+# the updater reports in FIND_DEVICE's SDK field (31 characters at most).
+# usage: fpvos-version [tree]   (default: the tree this script is in)
+set -eu
+root=${1:-$(cd "$(dirname "$0")/.." && pwd)}
+base=$(sed -n '1{s/[[:space:]]*$//;p;}' "$root/VERSION")
+[ -n "$base" ] || { echo "fpvos-version: $root/VERSION is empty" >&2; exit 1; }
+
+g() { git -C "$root" -c safe.directory='*' "$@" 2>/dev/null; }
+if ! sha=$(g rev-parse --short=8 HEAD); then
+	echo "$base"
+	exit 0
+fi
+dirty=
+[ -z "$(g status --porcelain --untracked-files=no)" ] || dirty=-dirty
+if [ -z "$dirty" ] && tag=$(g describe --exact-match --tags HEAD); then
+	echo "$tag"
+else
+	echo "$base+g$sha$dirty"
+fi

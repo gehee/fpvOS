@@ -64,10 +64,10 @@ fi
 # only for a build meant for that one goggle - never ship it in a release.
 mkdir -p "$TARGET/factory"
 
-# The fpvOS version, from VERSION at the top of the tree: /etc/fpvos-version
-# for scripts, and os-release so the system names itself fpvOS, not Buildroot.
-FPVOS_VERSION=$(cat "${VENDOR%/vendor/rootfs}/VERSION")
-echo "$FPVOS_VERSION" > "$TARGET/etc/fpvos-version"
+# The fpvOS version every image reports (scripts/fpvos-version, written to
+# /etc/fpvos-version by external.mk before this script runs), also in
+# os-release so the system names itself fpvOS, not Buildroot.
+FPVOS_VERSION=$(cat "$TARGET/etc/fpvos-version")
 if [ -f "$TARGET/usr/lib/os-release" ]; then
     sed -i -e "s/^NAME=.*/NAME=fpvOS/" -e "s/^ID=.*/ID=fpvos/" \
            -e "s/^VERSION=.*/VERSION=$FPVOS_VERSION/" \

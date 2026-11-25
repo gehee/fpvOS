@@ -31,13 +31,13 @@ def compile_framework(destination):
         if name == 'verify':
             files.append(str(BACKEND / 'images.c'))
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
-                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
+                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
 
 
 def compile_receiver(destination, name, *flags, sources=()):
     """A receiver built as compile_framework's, with test-only FLAGS and SOURCES."""
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
-                    f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"',
+                    f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"',
                     *flags, '-I'+str(SRC), str(SRC / 'receiver.c'), str(destination / 'profile.c'),
                     *map(str, sources), '-o', str(destination / name)], check=True)
     return destination / name
@@ -133,6 +133,7 @@ class Tests(unittest.TestCase):
         os.close(self.slave)
         (self.bin / "clean-boot").unlink(missing_ok=True)
         (self.bin / "location").unlink(missing_ok=True)
+        (self.bin / "fpvos-version").unlink(missing_ok=True)
         self.temp.cleanup()
 
     def start(self, data, destination=CLIENT.VERIFY_DESTINATION, md5=None):
@@ -466,6 +467,19 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         h = self.client.exact(36, time.monotonic() + 2)
         self.assertEqual(CLIENT.HEADER.unpack(h)[9], 34)
         self.assertEqual(len(self.client.exact(300, time.monotonic() + 2)), 300)
+
+    def test_device_info_reports_the_image_version(self):
+        """The image's /etc/fpvos-version (scripts/fpvos-version) is the SDK
+        field, read at every request; "development" without one."""
+        self.assertEqual(self.client.info()['sdk'], 'development')
+        (self.bin / 'fpvos-version').write_text('2026.11.beta1+g304b4c79-dirty\n')
+        self.assertEqual(self.client.info()['sdk'], '2026.11.beta1+g304b4c79-dirty')
+        (self.bin / 'fpvos-version').write_text('2026.11.beta1\n')
+        self.assertEqual(self.client.info()['sdk'], '2026.11.beta1')
+        (self.bin / 'fpvos-version').write_text('')
+        self.assertEqual(self.client.info()['sdk'], 'development')
+        (self.bin / 'fpvos-version').write_text('x' * 80)
+        self.assertEqual(self.client.info()['sdk'], 'x' * 31)
 
     def test_oversized_frame_disconnects_without_allocation(self):
         h = bytearray(CLIENT.packet(0x74))

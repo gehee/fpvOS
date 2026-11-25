@@ -28,6 +28,11 @@
 #ifndef CLEAN_BOOT_MARKER
 #define CLEAN_BOOT_MARKER "/run/fpvos-clean-boot"
 #endif
+/* The fpvOS version of this image (scripts/fpvos-version, written at build):
+ * FIND_DEVICE's SDK field, which the Flasher shows for every board. */
+#ifndef VERSION_FILE
+#define VERSION_FILE "/etc/fpvos-version"
+#endif
 /* The profile's location file; a test build puts it elsewhere. */
 #ifdef LOCATION_FILE
 #define location_file() LOCATION_FILE
@@ -406,7 +411,17 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 			return reply(h, b, sizeof(b));
 		}
 		fpvos_put_le32(b, CHUNK);
-		snprintf((char *)b + 4, 32, "development");
+		char version[32] = "development";
+		FILE *version_file = fopen(VERSION_FILE, "r");
+		if (version_file) {
+			if (!fgets(version, sizeof(version), version_file))
+				version[0] = 0;
+			fclose(version_file);
+			version[strcspn(version, "\r\n")] = 0;
+			if (!version[0])
+				snprintf(version, sizeof(version), "development");
+		}
+		snprintf((char *)b + 4, 32, "%s", version);
 		snprintf((char *)b + 36, 64, "fpvOS updater");
 		snprintf((char *)b + 104, 64, "fpvOS unsigned development updates");
 		FILE *identity = fopen("/etc/fpvos-installed-sha256", "r");

@@ -23,17 +23,18 @@ VENDOR_FILES = {
 class RadioStack(unittest.TestCase):
     def setUp(self):
         temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); self.d = Path(temp.name)
-        # The tree the hook finds its vendor/ and VERSION in, from its own path.
+        # The tree the hook finds its vendor/ in, from its own path.
         root = self.d / 'tree'
         (root / 'br-external/board/ascent-vrx-pro').mkdir(parents=True)
         shutil.copy(POST_BUILD, root / 'br-external/board/ascent-vrx-pro/post-build.sh')
-        (root / 'VERSION').write_text('2026.11\n')
         for rel, data in VENDOR_FILES.items():
             (root / 'vendor/rootfs' / rel).parent.mkdir(parents=True, exist_ok=True)
             (root / 'vendor/rootfs' / rel).write_text(data)
         self.hook = root / 'br-external/board/ascent-vrx-pro/post-build.sh'
         self.target = self.d / 'target'
         (self.target / 'etc').mkdir(parents=True)
+        # external.mk's finalize hook, before post-build.sh
+        (self.target / 'etc/fpvos-version').write_text('2026.11+g304b4c79\n')
         (self.target / 'usr/lib').mkdir(parents=True)
         (self.target / 'usr/lib/libar8030_client.so').write_text("ar-libre's library")
         for d in ('build', 'host', 'tmp'):

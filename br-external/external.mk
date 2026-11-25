@@ -51,3 +51,11 @@ define FPVOS_RECOVERY_KERNEL_CONFIG
 endef
 LINUX_KCONFIG_FIXUP_CMDS += $(FPVOS_RECOVERY_KERNEL_CONFIG)
 endif
+
+# Every image names its fpvOS version the same way (scripts/fpvos-version):
+# /etc/fpvos-version, which fpvos-update reports to the Flasher. Written at
+# every build, so it never lags behind the tree it was built from.
+define FPVOS_VERSION_FILE
+	$(BR2_EXTERNAL_FPVOS_PATH)/../scripts/fpvos-version > $(TARGET_DIR)/etc/fpvos-version
+endef
+TARGET_FINALIZE_HOOKS += FPVOS_VERSION_FILE

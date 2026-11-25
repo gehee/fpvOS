@@ -131,7 +131,8 @@ if [ -n "$FPVOS_AIR_ROOT_PASSWORD" ]; then
 else
 	echo "air: FPVOS_AIR_ROOT_PASSWORD empty, so no password login in this image" >&2
 fi
-git -C "$ROOT" describe --always --dirty > "$WORK/fpv/fpv/air/VERSION"
+# The same version every fpvOS image reports (scripts/fpvos-version).
+"$ROOT/scripts/fpvos-version" "$ROOT" > "$WORK/fpv/fpv/air/VERSION"
 
 # The PC tool matches the file name against the version in the header, so the
 # image keeps the stock version and name.
