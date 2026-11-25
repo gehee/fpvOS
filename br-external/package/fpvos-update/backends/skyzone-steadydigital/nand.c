@@ -8,6 +8,7 @@
 #include "root.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -210,8 +211,10 @@ static int transaction(const char *source)
     if (got) goto done;
     /* Select the bank that is not written before modifying the target. Power
      * loss during installation then boots what it holds (stock); only verified
-     * images select the target. No change to environment/U-Boot selection or
-     * factory contents. */
+     * images select the target. A selection is the vendor's slot flip
+     * (sd_set_bank in layout.h): env, U-Boot, kernel, DTB and userapp move
+     * together, so the other bank boots with its own environment and U-Boot.
+     * Factory contents are never changed. */
     unsigned bank;
     if (target_bank(&bank) || remove_stock_hook() || p1_select_bank(bank ^ 1)) goto done;
     for (unsigned i = 0; i < 2; i++) {
@@ -312,6 +315,14 @@ static int boot(void)
 
 int fpvos_stock_runtime_valid(void) { return p1_stock() == 1; }
 
+/* What writes the GPT or a bank runs to its end: a reboot from SSH (SIGTERM
+ * to all) between the erase and the last page of the one GPT record would
+ * leave no partition table. As the Ascent VRX's install. */
+static void hold_signals(void)
+{
+    signal(SIGHUP,SIG_IGN); signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN); signal(SIGPIPE,SIG_IGN);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2 || geteuid()) return 2;
@@ -328,6 +339,7 @@ int main(int argc, char **argv)
         puts("SteadyDigital NAND layout verified; stock bank and factory contents preserved"); rc = 0;
     } else if (!strcmp(argv[1],"install") && argc == 3) {
         if (!regular(P1_WORK "/clean")) goto done;
+        hold_signals();
         const char *starting = "0 3 verifying and installing\n";
         if (p1_atomic(P1_WORK "/status",starting,strlen(starting),0600)) goto done;
         rc = transaction(argv[2]);
@@ -340,6 +352,7 @@ int main(int argc, char **argv)
         rc = clean_flag(1);
     } else if (!strcmp(argv[1],"stock") && argc == 2) {
         unsigned bank;
+        hold_signals();
         rc = stock_bank(&bank) || remove_stock_hook() || p1_select_bank(bank);
     }
  done:

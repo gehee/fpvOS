@@ -15,6 +15,7 @@ import test_update as base
 
 PKG, SRC = base.PKG, base.SRC
 BACKEND = PKG / 'backends/ascent-vrx'
+RECEIVER = '/usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend'
 sys.path.insert(0, str(PKG))
 spec = importlib.util.spec_from_file_location('bootstrap', PKG / 'embed-bootstrap.py')
 bootstrap = importlib.util.module_from_spec(spec)
@@ -129,11 +130,31 @@ class BootstrapArtifact(unittest.TestCase):
             (root/'chroot').write_text('#!/bin/sh\nshift\nexec "$@"\n')
             (root/'chroot').chmod(0o755)
             command = (BACKEND/'bootstrap-ram.sh').read_text().splitlines()[-1]
-            command = command.replace('exec /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend',
-                                      'command -v md5sum; printf "%s\\n" "$PATH"')
+            self.assertIn(RECEIVER, command)
+            command = command.replace(RECEIVER, 'command -v md5sum; printf "%s\\n" "$PATH"; exit 0')
             result = subprocess.run(['/bin/sh', '-c', command], env={'PATH':tmp, 'root':'fixture'}, capture_output=True, check=True)
             self.assertIn(b'/bin/md5sum\n', result.stdout)
             self.assertTrue(result.stdout.endswith(b'/bin:/usr/sbin:/usr/libexec\n'))
+
+    def test_stock_bootstrap_respawns_the_receiver(self):
+        """In the stock-bootstrap session the receiver is the last process:
+        one that ends (framing error, stalled frame, hangup) is started again,
+        not left for a power cycle."""
+        for backend in ('ascent-vrx', 'p1-air', 'skyzone-' + 'steadydigital'):
+            with self.subTest(backend), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root/'chroot').write_text('#!/bin/sh\nshift\nexec "$@"\n')
+                (root/'chroot').chmod(0o755)
+                command = (PKG/'backends'/backend/'bootstrap-ram.sh').read_text().splitlines()[-1]
+                self.assertTrue(command.startswith('exec chroot "$root" /bin/sh -c '))
+                self.assertIn(RECEIVER, command)
+                # The stand-in receiver fails at once, twice; the third ends the loop.
+                runs = root/'runs'
+                command = command.replace(RECEIVER, f'echo run >> "{runs}"; '
+                                          f'[ "$(wc -l < "{runs}")" -lt 3 ] || exit 0; false')
+                subprocess.run(['/bin/sh', '-c', command], env={'PATH': f'{tmp}:/usr/bin:/bin', 'root': 'fixture'},
+                               check=True, timeout=20)
+                self.assertEqual(runs.read_text(), 'run\n' * 3)
 
 
 class RuntimePreflight(unittest.TestCase):

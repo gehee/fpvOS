@@ -19,6 +19,35 @@ class Profiles(unittest.TestCase):
             with self.subTest(name=name), self.assertRaisesRegex(ValueError, 'unsupported'):
                 get_profile(name)
 
+    def test_serial_backend_board_is_found(self):
+        """The VRX Pro shares the serial backend: its profile is
+        backends/serial/ascent-vrx-pro.json, as that backend.mk reads it."""
+        profile = get_profile('ascent-vrx-pro')
+        self.assertEqual(profile['hardware'], 'ASCENT_VRX_PRO')
+        self.assertEqual(profile['usb_identity'][2], 'fpvos-ascent-vrx-pro')
+        self.assertIn('backends/serial/$(FPVOS_UPDATE_BOARD).json', (PKG/'backends/serial/backend.mk').read_text())
+        with self.assertRaisesRegex(ValueError, 'unsupported'):
+            get_profile('serial')
+
+    def test_dtb_limit_is_the_one_the_unit_accepts(self):
+        """A DTB the package tool takes is one the unit's image check takes:
+        the AR9311 A/B boards' profiles say the images.c limit (0xf000)."""
+        import re
+        for board, images in (('p1-air', 'p1-air'), ('p1-goggle', 'p1-air'),
+                              ('skyzone-' + 'steadydigital', 'skyzone-' + 'steadydigital')):
+            with self.subTest(board):
+                source = (PKG/'backends'/images/'images.c').read_text()
+                dtb = source[source.index('if (index == 1)'):]
+                limit = int(re.search(r'size <= (0x[0-9a-f]+)', dtb).group(1), 16)
+                profile = get_profile(board)
+                self.assertEqual(profile['limits'][1], limit)
+                with tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    for index, name in enumerate(profile['names']):
+                        (root/name).write_bytes(b'x' * (limit + 1 if index == 1 else 64))
+                    with self.assertRaisesRegex(ValueError, 'exceeds its allowed size'):
+                        PACKAGE.build(root, profile)
+
     def test_second_board_bundle_and_image_backend(self):
         profile = dict(board_id=902, hardware='Test board', usb_identity=['1234','5678','test-board'],
                        names=['boot.bin','system.bin'], limits=[8,8], counts=[2,0],

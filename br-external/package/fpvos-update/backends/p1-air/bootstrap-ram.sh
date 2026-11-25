@@ -50,4 +50,6 @@ mount --bind /dev "$root/dev"
 mount --bind /proc "$root/proc"
 mount --bind /sys "$root/sys"
 : >"$root/run/fpvos-clean-boot"
-exec chroot "$root" /bin/sh -c 'PATH=/bin:/usr/sbin:/usr/libexec; export PATH; exec /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend'
+# Nothing else here respawns the receiver: a framing error, a stalled frame or
+# a hangup ends one, and the next takes the port a second later.
+exec chroot "$root" /bin/sh -c 'PATH=/bin:/usr/sbin:/usr/libexec; export PATH; while :; do /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend; sleep 1; done'

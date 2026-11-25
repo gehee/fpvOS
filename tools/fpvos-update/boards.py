@@ -14,7 +14,11 @@ read_profile = _module.read_profile
 def get_profile(name):
     if not re.fullmatch('[a-z0-9][a-z0-9_-]*', name):
         raise ValueError('invalid board name')
-    path = PACKAGE / 'backends' / name / 'profile.json'
-    if not path.is_file():
-        raise ValueError(f'unsupported updater board: {name}')
-    return read_profile(path)
+    # A backend of its own keeps its profile.json; boards sharing the serial
+    # backend (the VRX Pro) keep theirs as backends/serial/<board>.json, as
+    # its backend.mk reads it.
+    for path in (PACKAGE / 'backends' / name / 'profile.json',
+                 PACKAGE / 'backends' / 'serial' / f'{name}.json'):
+        if path.is_file():
+            return read_profile(path)
+    raise ValueError(f'unsupported updater board: {name}')

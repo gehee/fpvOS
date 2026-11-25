@@ -9,7 +9,7 @@
 #include <stdarg.h>
 
 const struct fpvos_update_board fpvos_board = {
-    .names={"kernel.img","skyzone-steadydigital.dtb","rootfs.squashfs"},.limits={6291456,65536,25165824},
+    .names={"kernel.img","skyzone-steadydigital.dtb","rootfs.squashfs"},.limits={6291456,61440,25165824},
     .counts={3,0},.bundle_limits={33554432,512}
 };
 const struct fpvos_bootstrap_file fpvos_bootstrap_files[] = {

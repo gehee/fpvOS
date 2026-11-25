@@ -3,6 +3,7 @@
 """fpvOS USB CDC update transport. Supports verification, firmware installation and clean-mode reconnect."""
 import argparse
 import fcntl
+import plistlib
 import hashlib
 import json
 import os
@@ -149,22 +150,53 @@ class Client:
 BRIDGE_IDS = (('4152', '8030'), ('1d6b', '8030'))
 
 
-def checked_port(path, board):
-    path = path.resolve(strict=True)
+def usb_identity_linux(path):
+    """(idVendor, idProduct, serial) of the USB device behind a tty, from sysfs."""
     sysfs = Path('/sys/class/tty') / path.name / 'device'
     for parent in sysfs.resolve(strict=True).parents:
         if (parent / 'idVendor').is_file():
-            identity = tuple((parent / field).read_text().strip() for field in
-                             ('idVendor', 'idProduct', 'serial'))
-            usb = tuple(board['usb_identity'])
-            bridge = identity[:2] in BRIDGE_IDS and identity[2] == usb[2]
-            if identity != usb and not bridge:
-                raise ValueError(f'not the fpvOS native USB gadget: {identity}')
-            break
-    else:
+            return tuple((parent / field).read_text().strip() for field in
+                         ('idVendor', 'idProduct', 'serial'))
+    return None
+
+
+def usb_identity_macos(path):
+    """The same from the IORegistry: the USB device whose subtree holds the
+    serial port's callout or dial-in node."""
+    out = subprocess.run(['ioreg', '-a', '-r', '-c', 'IOUSBHostDevice', '-l'],
+                         capture_output=True, timeout=10, check=True).stdout
+    def find(entry, device):
+        """The innermost USB device (behind any hubs) above the port, or None."""
+        if 'iSerialNumber' in entry and 'idVendor' in entry:   # a device, not an interface
+            device = entry
+        if str(path) in (entry.get('IOCalloutDevice'), entry.get('IODialinDevice')):
+            return device
+        for child in entry.get('IORegistryEntryChildren', []):
+            found = find(child, device)
+            if found is not None:
+                return found
+        return None
+    for root in plistlib.loads(out) if out.strip() else []:
+        device = find(root, None)
+        if device is not None:
+            return (f"{device['idVendor']:04x}", f"{device['idProduct']:04x}",
+                    str(device.get('kUSBSerialNumberString', device.get('USB Serial Number', ''))))
+    return None
+
+
+def checked_port(path, board):
+    path = path.resolve(strict=True)
+    linux = Path('/sys/class/tty').is_dir()
+    identity = usb_identity_linux(path) if linux else usb_identity_macos(path)
+    if identity is None:
         raise ValueError('no USB identity; physical debug UART is not supported')
-    users = subprocess.run(['fuser', str(path)], capture_output=True, timeout=5)
-    if users.returncode != 1 or users.stdout or users.stderr:
+    usb = tuple(board['usb_identity'])
+    bridge = identity[:2] in BRIDGE_IDS and identity[2] == usb[2]
+    if identity != usb and not bridge:
+        raise ValueError(f'not the fpvOS native USB gadget: {identity}')
+    users = subprocess.run(['fuser', str(path)] if linux else ['lsof', '-t', str(path)],
+                           capture_output=True, timeout=5)
+    if users.returncode != 1 or users.stdout or (linux and users.stderr):
         raise ValueError('serial port is in use or ownership check failed')
     return path
 

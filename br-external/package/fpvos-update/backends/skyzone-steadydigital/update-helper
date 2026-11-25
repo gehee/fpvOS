@@ -1,5 +1,6 @@
 #!/bin/sh
-# SteadyDigital: recovery-kernel + A/B NAND (bank B), kestrel-gnd receiver.
+# SteadyDigital: recovery-kernel + A/B NAND (whichever bank nand.c picks: the
+# booted fpvOS bank, else the one stock does not run from), kestrel-gnd receiver.
 set -eu
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
 export PATH

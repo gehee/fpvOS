@@ -64,4 +64,6 @@ mount --bind /sys "$root/sys" || fail 'RAM sysfs view'
 : >"$root/run/fpvos-clean-boot"
 # Host-side absolute paths above do not exist inside the chroot. The receiver
 # launches md5sum via PATH, unlike the backend shell which sets its own PATH.
-exec chroot "$root" /bin/sh -c 'export PATH=/bin:/usr/sbin:/usr/libexec; exec /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend'
+# Nothing else here respawns it: a framing error, a stalled frame or a hangup
+# ends one receiver, and the next takes the port a second later.
+exec chroot "$root" /bin/sh -c 'export PATH=/bin:/usr/sbin:/usr/libexec; while :; do /usr/sbin/fpvos-update receive /dev/ttyGS0 /run/fpvos-update /usr/libexec/fpvos-update-backend; sleep 1; done'

@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <termios.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "board.h"
@@ -32,6 +33,12 @@
 #define location_file() LOCATION_FILE
 #else
 #define location_file() fpvos_board.location_file
+#endif
+/* An upload with no data for this long is abandoned: the host went away
+ * between chunks, and a stale transfer must not refuse clean, reboot and the
+ * USB modes until a power cycle. */
+#ifndef TRANSFER_IDLE_SECONDS
+#define TRANSFER_IDLE_SECONDS 60
 #endif
 /* fpvos-usb (fpvOS_usb) keeps the USB mode here: normal or bridge. */
 #ifndef USB_MODE_FILE
@@ -57,6 +64,8 @@ static int port, file = -1, clean, prepared, state;
 static uint32_t total, received, last_seq, last_crc, last_len;
 static int have_last, install_requested, self_reboot, end_done, rebooting;
 static pid_t worker;
+static int lock = -1;
+static long long last_data;
 static unsigned install_progress;
 static volatile sig_atomic_t stopping;
 static char status_file[512];
@@ -117,6 +126,13 @@ static void reset_transfer(void)
 	have_last = end_done = 0;
 	expected_md5[0] = 0;
 }
+/* Milliseconds, monotonic. */
+static long long now(void)
+{
+	struct timespec t;
+	clock_gettime(CLOCK_MONOTONIC, &t);
+	return t.tv_sec * 1000LL + t.tv_nsec / 1000000;
+}
 static int run_helper(const char *operation)
 {
 	pid_t p = fork();
@@ -168,35 +184,67 @@ static void stop_requested(int signum)
 	(void)signum;
 	stopping = 1;
 }
+/* The receiver's own verdict, kept in the status file so that a restart (a
+ * USB reconnect, the bootstrap's respawn) still reports it. */
+static void save_status(void)
+{
+	char tmp[520];
+	snprintf(tmp, sizeof(tmp), "%s.new", status_file);
+	FILE *f = fopen(tmp, "w");
+	if (!f)
+		return;
+	int bad = fprintf(f, "%u %d %s\n", install_progress, state, detail) < 0 ||
+		  fflush(f) || fsync(fileno(f));
+	if (fclose(f) || bad || rename(tmp, status_file))
+		unlink(tmp);
+}
 static void refresh_worker(void)
 {
 	if (!worker)
 		return;
+	/* Reap first, then read: an installer that renames in its last status
+	 * ("100 4", "0 -2 ...") and exits between a read and the reap would
+	 * otherwise be judged by the status before it. */
+	int status;
+	pid_t done = waitpid(worker, &status, WNOHANG);
+#ifdef REFRESH_GAP_US
+	usleep(REFRESH_GAP_US); /* tests: widen the window between the two */
+#endif
 	FILE *f = fopen(status_file, "r");
-	int reported = 3;
+	int reported = 3, have_report = 0;
 	if (f) {
 		unsigned percent;
+		int saved;
 		char message[64];
-		if (fscanf(f, "%u %d %63[^\n]", &percent, &reported, message) == 3 &&
+		if (fscanf(f, "%u %d %63[^\n]", &percent, &saved, message) == 3 &&
 		    percent <= 100) {
+			reported = saved;
+			have_report = 1;
 			install_progress = percent;
 			snprintf(detail, sizeof(detail), "%s", message);
 		}
 		fclose(f);
 	}
-	int status;
-	pid_t done = waitpid(worker, &status, WNOHANG);
-	if (done == worker) {
-		worker = 0;
-		if (WIFEXITED(status) && WEXITSTATUS(status) == 0 && reported == 4) {
-			state = 4;
-			install_progress = 100;
-		} else {
-			state = reported == -2 ? -2 : -1;
-			if (reported >= 0)
-				snprintf(detail, sizeof(detail),
-					 "installer failed; see console log");
-		}
+	if (done != worker)
+		return;
+	worker = 0;
+	if (WIFEXITED(status) && WEXITSTATUS(status) == 0 && reported == 4) {
+		state = 4;
+		install_progress = 100;
+	} else if (WIFSIGNALED(status) && have_report && reported == 3) {
+		/* Killed (SIGSEGV, the OOM killer, SIGKILL) while it said it was
+		 * writing: the shared kernel/DTB may be half written and its RAM
+		 * backups go with a reboot, so the reboot is blocked as for a
+		 * failed restoration, across a receiver restart too. */
+		state = -2;
+		install_progress = 0;
+		snprintf(detail, sizeof(detail), "installer killed while writing; KEEP POWER ON");
+		save_status();
+	} else {
+		state = reported == -2 ? -2 : -1;
+		if (reported >= 0)
+			snprintf(detail, sizeof(detail),
+				 "installer failed; see console log");
 	}
 }
 static void restore_status(void)
@@ -317,8 +365,8 @@ static int keep_location(const char *tz, const char *zone, const char *country)
 	snprintf(tmp, sizeof(tmp), "%s.new", location_file());
 	if (!(f = fopen(tmp, "w")))
 		return -1;
-	if (fputs(line, f) < 0 || fflush(f) || fsync(fileno(f)) || fclose(f) ||
-	    rename(tmp, location_file())) {
+	int bad = fputs(line, f) < 0 || fflush(f) || fsync(fileno(f));
+	if (fclose(f) || bad || rename(tmp, location_file())) {
 		unlink(tmp);
 		return -1;
 	}
@@ -436,8 +484,17 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		for (unsigned i = 6; i < 32; i++)
 			if (payload[i])
 				return ack(h, -1, "invalid clean request");
-		if (file >= 0)
+		/* Clean again in clean mode, no installer running (a worker is
+		 * refused above): the host lost an upload between chunks and
+		 * starts over (the client sends clean before READY), so the
+		 * partial transfer goes. */
+		if (file >= 0 && !clean)
 			return ack(h, -1, "transfer active");
+		if (file >= 0) {
+			reset_transfer();
+			prepared = 0;
+			state = 0;
+		}
 		int clean_result = run_helper("clean");
 		if (clean_result == 10) {
 			clean = prepared = 0;
@@ -448,6 +505,13 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 			return result;
 		}
 		if (clean_result) {
+			/* Refused from normal mode (a backend without a clean
+			 * mode, the VRX Pro's serial one): an answer, not a
+			 * latched failure, so FIND_DEVICE keeps showing the USB
+			 * mode. A failed clean in clean mode, or after a failure,
+			 * is kept. */
+			if (!clean && state >= 0)
+				return ack(h, -1, "clean-mode preparation failed");
 			clean = prepared = 0;
 			state = -1;
 			snprintf(detail, sizeof(detail), "clean-mode preparation failed");
@@ -476,47 +540,60 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 	for (unsigned i = 0; cmd == 0x73 && n == 328 && i < 32; i++)
 		if (payload[i] >= 'A' && payload[i] <= 'F')
 			payload[i] += 'a' - 'A';
-	/* FILE_START resent before any data: the same transfer, acknowledged again. */
-	if (cmd == 0x73 && n == 328 && file >= 0 && !received &&
-	    fpvos_get_le32(payload + 64) == total && !memcmp(payload, expected_md5, 32))
-		return ack(h, 0, "OK");
-	if (cmd == 0x73 && n == 328 && prepared && file < 0) {
+	if (cmd == 0x73 && n == 328) {
 		uint32_t size = fpvos_get_le32(payload + 64);
-		int verify_only;
-		self_reboot = 0;
+		int want_install = 0, want_self_reboot = 0, verify_only;
 		if (fpvos_board_destination) {
-			int accepted = fpvos_board_destination(payload + 72, &install_requested, &self_reboot);
-			verify_only = accepted && !install_requested;
+			/* A refusal need not touch the flags it is given. */
+			int accepted = fpvos_board_destination(payload + 72, &want_install,
+								&want_self_reboot);
+			if (!accepted)
+				want_install = want_self_reboot = 0;
+			verify_only = accepted && !want_install;
 		} else {
-			install_requested = destination_matches(payload + 72, "/tmp/pc/fpvos.fwu",
-							       fpvos_board.legacy_install_destination);
+			want_install = destination_matches(payload + 72, "/tmp/pc/fpvos.fwu",
+							   fpvos_board.legacy_install_destination);
 			verify_only = destination_matches(payload + 72, "/tmp/pc/fpvos.verify",
 							  fpvos_board.legacy_verify_destination);
 		}
-		uint32_t limit = 0;
-		for (unsigned kind = 0; kind < 2; kind++)
-			if (fpvos_board.counts[kind] && fpvos_board.bundle_limits[kind] > limit)
-				limit = fpvos_board.bundle_limits[kind];
-		if (!size || size > limit || fpvos_get_le32(payload + 68) != 1 ||
-		    (!install_requested && !verify_only))
-			return ack(h, -1, "invalid size or destination");
-		for (unsigned i = 0; i < 32; i++)
-			if (!((payload[i] >= '0' && payload[i] <= '9') ||
-			      (payload[i] >= 'a' && payload[i] <= 'f')))
-				return ack(h, -1, "invalid MD5");
-		for (unsigned i = 32; i < 64; i++)
-			if (payload[i])
-				return ack(h, -1, "invalid MD5 padding");
-		reset_transfer();
-		file = open(staging, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
-		if (file < 0)
-			return ack(h, -1, "cannot stage file");
-		total = size;
-		memcpy(expected_md5, payload, 32);
-		expected_md5[32] = 0;
-		state = 1;
-		snprintf(detail, sizeof(detail), "receiving");
-		return ack(h, 0, "OK");
+		/* FILE_START resent before any data: the same transfer (MD5, size
+		 * and kind of destination), acknowledged again. */
+		if (file >= 0 && !received && size == total && !memcmp(payload, expected_md5, 32) &&
+		    (want_install || verify_only) && want_install == install_requested &&
+		    want_self_reboot == self_reboot)
+			return ack(h, 0, "OK");
+		if (prepared && file < 0) {
+			uint32_t limit = 0;
+			for (unsigned kind = 0; kind < 2; kind++)
+				if (fpvos_board.counts[kind] && fpvos_board.bundle_limits[kind] > limit)
+					limit = fpvos_board.bundle_limits[kind];
+			/* Nothing of a refused request (or an earlier install) is
+			 * left for a later FILE_END. */
+			install_requested = self_reboot = 0;
+			if (!size || size > limit || fpvos_get_le32(payload + 68) != 1 ||
+			    (!want_install && !verify_only))
+				return ack(h, -1, "invalid size or destination");
+			for (unsigned i = 0; i < 32; i++)
+				if (!((payload[i] >= '0' && payload[i] <= '9') ||
+				      (payload[i] >= 'a' && payload[i] <= 'f')))
+					return ack(h, -1, "invalid MD5");
+			for (unsigned i = 32; i < 64; i++)
+				if (payload[i])
+					return ack(h, -1, "invalid MD5 padding");
+			reset_transfer();
+			file = open(staging, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600);
+			if (file < 0)
+				return ack(h, -1, "cannot stage file");
+			total = size;
+			install_requested = want_install;
+			self_reboot = want_self_reboot;
+			memcpy(expected_md5, payload, 32);
+			expected_md5[32] = 0;
+			state = 1;
+			last_data = now();
+			snprintf(detail, sizeof(detail), "receiving");
+			return ack(h, 0, "OK");
+		}
 	}
 	if (cmd == 0x74 && n && file >= 0) {
 		if (have_last && seq == last_seq) {
@@ -540,6 +617,7 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 			return ack(h, -1, "write failed");
 		}
 		received += n;
+		last_data = now();
 		have_last = 1;
 		last_seq = seq;
 		last_crc = crc;
@@ -579,7 +657,14 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 				signal(SIGINT, SIG_IGN);
 				signal(SIGTERM, SIG_IGN);
 				signal(SIGPIPE, SIG_IGN);
-				_exit(run_helper("install") ? 1 : 0);
+				/* The helper itself (it execs the installer), not a
+				 * child of it, so that an installer killed by a
+				 * signal is seen as one. It keeps the receiver's lock
+				 * across the exec: no second receiver (a respawn after
+				 * this one died) starts while it installs. */
+				fcntl(lock, F_SETFD, 0);
+				execl(helper, helper, "install", staging, (char *)NULL);
+				_exit(127);
 			}
 			state = 3;
 			install_progress = 0;
@@ -618,7 +703,7 @@ int main(int argc, char **argv)
 	char lockname[512];
 	if (snprintf(lockname, sizeof(lockname), "%s/lock", argv[2]) >= (int)sizeof(lockname))
 		return 2;
-	int lock = open(lockname, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
+	lock = open(lockname, O_RDWR | O_CREAT | O_NOFOLLOW | O_CLOEXEC, 0600);
 	if (lock < 0 || flock(lock, LOCK_EX | LOCK_NB))
 		return 2;
 	port = open(argv[1], O_RDWR | O_NOCTTY | O_CLOEXEC);
@@ -638,12 +723,15 @@ int main(int argc, char **argv)
 	restore_status();
 	if (state >= 0)
 		reset_transfer();
-	if (state >= 0 && bridge_mode())
+	/* A completed install (4) is kept as it is until the reboot: no mode text
+	 * over it, and no startup clean that could turn it into a failure. */
+	if (state == 0 && bridge_mode())
 		snprintf(detail, sizeof(detail), "bridge mode");
 	if (state >= 0 && fpvos_receiver_clean_at_start) {
 		clean = 1;
-		snprintf(detail, sizeof(detail), "clean RAM mode");
-	} else if (state >= 0 && access(CLEAN_BOOT_MARKER, F_OK) == 0) {
+		if (state == 0)
+			snprintf(detail, sizeof(detail), "clean RAM mode");
+	} else if (state == 0 && access(CLEAN_BOOT_MARKER, F_OK) == 0) {
 		int clean_result = run_helper("clean");
 		if (clean_result) {
 			/* Keep info/status and a later clean retry available. Uploads
@@ -662,6 +750,13 @@ int main(int argc, char **argv)
 		refresh_worker();
 		if (stopping && !worker)
 			break;
+		if (file >= 0 && now() - last_data >= TRANSFER_IDLE_SECONDS * 1000LL) {
+			reset_transfer();
+			prepared = 0;
+			state = 0;
+			snprintf(detail, sizeof(detail), "clean RAM mode");
+			fprintf(stderr, "upload abandoned: no data for %d s\n", TRANSFER_IDLE_SECONDS);
+		}
 		unsigned char h[HEADER];
 		struct pollfd pending = {.fd = port, .events = POLLIN};
 		int ready = poll(&pending, 1, 500);

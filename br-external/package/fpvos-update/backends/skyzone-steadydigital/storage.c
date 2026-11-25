@@ -23,8 +23,9 @@
 static int stock;
 /* The boot chain rewrites stock's bootargs per slot: the stock kernel gets the
  * whole GPT as mtdparts (gpt0 = mtd5 ... userapp1 = mtd18) and ubi.mtd of the
- * slot it booted (17 = userapp0). dtb0's own flat map is never used. Stock is
- * accepted only while it runs from bank A, so bank B is never the live root. */
+ * slot it booted (17 = userapp0, 18 = userapp1). dtb0's own flat map is never
+ * used. Stock is accepted from either bank; the bank it runs from is never an
+ * install target (nand.c's target_bank), so the live root is never written. */
 static const char stock_map[] = "mtdparts=spi32766.1:256k@0(spl0),256k(spl1),256k(spl2),256k(spl3),"
     "256k(gpt0),256k(gpt1),512K(vendor),6M(factory),384K(env0),384K(env1),768K(uboot0),768K(uboot1),"
     "6M(kernel0),6M(kernel1),384K(dtb0),384K(dtb1),45M(userapp0),45M(userapp1),6M(usr_data),6M(usr_log)";

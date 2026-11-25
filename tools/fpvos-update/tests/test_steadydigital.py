@@ -19,7 +19,7 @@ import package  # noqa: E402
 BACKEND = ROOT / 'br-external/package/fpvos-update/backends/skyzone-steadydigital'
 # The simulator's board: the real names and limits, board id 0.
 BOARD = {'board_id': 0, 'names': ['kernel.img', 'skyzone-steadydigital.dtb', 'rootfs.squashfs'],
-         'limits': [6291456, 65536, 25165824], 'counts': [3, 0], 'bundle_limits': [33554432, 512]}
+         'limits': [6291456, 61440, 25165824], 'counts': [3, 0], 'bundle_limits': [33554432, 512]}
 
 
 def squashfs(size=8192):
@@ -246,6 +246,226 @@ class SteadyDigitalTests(unittest.TestCase):
                     if fault in ('verify', 'select-stock', 'kernel', 'dtb'):
                         self.assertNotIn('write', events)
                         self.assertEqual((d / f'volume{target}').read_bytes(), b'previous volume %d' % target)
+
+
+# The stock table (layout.h): the pairs env..userapp at entries 2..11, bank A
+# (suffix 0) even.
+SD_PARTS = [('vendor', 0x180000, 0x80000), ('factory', 0x200000, 0x600000),
+            ('env0', 0x800000, 0x60000), ('env1', 0x860000, 0x60000),
+            ('uboot0', 0x8c0000, 0xc0000), ('uboot1', 0x980000, 0xc0000),
+            ('kernel0', 0xa40000, 0x600000), ('kernel1', 0x1040000, 0x600000),
+            ('dtb0', 0x1640000, 0x60000), ('dtb1', 0x16a0000, 0x60000),
+            ('userapp0', 0x1700000, 0x2d00000), ('userapp1', 0x4400000, 0x2d00000),
+            ('usr_data', 0x7100000, 0x600000), ('usr_log', 0x7700000, 0x600000)]
+SD_GPT_BYTES = 0x4800
+ATTRIBUTE = lambda i: 1024 + 128 * i + 48
+
+
+def sd_record(bank=0):
+    """One stock record as a unit ships: MBR, header, 128 entries, then the
+    vendor table up to SD_GPT_BYTES."""
+    g = bytearray(SD_GPT_BYTES)
+    g[446:462] = bytes([0, 0, 2, 0, 0xee, 0xff, 0xff, 0xff, 1, 0, 0, 0, 0xff, 0xff, 3, 0]); g[510:512] = b'\x55\xaa'
+    entries = bytearray(16384)
+    for i, (name, start, size) in enumerate(SD_PARTS):
+        e = 128 * i
+        active = not 2 <= i <= 11 or (i - 2) % 2 == bank
+        entries[e:e+32] = bytes([0xa0 + i]) * 16 + bytes([0x10 + i]) * 16
+        struct.pack_into('<QQQ', entries, e + 32, start // 512, (start + size) // 512 - 1, int(active) << 47)
+        entries[e+56:e+56+2*len(name)] = name.encode('utf-16le')
+    # Stock leaves bytes after a name's NUL; a rewrite keeps them.
+    entries[2*128 + 56 + 2*len('env0') + 2] = 0x41
+    h = bytearray(92)
+    h[:8] = b'EFI PART'
+    struct.pack_into('<II', h, 8, 0x10000, 92)
+    struct.pack_into('<QQQQ', h, 24, 1, 0x3ffff, 0xc00, 0x3ffde)
+    h[56:72] = bytes(range(16))
+    struct.pack_into('<QIII', h, 72, 2, 128, 128, zlib.crc32(entries))
+    struct.pack_into('<I', h, 16, zlib.crc32(h))
+    g[512:604] = h
+    g[1024:1024+16384] = entries
+    g[0x4400:] = (b'vendor table ' * 100)[:0x400]
+    return bytes(g)
+
+
+class SteadyDigitalFlashTests(unittest.TestCase):
+    """flash.c on file-backed MTD (sd_flash_sim.c): the vendor's slot flip, the
+    one GPT record rewritten in place, and what a failed rewrite leaves."""
+    KERNEL_NAME = b'fpvOS SteadyDigital recovery'
+
+    @classmethod
+    def setUpClass(cls):
+        cls.temp = tempfile.TemporaryDirectory(); cls.build = Path(cls.temp.name)
+        common = ['cc', '-O2', '-Wall', '-Wextra', '-Werror', '-ffunction-sections', '-fdata-sections',
+                  '-I' + str(SRC), '-I' + str(BACKEND), '-DP1_WORK="work"', '-DP1_ROOT="work/root"']
+        renames = ['p1_stock', 'p1_mtd', 'p1_gpt_read']
+        subprocess.run(common + ['-D' + s + '=unused_' + s for s in renames] +
+                       ['-c', str(BACKEND / 'storage.c'), '-o', str(cls.build / 'storage.o')], check=True)
+        subprocess.run(common + [str(Path(__file__).with_name('sd_flash_sim.c')), str(cls.build / 'storage.o'),
+                                 '-Wl,--gc-sections'] +
+                       ['-Wl,--wrap=' + s for s in ('open', 'ioctl', 'pwrite', 'pread', 'fsync')] +
+                       ['-o', str(cls.build / 'flash')], check=True)
+
+    @classmethod
+    def tearDownClass(cls): cls.temp.cleanup()
+
+    def directory(self, record=None):
+        temp = tempfile.TemporaryDirectory(); self.addCleanup(temp.cleanup); d = Path(temp.name)
+        state = bytearray(b'\xff' * 0x80000)
+        state[:SD_GPT_BYTES] = record or sd_record()
+        (d / 'boot-state').write_bytes(state)
+        for bank in (0, 1):
+            (d / f'kernel{bank}').write_bytes(b'\x55' * 0x600000)
+            (d / f'dtb{bank}').write_bytes(b'\x55' * 0x60000)
+        return d
+
+    def run_flash(self, d, *args, stock=False):
+        env = {**os.environ, 'SD_STOCK': '1' if stock else '0'}
+        return subprocess.run([str(self.build / 'flash'), *map(str, args)], cwd=d, capture_output=True, text=True, env=env)
+
+    def select(self, d, bank, fault=0, stock=False):
+        r = self.run_flash(d, 'select', bank, fault, stock=stock)
+        return r.returncode, int(r.stdout), r.stderr
+
+    def check_record(self, g, bank):
+        """Both CRCs right and every pair's active member in BANK."""
+        self.assertEqual(struct.unpack_from('<I', g, 512 + 88)[0], zlib.crc32(g[1024:1024+16384]))
+        h = bytearray(g[512:604]); struct.pack_into('<I', h, 16, 0)
+        self.assertEqual(struct.unpack_from('<I', g, 512 + 16)[0], zlib.crc32(h))
+        for i in range(14):
+            active = not 2 <= i <= 11 or (i - 2) % 2 == bank
+            self.assertEqual(struct.unpack_from('<Q', g, ATTRIBUTE(i))[0], int(active) << 47, SD_PARTS[i][0])
+
+    def test_bank_flip_and_back_changes_only_the_attributes_and_crcs(self):
+        for stock in (False, True):
+            with self.subTest(stock=stock):
+                d = self.directory(); before = (d / 'boot-state').read_bytes()
+                rc, writes, err = self.select(d, 1, stock=stock)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual(writes, 1)
+                after = (d / 'boot-state').read_bytes()
+                self.assertEqual(after[SD_GPT_BYTES:], before[SD_GPT_BYTES:])
+                allowed = {ATTRIBUTE(i) + 5 for i in range(2, 12)} | set(range(512 + 16, 512 + 20)) | set(range(512 + 88, 512 + 92))
+                changed = {i for i in range(SD_GPT_BYTES) if after[i] != before[i]}
+                self.assertLessEqual(changed, allowed)
+                self.assertLessEqual({ATTRIBUTE(i) + 5 for i in range(2, 12)}, changed)
+                self.check_record(after, 1)
+                self.assertEqual(after[:SD_GPT_BYTES], sd_record(1))
+                rc, writes, err = self.select(d, 0, stock=stock)
+                self.assertEqual(rc, 0, err)
+                self.assertEqual((d / 'boot-state').read_bytes(), before)
+                # Already selected: nothing written.
+                self.assertEqual(self.select(d, 0, stock=stock)[:2], (0, 0))
+                self.assertEqual((d / 'boot-state').read_bytes(), before)
+
+    def test_failed_rewrite_puts_the_previous_record_back(self):
+        # 1: torn write, 3: a wrong byte read back, 5: the new record reads
+        # back with an uncorrectable ECC error.
+        for fault in (1, 3, 5):
+            with self.subTest(fault=fault):
+                d = self.directory(); before = (d / 'boot-state').read_bytes()
+                rc, writes, err = self.select(d, 1, fault)
+                self.assertNotEqual(rc, 0)
+                self.assertEqual(writes, 2)
+                self.assertNotIn('keep the unit powered', err)
+                self.assertEqual((d / 'boot-state').read_bytes(), before)
+                rc, _, err = self.select(d, 1)
+                self.assertEqual(rc, 0, err)
+                self.check_record((d / 'boot-state').read_bytes(), 1)
+
+    def test_a_record_that_cannot_be_put_back_is_reported(self):
+        # 4: no erase works (the table is as it was, but nothing could be
+        # written); 6: every read of the record after a write fails ECC;
+        # 8: torn, and the erase before the write-back fails.
+        for fault in (4, 6, 8):
+            with self.subTest(fault=fault):
+                d = self.directory(); before = (d / 'boot-state').read_bytes()
+                rc, writes, err = self.select(d, 1, fault)
+                self.assertNotEqual(rc, 0)
+                self.assertIn('keep the unit powered', err)
+                after = (d / 'boot-state').read_bytes()
+                self.assertEqual(after[SD_GPT_BYTES:], before[SD_GPT_BYTES:])
+                if fault in (4, 6):
+                    self.assertEqual(after, before)
+
+    def test_nothing_is_written_unless_the_block_holds_only_the_record(self):
+        d = self.directory()
+        state = bytearray((d / 'boot-state').read_bytes()); state[0x10000] = 0
+        (d / 'boot-state').write_bytes(state)
+        self.assertEqual(self.select(d, 1)[:2], (1, 0))
+        self.assertEqual((d / 'boot-state').read_bytes(), state)
+        # A bad first block, or a table that is not the stock one: refused.
+        d = self.directory(); before = (d / 'boot-state').read_bytes()
+        self.assertEqual(self.select(d, 1, 2)[:2], (1, 0))
+        bad = bytearray(sd_record()); bad[ATTRIBUTE(3) + 5] |= 0x80   # both env active
+        d = self.directory(bytes(bad))
+        self.assertEqual(self.select(d, 1)[:2], (1, 0))
+        self.assertEqual((d / 'boot-state').read_bytes()[:SD_GPT_BYTES], bytes(bad))
+
+    def kernel_kind(self, data, bank=0, fault=0, at=0):
+        d = self.directory()
+        if data is not None:
+            image = bytearray(b'\xff' * 0x600000); image[at:at+len(data)] = data
+            (d / f'kernel{bank}').write_bytes(bytes(image))
+        else:
+            (d / f'kernel{bank}').write_bytes(b'\xff' * 0x600000)
+        r = self.run_flash(d, 'kind', bank, fault)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return int(r.stdout)
+
+    def kernel_header(self, name):
+        h = bytearray(128); h[:4] = b'OTRA'; struct.pack_into('>I', h, 64, 0x27051956)
+        h[96:96+len(name)] = name; return bytes(h)
+
+    def test_the_kernel_partition_says_whose_kernel_it_holds(self):
+        ours = self.KERNEL_NAME
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours)), 1)
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours), bank=1), 1)
+        # Another kernel - stock's, or the P1's - and one whose name only starts like ours.
+        self.assertEqual(self.kernel_kind(self.kernel_header(b'Linux-4.9.38')), 0)
+        self.assertEqual(self.kernel_kind(self.kernel_header(b'fpvOS P1 recovery')), 0)
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours + b' 2')), 0)
+        # Erased, not an OTRA/uImage kernel, or unreadable: nobody's.
+        self.assertEqual(self.kernel_kind(None, bank=1), -1)
+        self.assertEqual(self.kernel_kind(b'OTRA' + bytes(124)), -1)
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours), fault=9), -1)
+        # A bad first block is skipped, as SPL and the writer skip it.
+        self.assertEqual(self.kernel_kind(self.kernel_header(ours), fault=2, at=0x20000), 1)
+
+    def test_kernel_and_dtb_writes_go_to_the_bank_and_read_back(self):
+        for bank in (0, 1):
+            for index, size in ((0, 0x600000), (1, 0x60000)):
+                with self.subTest(bank=bank, index=index):
+                    d = self.directory(); image = bytes(range(256)) * 1200
+                    (d / 'image').write_bytes(image)
+                    part = ('kernel', 'dtb')[index]
+                    self.assertEqual(self.run_flash(d, 'write', 'image', 0, bank, index).returncode, 0)
+                    data = (d / f'{part}{bank}').read_bytes()
+                    self.assertEqual(data[:len(image)], image)
+                    self.assertEqual(data[len(image):0x60000], b'\xff' * (0x60000 - len(image)))
+                    self.assertEqual((d / f'{part}{1 - bank}').read_bytes(), b'\x55' * size)
+                    self.assertEqual(self.run_flash(d, 'compare', 'image', 0, bank, index).returncode, 0)
+                    for fault in (1, 3, 4):
+                        self.assertNotEqual(self.run_flash(d, 'write', 'image', fault, bank, index).returncode, 0)
+
+
+class SignalTests(unittest.TestCase):
+    def test_writes_ignore_the_signals_a_reboot_sends(self):
+        """A reboot from SSH (SIGTERM to all) must not stop an install or the
+        stock selection between an erase and its write: install and stock
+        ignore SIGHUP, SIGINT and SIGTERM first, as the Ascent VRX's does."""
+        for backend in ('p1-air', 'skyzone-' + 'steadydigital'):
+            with self.subTest(backend):
+                source = (BACKEND.parent / backend / 'nand.c').read_text()
+                hold = source[source.index('static void hold_signals(void)'):]
+                hold = hold[:hold.index('}')]
+                for signal in ('SIGHUP', 'SIGINT', 'SIGTERM'):
+                    self.assertIn(f'signal({signal},SIG_IGN)', hold)
+                main = source[source.index('int main('):]
+                install = main[main.index('"install"'):]
+                self.assertLess(install.index('hold_signals();'), install.index('transaction('))
+                stock = main[main.index('"stock"'):]
+                self.assertLess(stock.index('hold_signals();'), stock.index('p1_select_bank('))
 
 
 if __name__ == '__main__':

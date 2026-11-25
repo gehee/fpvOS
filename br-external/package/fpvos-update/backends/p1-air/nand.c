@@ -6,6 +6,7 @@
 #include "ar9311-banks.h"
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -179,6 +180,14 @@ static int boot(void)
 
 int fpvos_stock_runtime_valid(void) { return p1_stock() == 1; }
 
+/* What writes the GPT or a bank runs to its end: a reboot from SSH (SIGTERM
+ * to all) must not stop it between an erase and the write after it. As the
+ * Ascent VRX's install. */
+static void hold_signals(void)
+{
+    signal(SIGHUP,SIG_IGN); signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN); signal(SIGPIPE,SIG_IGN);
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2 || geteuid()) return 2;
@@ -195,6 +204,7 @@ int main(int argc, char **argv)
         puts("P1 NAND layout verified; stock bank and factory contents preserved"); rc = 0;
     } else if (!strcmp(argv[1],"install") && argc == 3) {
         if (!regular(P1_WORK "/clean")) goto done;
+        hold_signals();
         const char *starting = "0 3 verifying and installing\n";
         if (p1_atomic(P1_WORK "/status",starting,strlen(starting),0600)) goto done;
         rc = transaction(argv[2]);
@@ -207,6 +217,7 @@ int main(int argc, char **argv)
         rc = clean_flag(1);
     } else if (!strcmp(argv[1],"stock") && argc == 2) {
         unsigned bank;
+        hold_signals();
         rc = stock_bank(&bank) || remove_stock_hook() || p1_select_bank(bank);
     }
  done:

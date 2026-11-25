@@ -34,6 +34,28 @@ def compile_framework(destination):
                         f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
 
 
+def compile_receiver(destination, name, *flags, sources=()):
+    """A receiver built as compile_framework's, with test-only FLAGS and SOURCES."""
+    subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
+                    f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"',
+                    *flags, '-I'+str(SRC), str(SRC / 'receiver.c'), str(destination / 'profile.c'),
+                    *map(str, sources), '-o', str(destination / name)], check=True)
+    return destination / name
+
+
+# A board's destination hook (the Lite's kind): a refusal leaves the flags as
+# they were.
+DESTINATION_HOOK = r'''
+#include <string.h>
+int fpvos_board_destination(const unsigned char path[128], int *install, int *self_reboot)
+{
+	if (!memcmp(path, "/tmp/pc/fpvos.fwu", 18)) { *install = 1; *self_reboot = 0; return 1; }
+	if (!memcmp(path, "/tmp/pc/fpvos.verify", 21)) { *install = 0; *self_reboot = 0; return 1; }
+	return 0;
+}
+'''
+
+
 def load(name):
     spec = importlib.util.spec_from_file_location(name, ROOT / f'tools/fpvos-update/{name}.py')
     module = importlib.util.module_from_spec(spec)
@@ -58,6 +80,31 @@ class Tests(unittest.TestCase):
         cls.build = tempfile.TemporaryDirectory()
         cls.bin = Path(cls.build.name)
         compile_framework(cls.bin)
+
+    VARIANTS = dict(idle=(['-DTRANSFER_IDLE_SECONDS=1'], False), gap=(['-DREFRESH_GAP_US=300000'], False),
+                    hook=([], True))
+
+    def variant(self, name):
+        """A test build of the receiver (built once, beside the class's own)."""
+        path = self.bin / f'receiver-{name}'
+        if not path.exists():
+            flags, hook = self.VARIANTS[name]
+            sources = []
+            if hook:
+                sources.append(self.bin / 'hook.c')
+                sources[0].write_text(DESTINATION_HOOK)
+            compile_receiver(self.bin, path.name, *flags, sources=sources)
+        return path
+
+    def restart(self, variant=None):
+        """The receiver again on the same port and staging (VARIANT: a test build)."""
+        arguments = list(self.process.args)
+        self.process.terminate()
+        self.process.wait(timeout=3)
+        if variant:
+            arguments[0] = str(self.variant(variant))
+        self.process = subprocess.Popen(arguments)
+        self.client.info()
 
     @classmethod
     def tearDownClass(cls):
@@ -426,6 +473,126 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         os.write(self.master, h)
         self.process.wait(timeout=2)
         self.assertFalse((self.dir / 'stage/package.fwu').exists())
+
+    def test_clean_abandons_an_upload_interrupted_between_chunks(self):
+        """The host lost the upload between chunks and starts over: its clean
+        (sent before any READY) drops the partial transfer instead of being
+        refused as "transfer active" until a power cycle."""
+        self.start(b'abcd')
+        self.client.ack(0x74, b'ab')
+        self.assertFalse(self.client.clean())
+        self.assertFalse((self.dir / 'stage/package.fwu').exists())
+        with self.assertRaisesRegex(ValueError, 'invalid command or state'):
+            self.client.ack(0x74, b'cd')
+        path = self.dir / 'test.fwu'; path.write_bytes(b'after an interrupted upload')
+        self.assertEqual(self.client.verify(path)['state'], 2)
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\nclean\nclean\nverify\n')
+
+    def test_idle_upload_is_abandoned(self):
+        """No chunk for the idle time (1 s in this build, 60 s on a unit): the
+        transfer goes, and reboot is no longer refused."""
+        self.restart('idle')
+        self.start(b'abcd')
+        self.client.ack(0x74, b'ab')
+        time.sleep(0.5)
+        self.client.ack(0x74, b'c')  # data keeps it alive
+        time.sleep(0.7)
+        self.assertEqual(self.client.info()['detail'], 'receiving')
+        time.sleep(1.8)
+        self.assertEqual(self.client.info()['detail'], 'clean RAM mode')
+        self.assertFalse((self.dir / 'stage/package.fwu').exists())
+        with self.assertRaisesRegex(ValueError, 'invalid command or state'):
+            self.client.ack(0x74, b'd')
+        self.client.ack(3, b'reboot'.ljust(32, b'\0'))
+        self.wait_calls('clean\nreboot\n')
+
+    def test_status_written_just_before_the_installer_exits_is_seen(self):
+        """The worker reaped first, its status read after: with the two far
+        apart (this build), an install that writes "100 4" and exits at once is
+        still a success."""
+        self.restart('gap')
+        status = self.dir / 'stage/status'
+        (self.dir / 'helper').write_text(
+            f'#!/bin/sh\nif [ "$1" = install ]; then\nsleep .05\necho "100 4 installed" > "{status}"\nfi\n')
+        path = self.dir / 'test.fwu'; path.write_bytes(b'quick installer')
+        result = self.client.verify(path, install=True)
+        self.assertEqual((result['state'], result['progress']), (4, 100))
+
+    def test_installer_killed_while_writing_blocks_reboot(self):
+        """Killed by a signal while it reported writing (3): the kernel/DTB may
+        be half written and the RAM backups go with a reboot, so the reboot is
+        blocked (-2), after a receiver restart too. Killed before it reported
+        anything is an ordinary failure."""
+        status = self.dir / 'stage/status'
+        helper = self.dir / 'helper'
+        path = self.dir / 'test.fwu'; path.write_bytes(b'killed installer')
+        helper.write_text('#!/bin/sh\n[ "$1" != install ] || kill -KILL $$\n')
+        with self.assertRaisesRegex(RuntimeError, r'\(-1\)'):
+            self.client.verify(path, install=True)
+        self.assertEqual(struct.unpack_from('<Ii', self.client.exchange(0x76))[1], -1)
+        helper.write_text(f'#!/bin/sh\nif [ "$1" = install ]; then\n'
+                          f'echo "60 3 writing device tree" > "{status}"\nulimit -c 0\nkill -SEGV $$\nfi\n')
+        with self.assertRaisesRegex(RuntimeError, r'\(-2\): installer killed while writing'):
+            self.client.verify(path, install=True)
+        with self.assertRaisesRegex(ValueError, 'blocked'):
+            self.client.ack(3, b'reboot'.ljust(32, b'\0'))
+        self.restart()
+        with self.assertRaisesRegex(ValueError, 'blocked'):
+            self.client.ack(3, b'reboot'.ljust(32, b'\0'))
+        self.assertEqual(struct.unpack_from('<Ii', self.client.exchange(0x76)), (0, -2))
+
+    def test_completed_install_survives_a_receiver_restart(self):
+        """After "100 4" a restart (USB reconnect, respawn) keeps the completed
+        install: no startup clean that could fail it into -1."""
+        (self.bin / 'clean-boot').touch()
+        (self.dir / 'stage/status').write_text('100 4 fpvOS installed; reboot required\n')
+        (self.dir / 'helper').write_text(f'#!/bin/sh\necho "$1" >> "{self.dir / "calls"}"\nexit 7\n')
+        self.restart()
+        body = self.client.exchange(0x76)
+        self.assertEqual(struct.unpack_from('<Ii', body), (100, 4))
+        self.assertIn(b'fpvOS installed; reboot required', body[8:])
+        self.assertEqual(self.client.info()['detail'], 'fpvOS installed; reboot required')
+        self.assertFalse((self.dir / 'calls').exists())
+        self.client.ack(3, b'reboot'.ljust(32, b'\0'))
+        self.wait_calls('reboot\n')
+
+    def test_resent_file_start_must_name_the_same_kind_of_destination(self):
+        self.start(b'abcd')
+        metadata = lambda destination: struct.pack('<64sii128s128s', hashlib.md5(b'abcd').hexdigest().encode(),
+                                                   4, 1, destination.encode(), b'host')
+        self.client.ack(0x73, metadata(CLIENT.VERIFY_DESTINATION))
+        with self.assertRaisesRegex(ValueError, 'invalid command or state'):
+            self.client.ack(0x73, metadata(CLIENT.DESTINATION))
+        self.client.ack(0x74, b'abcd')
+        self.client.ack(0x75)
+        self.assertEqual(struct.unpack_from('<Ii', self.client.exchange(0x76))[1], 2)
+        self.assertEqual((self.dir / 'calls').read_text(), 'clean\nverify\n')
+
+    def test_refused_destination_does_not_inherit_an_earlier_install(self):
+        """With a board's destination hook, which leaves the flags alone when
+        it refuses: an install earlier in the same process does not make a
+        refused destination an install."""
+        self.restart('hook')
+        (self.dir / 'helper').write_text(
+            f'#!/bin/sh\nif [ "$1" = install ]; then echo "100 4 installed" > "{self.dir / "stage/status"}"; fi\n')
+        path = self.dir / 'test.fwu'; path.write_bytes(b'first install')
+        self.assertEqual(self.client.verify(path, install=True)['state'], 4)
+        for destination in ('/etc/passwd', '/tmp/pc/other.fwu'):
+            with self.assertRaisesRegex(ValueError, 'destination'):
+                self.start(b'abcd', destination)
+        self.assertFalse((self.dir / 'stage/package.fwu').exists())
+
+    def test_refused_clean_in_normal_mode_keeps_showing_the_usb_mode(self):
+        """A backend without clean mode (the VRX Pro's serial one) refuses it:
+        the answer says so, and FIND_DEVICE still follows the USB mode."""
+        (self.dir / 'helper').write_text(f'#!/bin/sh\necho "$1" >> "{self.dir / "calls"}"\n[ "$1" != clean ] || exit 1\n')
+        self.addCleanup((self.bin / 'usb-mode').unlink, missing_ok=True)
+        with self.assertRaisesRegex(ValueError, 'clean-mode preparation failed'):
+            self.client.clean()
+        self.assertEqual(self.client.info()['detail'], 'normal mode')
+        self.assertEqual(struct.unpack_from('<Ii', self.client.exchange(0x76)), (0, 0))
+        (self.bin / 'usb-mode').write_text('bridge\n')
+        self.assertEqual(self.client.info()['detail'], 'bridge mode')
 
     def fixture(self):
         images = self.dir / 'images'
