@@ -146,12 +146,18 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" ascentvrxpro_defconfig ;;
   kestrel)
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" kestrel-rebuild ;;
+  # The boot chain is rebuilt right before every card: Buildroot rebuilds a
+  # changed kernel without it, and the card would boot the old kernel with the
+  # new modules (mk-sd-image.sh refuses such a pair).
   image)
-    need_vendor; "$ROOT/boot/mk-sd-image.sh" ;;
+    need_vendor
+    make -C "$ASCENT_VRX_PRO_OUT" fpvos-bootchain-rebuild
+    "$ROOT/boot/mk-sd-image.sh" ;;
   all)
     need_vendor
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT" ascentvrxpro_defconfig
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT"
+    make -C "$ASCENT_VRX_PRO_OUT" fpvos-bootchain-rebuild
     "$ROOT/boot/mk-sd-image.sh" ;;
   *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-goggle [config|kernel|all]|p1-air [config|all]|p1-air-source [config|all|recovery]}" >&2; exit 1 ;;
 esac

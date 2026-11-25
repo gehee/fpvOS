@@ -3,6 +3,7 @@
 against the layout the script itself defines, and leaves neither temporary
 files nor a half-written image behind when it fails."""
 from pathlib import Path
+import hashlib
 import os
 import re
 import subprocess
@@ -23,6 +24,8 @@ STANDINS = {
     'mmd': '#!/bin/sh\necho "mmd $*" >> "$T/calls"\n',
     'mcopy': '#!/bin/sh\necho "mcopy $*" >> "$T/calls"\n[ -z "$FAIL_MCOPY" ]\n',
     'xz': '#!/bin/sh\necho "xz $*" >> "$T/calls"\n',
+    'sha256sum': '#!/usr/bin/env python3\nimport hashlib, sys\n'
+                 'print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest() + "  " + sys.argv[1])\n',
     'truncate': '#!/usr/bin/env python3\nimport sys\n'
                 'n = sys.argv[2]; m = {"M": 1 << 20}.get(n[-1], 1)\n'
                 'open(sys.argv[3], "ab").truncate(int(n.rstrip("M")) * m)\n',
@@ -44,6 +47,12 @@ class Image(unittest.TestCase):
     def piece(self, name, size):
         with open(self.d / 'images' / name, 'wb') as f:      # sparse
             f.truncate(size)
+        if name == 'Image':   # the boot chain, rebuilt with it: the FIT boots this kernel
+            self.fit_kernel(self.d / 'images' / 'Image')
+
+    def fit_kernel(self, image):
+        digest = hashlib.sha256(Path(image).read_bytes()).hexdigest()
+        (self.d / 'images' / 'boot-sd3.img.kernel-sha256').write_text(digest + '\n')
 
     def build(self, **env):
         e = dict(os.environ, PATH=f'{self.d}/bin:/usr/bin:/bin', T=str(self.d), TMPDIR=str(self.d / 'tmp'),
@@ -66,6 +75,15 @@ class Image(unittest.TestCase):
         self.piece('boot-sd3.img', SIZES['P3_SIZE'] * 512)
         self.piece('uboot-patched.bin', SIZES['LOADER_SIZE'] * 512)
         self.assertEqual(self.build(), 0, self.err)
+
+    def test_a_fit_booting_another_kernel_is_refused(self):
+        # The kernel rebuilt, the boot chain not: the FIT boots the old one.
+        with open(self.d / 'images' / 'Image', 'r+b') as f:
+            f.write(b'a newer kernel')
+        self.assertNotEqual(self.build(), 0)
+        self.assertIn('boots another kernel than images/Image', self.err)
+        self.assertFalse(self.out.exists())
+        self.assertNotIn('sfdisk', (self.d / 'calls').read_text() if (self.d / 'calls').exists() else '')
 
     def test_rootfs_larger_than_p2(self):
         self.piece('rootfs.ext2', SIZES['P2_SIZE'] * 512 + 1)

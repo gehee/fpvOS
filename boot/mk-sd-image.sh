@@ -36,12 +36,24 @@ P3_START=2000896; P3_SIZE=131072     # boot,    64M  (the FIT)
 # p1 is FAT32: what its tables and directories take, at most, besides the files.
 P1_OVERHEAD=$((4 * 1024 * 1024))
 
-for f in "$V/uboot-patched.bin" "$V/boot-sd3.img" "$V/Image" \
+for f in "$V/uboot-patched.bin" "$V/boot-sd3.img" "$V/boot-sd3.img.kernel-sha256" "$V/Image" \
          "$V/rk3568-pro-patched.dtb" "$BR/rootfs.ext2"; do
     [ -f "$f" ] || { echo "MISSING: $f" >&2
         echo "  run ./build.sh - it builds the boot chain and rootfs.ext2 (after" >&2
         echo "  scripts/extract-ascent-vrx-pro-firmware.py has filled vendor/)" >&2; exit 1; }
 done
+
+# The FIT's kernel must be the kernel the rootfs's modules were built for:
+# Buildroot rebuilds the kernel (a changed config fragment) without rebuilding
+# fpvos-bootchain, which leaves the card booting the old one - with the new
+# modules and none of its drivers (a VRX Pro with no USB network, 2026-11-24).
+fit_kernel=$(cat "$V/boot-sd3.img.kernel-sha256")
+image_kernel=$(sha256sum "$V/Image" | cut -d' ' -f1)
+[ "$fit_kernel" = "$image_kernel" ] || {
+    echo "mk-sd-image.sh: boot-sd3.img boots another kernel than images/Image (the build's):" >&2
+    echo "  rebuild the boot chain first: make -C output/ascent-vrx-pro fpvos-bootchain-rebuild" >&2
+    echo "  (./build.sh and ./build.sh image do this)" >&2
+    exit 1; }
 
 # Everything below is a plain write at an offset, which would run over the
 # next region without a word: check each piece fits where it goes first.

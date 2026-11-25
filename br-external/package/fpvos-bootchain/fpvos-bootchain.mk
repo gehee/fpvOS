@@ -22,7 +22,7 @@ FPVOS_BOOTCHAIN_DEPENDENCIES = host-dtc host-lz4
 FPVOS_BOOTCHAIN_INSTALL_TARGET = NO
 FPVOS_BOOTCHAIN_INSTALL_IMAGES = YES
 
-FPVOS_BOOTCHAIN_FILES = uboot-patched.bin boot-sd3.img rk3568-pro-patched.dtb Image
+FPVOS_BOOTCHAIN_FILES = uboot-patched.bin boot-sd3.img boot-sd3.img.kernel-sha256 rk3568-pro-patched.dtb Image
 
 # With a kernel built from source (BR2_LINUX_KERNEL), that goes into the FIT
 # in place of the stock kernel.

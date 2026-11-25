@@ -490,6 +490,12 @@ def main():
         subprocess.run([a.lz4, "-d", "-f", "-q", framed, image], check=True)
         if os.path.getsize(image) != want:
             die(f"kernel: decompressed to {os.path.getsize(image)} B, trailer says {want}")
+        # The kernel the FIT boots, by hash, for mk-sd-image.sh: Buildroot
+        # rebuilds the kernel without rebuilding this package, and a card
+        # whose FIT kernel is not the one its modules were built for boots
+        # with the wrong drivers (a VRX Pro with no USB network, 2026-11-24).
+        digest = hashlib.sha256(open(image, "rb").read()).hexdigest()
+        open(os.path.join(a.out, "boot-sd3.img.kernel-sha256"), "w").write(digest + "\n")
     print(f"mkbootchain: boot chain written to {a.out}")
 
 
