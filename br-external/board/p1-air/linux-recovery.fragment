@@ -14,8 +14,13 @@
 # bootloader only unpacks gz/lzo/lz4); XZ only changes how the kernel stores its
 # own built-in initramfs.
 #
-# Kept: USB gadget (DWC2/ECM/ACM/configfs), MTD/spi-nand, UBI/UBIFS, crypto,
-# squashfs + overlayfs - the firmware-update path - and the P1 boot guard.
+# Kept: USB gadget (DWC2/NCM/ACM/FunctionFS/configfs), MTD/spi-nand, UBI/UBIFS,
+# crypto - the firmware-update path - and the P1 boot guard. (This kernel has
+# no squashfs or overlayfs: the P1 Air's root is a RAM cpio.)
+#
+# Its command line stays the bring-up one: one CPU (the HID loader's path to
+# a second one is not known), every kernel message on the console.
+CONFIG_CMDLINE="console=ttyS0,1152000 earlycon loglevel=7 mem=128M rdinit=/init maxcpus=1 nr_cpus=1 clk_ignore_unused"
 # NOT in any defconfig: recovery-kernel.sh applies it to a copy of the source
 # build's kernel tree (./build.sh p1-air-source recovery), so the installed
 # kernel and the .fwu are never slimmed.

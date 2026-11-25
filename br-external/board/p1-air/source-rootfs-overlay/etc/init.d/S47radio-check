@@ -1,0 +1,41 @@
+#!/bin/sh
+# The radio as a last resort: S44 has already reset the chip once in this
+# boot. If /dev/arlink0 is still missing, a reboot (which powers the chip up
+# from scratch) is the next thing that can bring the video link back, so this
+# reboots - at most twice in a row, counted on the settings volume (S45), so a
+# radio that never comes up leaves the unit up for USB and SSH instead of
+# rebooting for good. A radio that comes up clears the count. Without the
+# settings volume (S45 fell back to RAM) nothing can be counted, so nothing is
+# rebooted.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+persist=/persist
+count=$persist/fpvos/radio-reboots
+limit=2
+log() { echo "Radio check: $*"; echo "<4>radio-check: $*" 2>/dev/null >/dev/kmsg || :; }
+persistent() { awk -v p="$persist" '$2 == p && $3 == "ubifs" && $4 ~ /(^|,)rw(,|$)/ { f = 1 } END { exit !f }' /proc/mounts; }
+
+case "$1" in
+	start)
+		if [ -c /dev/arlink0 ]; then
+			if [ -e "$count" ]; then
+				rm -f "$count" && sync
+				log "radio up; reboot count cleared"
+			fi
+			exit 0
+		fi
+		persistent || { log "no radio, and no settings volume to count reboots on: staying up"; exit 0; }
+		n=$(cat "$count" 2>/dev/null)
+		case "$n" in ''|*[!0-9]*) n=0 ;; esac
+		if [ "$n" -ge "$limit" ]; then
+			log "no radio after $n reboots: staying up for USB (cleared when the radio next comes up)"
+			exit 0
+		fi
+		mkdir -p "${count%/*}" && echo $((n + 1)) > "$count.new" && mv "$count.new" "$count" && sync ||
+			{ log "no radio, and the reboot count cannot be written: staying up"; exit 0; }
+		log "no radio: rebooting ($((n + 1)) of $limit)"
+		reboot
+		sleep 60   # init is on its way down: start nothing after this
+		;;
+	stop) : ;;
+	*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;
+esac

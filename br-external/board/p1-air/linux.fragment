@@ -38,7 +38,12 @@ CONFIG_SYSCON_REBOOT_MODE=y
 CONFIG_WATCHDOG_HANDLE_BOOT_ENABLED=y
 
 # SPL supplies stock root arguments; this image always starts its own recovery.
-CONFIG_CMDLINE="console=ttyS0,1152000 earlycon loglevel=7 mem=128M rdinit=/init maxcpus=1 nr_cpus=1 clk_ignore_unused"
+# Both Cortex-A53s: the stock SPL leaves the second one in the spin table, as on
+# the P1 goggles (a CPU that does not come up only costs itself, the kernel
+# boots on one). The console prints warnings and worse (loglevel=4): every
+# kernel message at 1152000 baud is time the CPUs spend on the UART in flight;
+# dmesg still has them all.
+CONFIG_CMDLINE="console=ttyS0,1152000 earlycon loglevel=4 mem=128M rdinit=/init clk_ignore_unused"
 CONFIG_CMDLINE_FORCE=y
 CONFIG_WATCHDOG_OPEN_TIMEOUT=60
 

@@ -11,7 +11,7 @@ BR2_STATIC_LIBS=y
 BR2_KERNEL_HEADERS_6_18=y
 BR2_TARGET_GENERIC_HOSTNAME="fpvos-p1-air"
 BR2_TARGET_GENERIC_ROOT_PASSWD="root"
-BR2_TARGET_GENERIC_ISSUE="fpvOS P1 Air source-kernel bring-up (experimental)"
+BR2_TARGET_GENERIC_ISSUE="fpvOS P1 Air (experimental)"
 BR2_INIT_BUSYBOX=y
 # BR2_TARGET_GENERIC_GETTY is not set
 BR2_ROOTFS_OVERLAY="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/rootfs-overlay $(BR2_EXTERNAL_FPVOS_PATH)/board/p1-air/source-rootfs-overlay"
@@ -40,7 +40,8 @@ BR2_LINUX_KERNEL_IMAGE=y
 BR2_LINUX_KERNEL_DTS_SUPPORT=y
 BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/dts $(BR2_EXTERNAL_FPVOS_PATH)/board/p1-air/dts"
 
-# Local Kestrel development checkout until its AR9311 backend is published.
+# Kestrel Air at the commit kestrel-air.mk pins (KESTREL_AIR_OVERRIDE_SRCDIR
+# builds a local checkout instead).
 BR2_PACKAGE_KESTREL_AIR=y
 BR2_PACKAGE_AR9311_RADIO=y
 BR2_PACKAGE_AR9311_TEMP=y

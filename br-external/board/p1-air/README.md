@@ -292,6 +292,24 @@ a unit's own. A running radio is left alone; applying changed calibration
 requires a cold boot. VRX boards without host provisioning retain Open8030's radio-side factory
 reader; the helper and JSON library are selected only where needed.
 
+**When the radio does not start.** `S44ar9311-radio` waits 20 s for
+`/dev/arlink0`; if the firmware has not come up it resets the chip (the SDIO
+host unbound, the power sequencer rebound, the host bound again) and loads it
+once more. If there is still no radio, `S47radio-check` (after the settings
+volume) reboots the unit, at most twice in a row: the count is kept in
+`/persist/fpvos/radio-reboots` and cleared by the next radio that comes up.
+With no settings volume it does not reboot, and after two it stays up for USB
+and SSH.
+
+**Heat.** kestrel-air backs off from 95 C on the SoC (`sys_thermal_c`) until it
+is 8 C cooler: on the bench the radio and the sensor go to their low-power
+level, whatever the standby setting; flying, TX power is capped at 20 dBm
+(`sys_thermal_cap_dbm`). It still reboots at 110 C, as stock does.
+
+**Both CPUs.** The installed kernel runs on both Cortex-A53s with warnings and
+worse on the console (`loglevel=4`; `dmesg` has everything). Only the HID-upload
+recovery kernel keeps the bring-up `maxcpus=1 loglevel=7`.
+
 Host tests (a C compiler and Jansson development headers are required):
 
 ```sh
@@ -415,8 +433,11 @@ retain their existing startup scripts.
 Host supervision checks: `python3 br-external/package/kestrel-air/tests/test_supervise.py -v`.
 
 Hardware checks covered cold-boot autostart, Kestrel SIGKILL during video,
-an exposure-worker SIGKILL, restart cleanup, missing-storage retry exhaustion,
-and clean stop during streaming. Recovered HEVC streams decoded successfully;
+an exposure-worker SIGKILL, restart cleanup, retries with the settings storage
+missing, and clean stop during streaming. (The retries were checked when the
+supervisor still gave up after a budget; it now retries without limit, with a
+capped backoff, and log, status, pipe or fork failures do not stop it - those
+are covered by the host tests only.) Recovered HEVC streams decoded successfully;
 the receiver repeated its stream-setup exchange after application restarts.
 Continuous playback across a crash has not been validated. The standalone
 recorder was excluded while Kestrel owned the camera and worked after service
@@ -437,13 +458,16 @@ The source profile carries fpvOS_usb (`fpvos-usb` package). The serial port
 
 `tools/fpvos-update/client.py --board p1-air --port /dev/ttyACM0 bridge`
 switches from the host. Bridge mode needs the FunctionFS gadget in the
-kernel, so the stock-runtime profile has no bridge mode. Not yet run on a
-unit.
+kernel, so the stock-runtime profile has no bridge mode. The chosen mode is
+saved in `/persist/fpvos/usb-saved-mode` (`S61fpvos-usb` restores it at boot,
+after the settings volume and Kestrel). Checked on a unit: bridge mode starts,
+and after a reboot or a power cycle the unit comes up in normal mode and is in
+bridge mode about 6 s later; `normal` clears the saved mode.
 
 ### Persistent installation and USB recovery
 
-The source profile boots fpvOS Linux 6.18 directly from NAND bank 0, using the
-original SPL/U-Boot. It does not boot stock Linux or need a stock userspace hook
+The source profile boots fpvOS Linux 6.18 directly from NAND, from whichever
+bank the updater installed it on (below), using the original SPL/U-Boot. It does not boot stock Linux or need a stock userspace hook
 for normal operation or updates. The kernel embeds a small fpvOS recovery
 root with USB Ethernet, SSH and the shared CDC-ACM update service.
 
@@ -460,7 +484,7 @@ permits GPT activation of the target. `fpvos-update nand stock` selects the
 bank that holds stock (its kernel and a readable root), never one that may
 not boot. GPT updates erase the nonselected copy, increment its generation,
 recompute CRCs and verify the new record. Every readback that decides or
-verifies a write (both GPT records, kernel0, dtb0) also checks the partition's
+verifies a write (both GPT records, the target's kernel and DTB) also checks the partition's
 ECC failure count, since a read returns the data even when ECC could not
 correct it. A failed GPT write is erased again and read back clean, which
 leaves the previous valid selection. No formatting, resizing, repartitioning,
@@ -494,7 +518,7 @@ the third reset in a row without a clean reboot requests the USB boot, so a
 kernel that keeps failing ends in U-Boot's USB downloader (about 4.5 minutes
 when each try hangs until the 89-second watchdog). Leave the unit powered for
 that: a power cycle starts the count over. This is not recovery from damaged SPL, U-Boot or a kernel that fails before
-entry. It is also not A/B fpvOS: bank 1 remains the stock system. Loss of power
+entry. It is also not A/B fpvOS: the other bank remains the stock system. Loss of power
 during installation leaves stock selected until activation completes.
 
 `./build.sh p1-air-source` produces these files under
@@ -543,6 +567,6 @@ python3 tools/fpvos-update/client.py --board p1-air --port /dev/ttyACM<N> stock
 ```
 
 Stock has a different USB identity; verify its boot separately. The custom bank
-remains stored but inactive. Stock reflashing may replace bank 0 or GPT flags;
+remains stored but inactive. Stock reflashing may replace either bank or the GPT flags;
 reinstall fpvOS through the initial installer afterward. It must not depend on
 old hooks surviving a vendor reflash.

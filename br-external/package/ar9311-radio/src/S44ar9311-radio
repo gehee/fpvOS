@@ -1,7 +1,15 @@
 #!/bin/sh
 # Load firmware into the AR8030's RAM. The client starts/stops the radio.
-# Do not unbind/reload a running SDIO chip: recover with a cold boot.
 # Optional host factory provisioning is selected by board configuration.
+#
+# A chip that did not come up is reset and loaded once more. Reloading
+# arlink.ko alone cannot do it: a chip running firmware never goes back to its
+# boot ROM, and the power sequencer drives its reset line only when it powers
+# the card. So the SDIO host is unbound (arlink.ko never goes away under a live
+# chip), the sequencer unbound and bound again (its probe asserts reset), the
+# host bound again (power-on releases reset: the boot ROM), and arlink.ko loads
+# the firmware - fpvOS_usb's chip-load, the same on every AR9311 board (radio
+# on mmc0, 1b00000.mmc). Never with a client on /dev/arlink0.
 firmware=open8030.img
 config=open8030.json
 calibration_base=
@@ -9,13 +17,46 @@ calibration_factory=
 calibration_mount=
 calibration_fallback_power=
 [ ! -r /etc/default/ar9311-radio ] || . /etc/default/ar9311-radio
+mmc=/sys/bus/platform/drivers/dwmmc_artosyn
+host=1b00000.mmc
+pwrseq=/sys/bus/platform/drivers/ar9311-radio-pwrseq
+wait_ready() {
+	i=0
+	while [ "$i" -lt 20 ]; do
+		[ -c /dev/arlink0 ] && return 0
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
+}
+reset_chip() {
+	dev=
+	for d in "$pwrseq"/*; do
+		[ -L "$d" ] && [ -e "$d/driver" ] && dev=${d##*/}
+	done
+	[ -n "$dev" ] || { echo "Radio: no radio power sequencer bound; cannot reset the chip" >&2; return 1; }
+	[ ! -e "$mmc/$host" ] || echo "$host" > "$mmc/unbind" || return 1
+	! grep -q '^arlink ' /proc/modules || rmmod arlink || return 1
+	echo "$dev" > "$pwrseq/unbind" && echo "$dev" > "$pwrseq/bind" && echo "$host" > "$mmc/bind"
+}
+load() { modprobe arlink fw_name="$firmware" cfg_name="$config"; }
+retry() {
+	echo "Radio: no /dev/arlink0: resetting the chip and loading it again" >&2
+	echo "<4>ar9311-radio: firmware did not start; resetting the chip once" 2>/dev/null >/dev/kmsg || :
+	dmesg | grep -iE 'arlink|mmc0' | tail -4 >&2
+	reset_chip && load && wait_ready && {
+		echo "Radio: /dev/arlink0 ready after a chip reset; client may start the radio"
+		exit 0
+	}
+	echo "Radio: SDIO firmware startup failed after a chip reset" >&2
+	exit 1
+}
 case "$1" in
 	start)
 		# A loaded chip must not be reconfigured/reloaded underneath a client.
 		if [ -d /sys/module/arlink ]; then
 			[ -c /dev/arlink0 ] && exit 0
-			echo "Radio: driver already loaded without a ready device; cold boot required" >&2
-			exit 1
+			retry
 		fi
 		if [ -n "$calibration_base$calibration_factory$calibration_mount" ]; then
 			mkdir -p /run/ar9311-radio || exit 1
@@ -53,18 +94,12 @@ case "$1" in
 		modprobe gpio-regulator || exit 1
 		modprobe ar9311_radio_pwrseq || exit 1
 		modprobe dw_mci-artosyn || exit 1
-		modprobe arlink fw_name="$firmware" cfg_name="$config" || exit 1
-		i=0
-		while [ "$i" -lt 20 ]; do
-			if [ -c /dev/arlink0 ]; then
-				echo "Radio: /dev/arlink0 ready; client may start the radio"
-				exit 0
-			fi
-			sleep 1
-			i=$((i + 1))
-		done
-		echo "Radio: SDIO firmware startup failed; inspect dmesg before a cold reboot" >&2
-		exit 1
+		load || exit 1
+		if wait_ready; then
+			echo "Radio: /dev/arlink0 ready; client may start the radio"
+			exit 0
+		fi
+		retry
 		;;
 	stop) : ;; # Closing the client stops/deinitializes the radio.
 	*) echo "Usage: $0 {start|stop}" >&2; exit 1 ;;

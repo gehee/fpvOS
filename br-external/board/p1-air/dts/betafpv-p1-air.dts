@@ -252,8 +252,10 @@
 
 /* P1 1.0.44 layout, verified against stock MTD and backup.
  * Factory stays read-only; usr_data holds a separate fpvOS settings directory.
- * Bank 0 holds fpvOS kernel, DTB and rootfs. GPT selects the complete bank
- * only after readback verification. Stock bank 1 contents are never written.
+ * Neither bank is fpvOS's or stock's for good: the updater writes the bank
+ * holding fpvOS, else the one stock does not run from, so both banks are
+ * writable here and its checks, not the DT, keep the stock bank unwritten.
+ * GPT selects the complete bank only after readback verification.
  */
 &qspi_clock { status = "okay"; };
 
