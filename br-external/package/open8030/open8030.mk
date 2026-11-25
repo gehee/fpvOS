@@ -6,7 +6,7 @@
 
 # Radio-chip firmware, independent of the Linux host SoC or application.
 # Board defconfigs select profile, transport, role and factory-data policy.
-OPEN8030_VERSION ?= 61f4dc7093f61049491fa8732141c7b1a8f32ad5
+OPEN8030_VERSION ?= 5a9a78e1b82cc9274043eced15c98ec3fb5f1974
 OPEN8030_SITE ?= https://github.com/gehee/Open8030.git
 OPEN8030_SITE_METHOD = git
 OPEN8030_CONFIG ?= $(call qstrip,$(BR2_PACKAGE_OPEN8030_CONFIG))
@@ -102,6 +102,8 @@ else
 define OPEN8030_INSTALL_TARGET_CMDS
 	$(INSTALL) -D -m 0644 $(@D)/$(OPEN8030_IMAGE) $(TARGET_DIR)$(OPEN8030_DEST)/$(OPEN8030_IMAGE)
 	$(INSTALL) -D -m 0644 "$(OPEN8030_CONFIG_SOURCE)" $(TARGET_DIR)$(OPEN8030_DEST)/open8030.json
+	# RADIO > Link Profile: the three profiles in the config, switched live.
+	$(HOST_DIR)/bin/python3 $(OPEN8030_PKGDIR)/link-profiles.py "$(OPEN8030_CONFIG_SOURCE)" $(TARGET_DIR)$(OPEN8030_DEST)/open8030.json
 	ln -sf open8030.json $(TARGET_DIR)$(OPEN8030_DEST)/bb_config_gnd_open8030.json
 	$(if $(BR2_PACKAGE_OPEN8030_TRANSPORT_USB),ln -sf $(OPEN8030_IMAGE),rm -f) $(TARGET_DIR)$(OPEN8030_DEST)/open8030-vrxpro-usb.img
 	echo "$(OPEN8030_VERSION_TEXT)" > $(TARGET_DIR)$(OPEN8030_DEST)/open8030.version

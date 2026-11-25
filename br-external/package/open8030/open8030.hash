@@ -1,4 +1,4 @@
 # Locally computed (Buildroot git archive and packaged license files)
-sha256  14c058dba22e5eb8c194ff2d4866d7d2987415f2cb88982160111fef52bcb9f2  open8030-61f4dc7093f61049491fa8732141c7b1a8f32ad5-git4.tar.gz
+sha256  b8f434803806f0941510ff6dcfb2b27caaac1221074df02ca777ea8491e6541e  open8030-5a9a78e1b82cc9274043eced15c98ec3fb5f1974-git4.tar.gz
 sha256  22849c80336e82893adf6191dbc313766162b24c7c551fcacf302a4a8dfea094  LICENSE
 sha256  e61b16f0f89fbbede0a6dcf4d05bbeb8e7eb0291e7db610a960259998c427fbf  THIRD_PARTY.md
