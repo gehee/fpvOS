@@ -119,11 +119,11 @@ class Trees(unittest.TestCase):
             self.assertIn(f'*" {unit} "*)', device, tree)
             self.assertRegex(post, rf':{re.escape(Path(tree).stem)}[ ;]', tree)
 
-    def test_status_led_is_opt_in_for_hdmi_vrx_only(self):
+    def test_status_led_is_opt_in_for_verified_p1_boards(self):
         for tree in self.UNITS + (self.RECOVERY,):
             text = (self.BOARDS / tree).read_text()
             self.assertEqual('betafpv,p1-vrx-status-led' in text,
-                             tree.startswith('p1-nano-vrx/'), tree)
+                             tree.startswith(('p1-nano-vrx/', 'p1-goggle/')), tree)
         shared = (self.BOARDS / 'common/ar9311/dts/ar9311.dtsi').read_text()
         spi = shared.split('spi1: spi@1102000 {', 1)[1].split('};', 1)[0]
         self.assertIn('status = "disabled";', spi)

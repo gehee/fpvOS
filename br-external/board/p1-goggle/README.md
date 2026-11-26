@@ -201,6 +201,15 @@ supplied temporarily for this test; the user subsequently confirmed physical
 pairing-button operation. Persistence remains to be implemented. The UI falls back to offline operation when the
 radio or decoder is unavailable.
 
+## Status LEDs
+
+The goggles select the shared P1 SPI status-LED driver through their device
+tree. It exposes `fpvos:status` using the stock SPI1/CS0 GRB encoding at
+6.25 MHz. Kestrel's optional status-LED framework supplies startup, lost-video,
+pairing, video, recording and fault patterns; no goggles-specific application
+code is needed. The shared controller remains disabled on boards that do not
+select an LED node, including the unverified goggles Pro variant.
+
 ## NAND installation and recovery
 
 Initial installation requires booting the guarded kernel and board DTB into

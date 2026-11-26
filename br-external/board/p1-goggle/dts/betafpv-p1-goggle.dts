@@ -72,6 +72,18 @@
 	cpu-release-addr = <0 0x00100000>;
 };
 &uart0 { status = "okay"; };
+
+/* Stock goggles use the same SPI GRB status chain as the P1 VRX. */
+&spi1 {
+	status = "okay";
+	status-led@0 {
+		compatible = "betafpv,p1-vrx-status-led";
+		reg = <0>;
+		spi-max-frequency = <6250000>;
+		spi-cpol;
+		spi-cpha;
+	};
+};
 &usb {
 	status = "okay";
 	dr_mode = "peripheral";

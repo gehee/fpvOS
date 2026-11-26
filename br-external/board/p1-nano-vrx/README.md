@@ -103,9 +103,11 @@ package it with `tools/package_ascent.py` and pass the runtime as
 
 ## Not done
 
-Nothing has run on the hardware: boot, HDMI picture, keys, radio link, SD,
-install and recovery are all untested. Persistent settings, a first-install
-path from stock 2.0.8 and the radio's C4 line are open.
+Boot, HDMI picture, keys, LEDs and installation have now been exercised on
+P1 VRX HD and Nano hardware. Nano HDMI needed a temporary forced-1080p60
+override when EDID returned no modes; that workaround is not included here.
+Live radio reception, SD and persistent-settings regression remain outstanding
+for this controls change, as does investigation of the radio's C4 line.
 
 ## Keypad and status LED
 
@@ -117,14 +119,16 @@ The VRX status chain uses SPI1 at `0x01102000`, CS0, mode 3, 6.25 MHz. The
 `betafpv,p1-vrx-status-led` driver mirrors RGB to the three-entry GRB chain
 using stock's eight-SPI-bit encoding. It exposes `/sys/class/leds/fpvos:status`
 as a standard multicolor LED. Red, green, blue and off were verified on this
-unit. SPI1 defaults disabled in the shared SoC tree and is enabled only here;
-the unified P1 build includes the driver but goggles do not instantiate it.
+unit. SPI1 defaults disabled in the shared SoC tree. The VRX and goggles
+explicitly enable their LED nodes; the goggles Pro does not.
 
 Kestrel's optional status framework requires a runtime built with that feature;
 an older pinned runtime will leave the LED off. See Kestrel's
 `docs/status-led.md` for patterns and lifecycle. New driver/framework patterns
 were tested with temporary modules and then installed and boot-verified on
-the P1 VRX HD. Separate Nano VRX hardware has not been tested.
+the P1 VRX HD. Nano video, buttons, Bind and LEDs were also confirmed, and
+goggles red LEDs and button operation were confirmed in a RAM test.
 
 The stock application also references PWM8 for a buzzer. The PWM counter runs,
-but no sound was observed on this unit. Buzzer support is not enabled here.
+but no sound was observed on the VRX HD. PWM8 tones were audible on the Nano.
+Buzzer integration is not included here.
