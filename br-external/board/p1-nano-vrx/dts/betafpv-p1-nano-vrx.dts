@@ -107,6 +107,13 @@
 
 &gpio {
 	status = "okay";
+	/* Stock adc.sh enables the keypad on GPIO97 before reading ADC0. */
+	keypad-enable-hog {
+		gpio-hog;
+		gpios = <97 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "keypad-enable";
+	};
 	/* GPIO100 is the SD I/O rail (stock's "vqmmc sdmmc1", 3.3 V when high).
 	 * Stock keeps it high.
 	 */
@@ -272,5 +279,17 @@
 			partition@4400000 { label = "userapp1"; reg = <0x4400000 0x2d00000>; };
 			partition@7100000 { label = "usr_data"; reg = <0x7100000 0x600000>; };
 		};
+	};
+};
+
+/* Stock status chain: three GRB LEDs, encoded at 6.25 MHz in SPI mode 3. */
+&spi1 {
+	status = "okay";
+	status-led@0 {
+		compatible = "betafpv,p1-vrx-status-led";
+		reg = <0>;
+		spi-max-frequency = <6250000>;
+		spi-cpol;
+		spi-cpha;
 	};
 };

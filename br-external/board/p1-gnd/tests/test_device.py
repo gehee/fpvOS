@@ -119,6 +119,15 @@ class Trees(unittest.TestCase):
             self.assertIn(f'*" {unit} "*)', device, tree)
             self.assertRegex(post, rf':{re.escape(Path(tree).stem)}[ ;]', tree)
 
+    def test_status_led_is_opt_in_for_hdmi_vrx_only(self):
+        for tree in self.UNITS + (self.RECOVERY,):
+            text = (self.BOARDS / tree).read_text()
+            self.assertEqual('betafpv,p1-vrx-status-led' in text,
+                             tree.startswith('p1-nano-vrx/'), tree)
+        shared = (self.BOARDS / 'common/ar9311/dts/ar9311.dtsi').read_text()
+        spi = shared.split('spi1: spi@1102000 {', 1)[1].split('};', 1)[0]
+        self.assertIn('status = "disabled";', spi)
+
     def test_the_goggles_pro_tree_drives_its_bridge_not_the_goggles_panel(self):
         text = (self.BOARDS / 'p1-gnd/dts/betafpv-p1-goggle-pro.dts').read_text()
         self.assertIn('compatible = "betafpv,vr04-pro-display";\n\t\treg = <0x57>;', text)

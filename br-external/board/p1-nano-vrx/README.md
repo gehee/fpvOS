@@ -106,3 +106,25 @@ package it with `tools/package_ascent.py` and pass the runtime as
 Nothing has run on the hardware: boot, HDMI picture, keys, radio link, SD,
 install and recovery are all untested. Persistent settings, a first-install
 path from stock 2.0.8 and the radio's C4 line are open.
+
+## Keypad and status LED
+
+GPIO97 must stay high to enable the ADC keypad, matching stock `adc.sh`.
+Record, Back, Left, Down, Right, Up and Center were verified on the connected
+P1 VRX HD with this enable. It has no observed dedicated Bind key.
+
+The VRX status chain uses SPI1 at `0x01102000`, CS0, mode 3, 6.25 MHz. The
+`betafpv,p1-vrx-status-led` driver mirrors RGB to the three-entry GRB chain
+using stock's eight-SPI-bit encoding. It exposes `/sys/class/leds/fpvos:status`
+as a standard multicolor LED. Red, green, blue and off were verified on this
+unit. SPI1 defaults disabled in the shared SoC tree and is enabled only here;
+the unified P1 build includes the driver but goggles do not instantiate it.
+
+Kestrel's optional status framework requires a runtime built with that feature;
+an older pinned runtime will leave the LED off. See Kestrel's
+`docs/status-led.md` for patterns and lifecycle. New driver/framework patterns
+were tested with temporary modules and then installed and boot-verified on
+the P1 VRX HD. Separate Nano VRX hardware has not been tested.
+
+The stock application also references PWM8 for a buzzer. The PWM counter runs,
+but no sound was observed on this unit. Buzzer support is not enabled here.

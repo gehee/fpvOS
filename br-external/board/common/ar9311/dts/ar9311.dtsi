@@ -227,6 +227,18 @@
 			status = "disabled";
 		};
 
+		spi1: spi@1102000 {
+			compatible = "snps,dw-apb-ssi";
+			reg = <0 0x01102000 0 0x2000>;
+			interrupts = <GIC_SPI 39 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clk150m>;
+			reg-io-width = <4>;
+			num-cs = <4>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+			status = "disabled";
+		};
+
 		qspi_clock: clock-controller@a104034 {
 			compatible = "artosyn,ar9311-qspi-clock";
 			reg = <0 0x0a104034 0 2>;
