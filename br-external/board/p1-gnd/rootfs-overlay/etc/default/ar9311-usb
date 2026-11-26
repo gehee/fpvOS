@@ -1,0 +1,13 @@
+# One USB serial for every P1 ground unit (the updater's identity, the same
+# bundle board); the product names the unit (p1-gnd-device).
+USB_SERIAL=fpvos-p1-gnd
+USB_MANUFACTURER=BETAFPV
+case "$(${P1_GND_DEVICE:-/usr/sbin/p1-gnd-device} 2>/dev/null)" in
+nano-vrx) USB_PRODUCT="P1 VRX - fpvOS" ;;	# the VRX and the Nano VRX, one board
+goggles) USB_PRODUCT="P1 goggles - fpvOS" ;;
+goggles-pro) USB_PRODUCT="P1 goggles Pro - fpvOS" ;;
+*) USB_PRODUCT="P1 ground unit - fpvOS" ;;
+esac
+USB_ADDRESS=192.168.3.1/24
+USB_DEVICE_MAC=02:93:11:00:03:01
+USB_HOST_MAC=02:93:11:00:03:02

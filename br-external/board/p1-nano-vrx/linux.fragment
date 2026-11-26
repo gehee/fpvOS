@@ -1,0 +1,49 @@
+# Read-only NAND exposure is enforced by the board DT; no UBI auto-attach.
+CONFIG_MTD=y
+CONFIG_MTD_SPI_NAND=y
+# CONFIG_MTD_PARTITIONED_MASTER is not set
+CONFIG_USB_DWC2_PERIPHERAL=y
+
+CONFIG_COMMON_CLK_AR9311_QSPI=y
+# VO/DSI to the LT9611EX HDMI bridge (its own firmware; a small host driver).
+CONFIG_DRM=y
+CONFIG_DRM_ARTOSYN=y
+CONFIG_DRM_LONTIUM_LT9611EX=y
+CONFIG_DRM_DISPLAY_CONNECTOR=y
+# CONFIG_DRM_FBDEV_EMULATION is not set
+CONFIG_I2C_CHARDEV=y
+CONFIG_CMA=y
+CONFIG_DMA_CMA=y
+# Three 8192-stride 1080p UI buffers plus the YUV background need ~28.3 MiB.
+# Leave headroom for allocation alignment and other DMA users at cold boot.
+CONFIG_CMA_SIZE_MBYTES=48
+# Firmware-owned static Kestrel runtime.
+CONFIG_BLK_DEV_LOOP=y
+CONFIG_SQUASHFS=y
+CONFIG_SQUASHFS_XZ=y
+
+# On-chip ADC supplies the board resistor-ladder keypad through evdev.
+CONFIG_IIO=y
+CONFIG_ARTOSYN_ADC=y
+CONFIG_INPUT=y
+CONFIG_INPUT_EVDEV=y
+CONFIG_KEYBOARD_ADC=y
+
+# Read-only factory UBI, no writable partition or fastmap.
+CONFIG_MTD_UBI=y
+# CONFIG_MTD_UBI_FASTMAP is not set
+CONFIG_UBIFS_FS=y
+CONFIG_UBIFS_FS_ADVANCED_COMPR=y
+CONFIG_UBIFS_FS_LZO=y
+CONFIG_UBIFS_FS_ZLIB=y
+# CONFIG_UBIFS_FS_ZSTD is not set
+
+# Independent NAND recovery and volatile USB-download boot guard.
+CONFIG_SPI_ARTOSYN_QSPI=y
+CONFIG_COMMON_CLK_AR9311_QSPI=y
+CONFIG_MTD_SPI_NAND=y
+CONFIG_MFD_SYSCON=y
+CONFIG_SYSCON_REBOOT_MODE=y
+CONFIG_WATCHDOG_OPEN_TIMEOUT=60
+CONFIG_CMDLINE="console=ttyS0,1152000 earlycon loglevel=7 mem=148M rdinit=/init"
+CONFIG_CMDLINE_FORCE=y

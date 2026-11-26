@@ -6,7 +6,7 @@
 
 # Radio-chip firmware, independent of the Linux host SoC or application.
 # Board defconfigs select profile, transport, role and factory-data policy.
-OPEN8030_VERSION ?= 5a9a78e1b82cc9274043eced15c98ec3fb5f1974
+OPEN8030_VERSION ?= 6efc12c99b81750f3dc48fb884157452ae91be36
 OPEN8030_SITE ?= https://github.com/gehee/Open8030.git
 OPEN8030_SITE_METHOD = git
 OPEN8030_CONFIG ?= $(call qstrip,$(BR2_PACKAGE_OPEN8030_CONFIG))
@@ -67,7 +67,35 @@ OPEN8030_DEPENDENCIES += \
 	host-riscv64-zephyr-elf-toolchain host-zephyr host-zephyr-python \
 	host-ninja $(BR2_CMAKE_HOST_DEPENDENCY)
 
+# More ground images from the same source and flags (P1 ground units):
+# NAME:PROFILE:CONFIG each, installed as open8030-NAME.img and .json.
+OPEN8030_EXTRA_PROFILES = $(call qstrip,$(BR2_PACKAGE_OPEN8030_EXTRA_PROFILES))
+OPEN8030_EXTRA = $(word $(2),$(subst :, ,$(1)))
+
 # The --cflags= form accepts flag values starting with -D.
+define OPEN8030_IMAGE_CMD
+	cd $(@D) && $(HOST_MAKE_ENV) USER_CACHE_DIR=$(@D)/build/cache \
+		$(HOST_DIR)/bin/python3 ./open8030 image \
+		--profile "$(1)" \
+		--output $(2) \
+		--cflags="$(OPEN8030_CFLAGS)" \
+		--zephyr $(HOST_ZEPHYR_WORKSPACE)/zephyr \
+		--toolchain $(HOST_RISCV64_ZEPHYR_ELF_TOOLCHAIN_INSTALL_DIR) \
+		--python $(HOST_DIR)/bin/python3 \
+		--build-dir $(3)
+endef
+
+define OPEN8030_BUILD_EXTRA
+	test -f "$(@D)/profiles/$(call OPEN8030_EXTRA,$(1),2)" && test -f "$(call OPEN8030_EXTRA,$(1),3)" || \
+		{ echo "Missing Open8030 extra profile or config: $(1)" >&2; exit 1; }
+	$(call OPEN8030_IMAGE_CMD,$(@D)/profiles/$(call OPEN8030_EXTRA,$(1),2),$(@D)/open8030-$(call OPEN8030_EXTRA,$(1),1).img,$(@D)/build-$(call OPEN8030_EXTRA,$(1),1))
+endef
+
+define OPEN8030_INSTALL_EXTRA
+	$(INSTALL) -D -m 0644 $(@D)/open8030-$(call OPEN8030_EXTRA,$(1),1).img $(TARGET_DIR)$(OPEN8030_DEST)/open8030-$(call OPEN8030_EXTRA,$(1),1).img
+	$(HOST_DIR)/bin/python3 $(OPEN8030_PKGDIR)/link-profiles.py "$(call OPEN8030_EXTRA,$(1),3)" $(TARGET_DIR)$(OPEN8030_DEST)/open8030-$(call OPEN8030_EXTRA,$(1),1).json
+endef
+
 define OPEN8030_BUILD_CMDS
 	test -n "$(OPEN8030_PROFILE)" && test -f "$(OPEN8030_PROFILE_SOURCE)" || \
 		{ echo "Missing Open8030 profile: $(OPEN8030_PROFILE_SOURCE); set BR2_PACKAGE_OPEN8030_PROFILE or OPEN8030_PRIVATE_DIR" >&2; exit 1; }
@@ -76,15 +104,8 @@ define OPEN8030_BUILD_CMDS
 			"$(OPEN8030_STOCK_GND_CONFIG)" "$(OPEN8030_CONFIG_SOURCE)")
 	$(if $(BR2_PACKAGE_OPEN8030_ROLE_AP),,test -f "$(OPEN8030_CONFIG_SOURCE)" || \
 		{ echo "Missing Open8030 radio config: $(OPEN8030_CONFIG_SOURCE); set BR2_PACKAGE_OPEN8030_CONFIG or OPEN8030_CONFIG_DIR" >&2; exit 1; })
-	cd $(@D) && $(HOST_MAKE_ENV) USER_CACHE_DIR=$(@D)/build/cache \
-		$(HOST_DIR)/bin/python3 ./open8030 image \
-		--profile "$(OPEN8030_PROFILE_SOURCE)" \
-		--output $(@D)/$(OPEN8030_IMAGE) \
-		--cflags="$(OPEN8030_CFLAGS)" \
-		--zephyr $(HOST_ZEPHYR_WORKSPACE)/zephyr \
-		--toolchain $(HOST_RISCV64_ZEPHYR_ELF_TOOLCHAIN_INSTALL_DIR) \
-		--python $(HOST_DIR)/bin/python3 \
-		--build-dir $(@D)/build
+	$(call OPEN8030_IMAGE_CMD,$(OPEN8030_PROFILE_SOURCE),$(@D)/$(OPEN8030_IMAGE),$(@D)/build)
+	$(foreach e,$(OPEN8030_EXTRA_PROFILES),$(call OPEN8030_BUILD_EXTRA,$(e))$(sep))
 endef
 
 OPEN8030_VERSION_TEXT = $(if $(OPEN8030_OVERRIDE_SRCDIR),$(shell git -C $(OPEN8030_OVERRIDE_SRCDIR) describe --always --dirty 2>/dev/null),$(OPEN8030_VERSION))
@@ -107,6 +128,7 @@ define OPEN8030_INSTALL_TARGET_CMDS
 	ln -sf open8030.json $(TARGET_DIR)$(OPEN8030_DEST)/bb_config_gnd_open8030.json
 	$(if $(BR2_PACKAGE_OPEN8030_TRANSPORT_USB),ln -sf $(OPEN8030_IMAGE),rm -f) $(TARGET_DIR)$(OPEN8030_DEST)/open8030-vrxpro-usb.img
 	echo "$(OPEN8030_VERSION_TEXT)" > $(TARGET_DIR)$(OPEN8030_DEST)/open8030.version
+	$(foreach e,$(OPEN8030_EXTRA_PROFILES),$(call OPEN8030_INSTALL_EXTRA,$(e))$(sep))
 endef
 endif
 

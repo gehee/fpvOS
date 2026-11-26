@@ -59,7 +59,10 @@ hash_ = subprocess.check_output([mkpasswd, '-m', 'sha-256', '-S', 'fpvosrec', 'r
 (root / 'etc/shadow').chmod(0o600)
 (root / 'etc/shells').write_text('/bin/sh\n')
 (root / 'etc/issue').write_text('fpvOS AR9311 NAND recovery (root:root)\n')
-for name in ('etc/default/ar9311-usb', 'etc/default/dropbear', 'etc/fpvos-watchdog'):
+# usr/sbin/p1-gnd-device: what the P1 ground units' ar9311-usb names the unit
+# with, in recovery as in the image.
+for name in ('etc/default/ar9311-usb', 'etc/default/dropbear', 'etc/fpvos-watchdog',
+             'usr/sbin/p1-gnd-device'):
     path = overlay_file(name)
     if path:
         shutil.copy2(path, root / name)

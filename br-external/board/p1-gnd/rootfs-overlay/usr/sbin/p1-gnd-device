@@ -1,0 +1,14 @@
+#!/bin/sh
+# Which BETAFPV P1 ground unit this is, from the device tree it booted with:
+# the updater wrote the unit's own (a bundle per unit for now), so the tree
+# names the hardware. Prints goggles, goggles-pro or nano-vrx; anything else exits 1, and
+# the radio stays stopped rather than starting another unit's firmware.
+#   P1_GND_COMPATIBLE: the compatible file to read (tests)
+compatible=${P1_GND_COMPATIBLE:-/proc/device-tree/compatible}
+list=$(tr '\000' ' ' < "$compatible" 2>/dev/null) || list=
+case " $list " in
+	*" betafpv,p1-goggle "*) echo goggles ;;
+	*" betafpv,p1-goggle-pro "*) echo goggles-pro ;;
+	*" betafpv,p1-nano-vrx "*) echo nano-vrx ;;
+	*) echo "p1-gnd-device: not a P1 ground unit fpvOS knows (${list:-no device tree})" >&2; exit 1 ;;
+esac

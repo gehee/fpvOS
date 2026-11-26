@@ -50,6 +50,24 @@ define FPVOS_RECOVERY_KERNEL_CONFIG
 	$(call KCONFIG_ENABLE_OPT,CONFIG_INITRAMFS_COMPRESSION_GZIP)
 endef
 LINUX_KCONFIG_FIXUP_CMDS += $(FPVOS_RECOVERY_KERNEL_CONFIG)
+# The recovery root is a copy of the image's updater, shell and SSH server and
+# carries the fpvOS version, so it is built again when any of them is, or when
+# the version moves (a commit, a tag, a change in the tree) - and the kernel
+# after it, by the rule above. Buildroot orders packages but rebuilds nothing
+# for a dependency built again: without this, an incremental build kept the
+# first build's recovery root in the kernel - the updater that installs and
+# boots every bundle, older than the image around it.
+FPVOS_RECOVERY_VERSION_STAMP = $(BUILD_DIR)/.fpvos-recovery-version
+.PHONY: fpvos-recovery-version-check
+fpvos-recovery-version-check:
+# Rewritten only when the version is another: a build that changes nothing
+# leaves the recovery root and the kernel alone.
+$(FPVOS_RECOVERY_VERSION_STAMP): fpvos-recovery-version-check
+	@mkdir -p $(@D) && v=$$($(BR2_EXTERNAL_FPVOS_PATH)/../scripts/fpvos-version) && \
+		{ [ "$$(cat $@ 2>/dev/null)" = "$$v" ] || echo "$$v" > $@; }
+$(FPVOS_RECOVERY_DIR)/.stamp_built: $(FPVOS_RECOVERY_VERSION_STAMP) \
+	$(FPVOS_UPDATE_DIR)/.stamp_target_installed $(BUSYBOX_DIR)/.stamp_target_installed \
+	$(DROPBEAR_DIR)/.stamp_target_installed
 endif
 
 # Every image names its fpvOS version the same way (scripts/fpvos-version):

@@ -98,6 +98,18 @@ config BR2_PACKAGE_OPEN8030_CONFIG
 	  make time. Air units use their runtime board-specific stock
 	  configuration.
 
+config BR2_PACKAGE_OPEN8030_EXTRA_PROFILES
+	string "More ground images, one per unit"
+	depends on !BR2_PACKAGE_OPEN8030_ROLE_AP
+	help
+	  For an image covering several units (the P1 ground units):
+	  more radio images from the same source and flags, each
+	  NAME:PROFILE:CONFIG - PROFILE a file in Open8030's profiles/,
+	  CONFIG an absolute path to its ground radio configuration.
+	  Each installs as open8030-NAME.img and open8030-NAME.json
+	  (with the link profiles) beside the main image; the board
+	  picks one at boot.
+
 config BR2_PACKAGE_OPEN8030_AIR_DEFAULT
 	bool "air unit boots on Open8030"
 	depends on BR2_PACKAGE_KESTREL_AIR

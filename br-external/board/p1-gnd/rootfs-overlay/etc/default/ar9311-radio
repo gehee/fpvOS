@@ -1,0 +1,19 @@
+# The unit's own Open8030 image and calibration base (p1-gnd-device): the
+# goggles' is the package's main image (taken for the goggles Pro too: nothing
+# in stock sets their radio apart), the Nano VRX's its extra one. Factory
+# offsets are merged into a RAM-only configuration before loading; missing
+# calibration, or a unit fpvOS does not know, leaves the radio stopped.
+case "$(${P1_GND_DEVICE:-/usr/sbin/p1-gnd-device} 2>/dev/null)" in
+goggles|goggles-pro)
+	firmware=open8030.img
+	calibration_base=/lib/firmware/open8030.json ;;
+nano-vrx)
+	firmware=open8030-nano-vrx.img
+	calibration_base=/lib/firmware/open8030-nano-vrx.json ;;
+*)
+	firmware=unknown-p1-ground-unit.img
+	calibration_base=/lib/firmware/unknown-p1-ground-unit.json ;;
+esac
+config=p1-gnd-radio.json
+calibration_factory=/factory/ar8030_pwr.json
+calibration_mount=/factory

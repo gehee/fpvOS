@@ -52,6 +52,24 @@ config BR2_PACKAGE_FPVOS_UPDATE_P1_GOGGLE
 	  environment and factory calibration. Initial installation requires
 	  RAM boot into fpvOS recovery.
 
+config BR2_PACKAGE_FPVOS_UPDATE_P1_NANO_VRX
+	bool "BETAFPV P1 Nano VRX NAND"
+	depends on BR2_FPVOS_BOARD_P1_NANO_VRX
+	help
+	  Install fpvOS in bank 0 with independent USB recovery. Preserve
+	  stock bank 1, SPL/U-Boot, environment and factory calibration.
+	  Initial installation requires RAM boot into fpvOS recovery.
+
+config BR2_PACKAGE_FPVOS_UPDATE_P1_GND
+	bool "BETAFPV P1 ground units NAND"
+	depends on BR2_FPVOS_BOARD_P1_GND
+	help
+	  Install fpvOS with independent USB recovery on the bank not
+	  holding stock (either bank), with the unit's own device tree
+	  (the goggles' or the Nano VRX's). Preserve the stock bank,
+	  SPL/U-Boot, environment and factory calibration. Initial
+	  installation requires RAM boot into fpvOS recovery.
+
 config BR2_PACKAGE_FPVOS_UPDATE_SKYZONE_STEADYDIGITAL
 	bool "Skyzone SteadyDigital NAND (AR9311)"
 	depends on BR2_FPVOS_BOARD_SKYZONE_STEADYDIGITAL

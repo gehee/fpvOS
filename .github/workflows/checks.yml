@@ -25,7 +25,7 @@ jobs:
 
       - name: Shell syntax
         run: |
-          for f in build.sh boot/mk-sd-image.sh boot/versioned-name.sh scripts/release.sh scripts/native-runtime.sh scripts/fpvos-version \
+          for f in build.sh boot/mk-sd-image.sh boot/versioned-name.sh boot/recovery-current.sh scripts/release.sh scripts/native-runtime.sh scripts/fpvos-version \
                    br-external/board/ascent-vrx-pro/post-build.sh \
                    $(git ls-files 'br-external/board/ascent-vrx-pro/rootfs-overlay/etc/init.d/*') \
                    br-external/board/ascent-vrx-pro/rootfs-overlay/usr/sbin/fpvos-wifi \
@@ -52,6 +52,7 @@ jobs:
           for f in $(git ls-files 'br-external/board/ascent-vrx/*' \
                      'br-external/board/skyzone-steadydigital/*' \
                      'br-external/board/p1-goggle/*' \
+                     'br-external/board/p1-gnd/*' \
                      'br-external/board/common/ar9311/*' \
                      'br-external/package/ar9311-radio/src/*' \
                      'br-external/package/kestrel-native/*' \
@@ -68,6 +69,7 @@ jobs:
           python3 -m unittest discover -s tools/fpvos-update/tests -v
           python3 scripts/tests/test_fpvos_version.py -v
           python3 scripts/tests/test_versioned_name.py -v
+          python3 scripts/tests/test_recovery_current.py -v
 
       - name: AR9311 firmware extraction tests
         run: python3 -m unittest discover -s br-external/package/ar9311-firmware/tests -v
@@ -84,6 +86,7 @@ jobs:
           python3 br-external/package/kestrel-native/tests/test_package.py -v
           python3 br-external/board/p1-goggle/tests/test_inittab.py -v
           python3 br-external/board/p1-goggle/tests/test_update_helper.py -v
+          python3 br-external/board/p1-gnd/tests/test_device.py -v
           python3 br-external/board/ascent-vrx/tests/test_format_dvr.py -v
           python3 br-external/board/p1-air/tests/test_settings.py -v
           python3 br-external/board/p1-air/tests/test_inittab.py -v

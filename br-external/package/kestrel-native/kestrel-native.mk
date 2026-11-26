@@ -16,7 +16,7 @@ KESTREL_NATIVE_LICENSE_FILES = supervise.c
 # AR_LIBRE_VERSION into output/kestrel-runtime/ (build.sh runs it when the
 # file there is not the pinned one). The P1 goggles have their own; the
 # Ascent VRX and the SteadyDigital share the ascent one.
-KESTREL_NATIVE_BOARD = $(if $(BR2_FPVOS_BOARD_P1_GOGGLE),p1goggle,ascent)
+KESTREL_NATIVE_BOARD = $(if $(BR2_FPVOS_BOARD_P1_GOGGLE)$(BR2_FPVOS_BOARD_P1_GND),p1goggle,ascent)
 KESTREL_NATIVE_IMAGE ?= $(BR2_EXTERNAL_FPVOS_PATH)/../output/kestrel-runtime/runtime-$(KESTREL_NATIVE_BOARD).squashfs
 
 # The pin: the runtime the pins build, in runtime.hash (board, sha256,

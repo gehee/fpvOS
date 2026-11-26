@@ -1,0 +1,112 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+/* Any BETAFPV P1 ground unit, for the RAM recovery a stock unit is prepared
+ * with: what the goggles and the Nano VRX have in common and the updater
+ * needs - console, USB, the watchdog, the NAND with both banks - and nothing
+ * of their screens, radio, SD card or keys.
+ * Never installed: an install writes the tree of the unit's bundle.
+ * Not run on hardware.
+ */
+/dts-v1/;
+#include "ar9311.dtsi"
+
+/ {
+	model = "BETAFPV P1 ground unit (AR9311)";
+	compatible = "betafpv,p1-gnd", "artosyn,proxima-9311";
+
+	aliases {
+		serial0 = &uart0;
+	};
+	chosen {
+		stdout-path = "serial0:1152000n8";
+		bootargs = "console=ttyS0,1152000 earlycon loglevel=7 mem=148M rdinit=/init";
+	};
+
+	/* The SPL reads this word at reset; bit 0 requests its USB loader. */
+	reboot-scratch@a106138 {
+		compatible = "syscon", "simple-mfd";
+		reg = <0 0x0a106138 0 4>;
+		reboot-mode {
+			compatible = "syscon-reboot-mode";
+			offset = <0>;
+			mode-normal = <2>;
+			mode-bootloader = <3>;
+		};
+	};
+
+	/* Stock: 256 MiB DRAM, 148 MiB for Linux, the rest media. */
+	memory@20000000 {
+		device_type = "memory";
+		reg = <0 0x20000000 0 0x10000000>;
+	};
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+		media@29400000 {
+			reg = <0 0x29400000 0 0x06b00000>;
+			no-map;
+		};
+		loader@2ff00000 {
+			reg = <0 0x2ff00000 0 0x00100000>;
+			no-map;
+		};
+	};
+};
+
+/* The stock SPL's secondary CPU handshake, as both units' trees have it. */
+&cpu0 { enable-method = "ar-spin-table"; };
+&cpu1 {
+	enable-method = "ar-spin-table";
+	cpu-release-addr = <0 0x00100000>;
+};
+&uart0 { status = "okay"; };
+&usb {
+	status = "okay";
+	dr_mode = "peripheral";
+};
+&watchdog { status = "okay"; };
+
+&gpio {
+	status = "okay";
+	/* GPIO100 is the SD I/O rail on both units, and the panel's on the
+	 * goggles; stock keeps it high, and so does each unit's own tree.
+	 */
+	sd-io-rail-hog {
+		gpio-hog;
+		gpios = <100 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "sd-io-rail";
+	};
+};
+
+/* The NAND as both units' trees have it. */
+&qspi_clock { status = "okay"; };
+&qspi {
+	status = "okay";
+	clocks = <&qspi_clock>;
+	flash@0 {
+		compatible = "spi-nand";
+		reg = <0>;
+		spi-max-frequency = <25000000>;
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			partition@0 { label = "stock-spl"; reg = <0 0x100000>; read-only; };
+			partition@100000 { label = "boot-state"; reg = <0x100000 0x80000>; };
+			partition@180000 { label = "stock-vendor"; reg = <0x180000 0x80000>; read-only; };
+			partition@200000 { label = "factory"; reg = <0x200000 0x600000>; read-only; };
+			partition@800000 { label = "stock-bootloaders"; reg = <0x800000 0x240000>; read-only; };
+			/* Both banks, under the stock names: an install picks the bank
+			 * (fpvos-update: the one holding fpvOS, else the one not booted)
+			 * and its checks, not the DT, keep the stock bank unwritten. */
+			partition@a40000 { label = "kernel0"; reg = <0xa40000 0x600000>; };
+			partition@1040000 { label = "kernel1"; reg = <0x1040000 0x600000>; };
+			partition@1640000 { label = "dtb0"; reg = <0x1640000 0x60000>; };
+			partition@16a0000 { label = "dtb1"; reg = <0x16a0000 0x60000>; };
+			partition@1700000 { label = "userapp0"; reg = <0x1700000 0x2d00000>; };
+			partition@4400000 { label = "userapp1"; reg = <0x4400000 0x2d00000>; };
+			partition@7100000 { label = "usr_data"; reg = <0x7100000 0x600000>; };
+		};
+	};
+};

@@ -1,0 +1,34 @@
+# Main RAM root loaded from the verified NAND bundle; factory remains read-only.
+::sysinit:/bin/mount -t proc proc /proc
+::sysinit:/bin/mount -t sysfs sysfs /sys
+::sysinit:/bin/mkdir -p /dev/pts /run /tmp
+::sysinit:/bin/mount -t devpts devpts /dev/pts
+::sysinit:/bin/mount -t tmpfs tmpfs /run
+::sysinit:/bin/mount -t tmpfs tmpfs /tmp
+::sysinit:/bin/hostname -F /etc/hostname
+::sysinit:/sbin/ip link set lo up
+::sysinit:/etc/init.d/S40ar9311-usb start
+::sysinit:/sbin/watchdog -t 5 -T 60 /dev/watchdog
+::sysinit:/sbin/modprobe artosyn_gpio
+::sysinit:/sbin/modprobe mmc_block
+::sysinit:/sbin/modprobe dw_mci-artosyn
+::sysinit:/etc/init.d/S50dropbear start
+::sysinit:/etc/init.d/S43factory start
+::sysinit:/etc/init.d/S44ar9311-radio start
+::sysinit:/etc/init.d/S45ar9311-sd start
+::sysinit:/usr/sbin/ar9311-media-start
+::sysinit:/etc/init.d/S60kestrel-gnd start
+::sysinit:/bin/cat /etc/issue
+::respawn:/usr/sbin/fpvos-update-service
+ttyS0::askfirst:-/bin/sh
+::ctrlaltdel:/sbin/reboot
+# First: the watchdog daemon goes without its magic close, so the watchdog
+# stays armed (busybox's SIGTERM handler would disarm it, and the kernel then
+# keeps the DW watchdog fed for good): a shutdown step that hangs resets the
+# goggles once the 60 s timeout (-T 60 above) runs out instead of never.
+::shutdown:/usr/bin/killall -KILL watchdog
+::shutdown:/etc/init.d/S60kestrel-gnd stop
+::shutdown:/etc/init.d/S45ar9311-sd stop
+::shutdown:/etc/init.d/S50dropbear stop
+::shutdown:/etc/init.d/S40ar9311-usb stop
+::shutdown:/bin/umount -a -r

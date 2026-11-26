@@ -1,0 +1,29 @@
+{
+  "board_id": 1345408598,
+  "hardware": "P1_GND_VRX",
+  "usb_identity": [
+    "1d6b",
+    "0104",
+    "fpvos-p1-nano-vrx"
+  ],
+  "names": [
+    "kernel.img",
+    "betafpv-p1-nano-vrx.dtb",
+    "rootfs.cpio.gz"
+  ],
+  "limits": [
+    6291456,
+    65536,
+    16777216
+  ],
+  "counts": [
+    3,
+    0
+  ],
+  "bundle_limits": [
+    25165824,
+    512
+  ],
+  "restore_sources": [],
+  "bootstrap_resources": {}
+}

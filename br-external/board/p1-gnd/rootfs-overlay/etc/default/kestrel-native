@@ -1,0 +1,11 @@
+# Keep menus available when radio provisioning or decoder firmware is absent.
+KESTREL_NATIVE_NO_RADIO=1
+if [ -c /dev/arlink0 ] && [ -c /dev/video0 ]; then
+    KESTREL_NATIVE_NO_RADIO=0
+fi
+# The goggles' panel has a backlight; the Nano VRX's HDMI output and the
+# goggles Pro's display have none.
+if [ -w /sys/class/backlight/backlight/brightness ]; then
+    KESTREL_NATIVE_BACKLIGHT=/sys/class/backlight/backlight/brightness
+    KESTREL_NATIVE_BRIGHTNESS=5
+fi

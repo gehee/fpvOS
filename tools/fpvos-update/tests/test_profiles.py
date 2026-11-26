@@ -33,7 +33,7 @@ class Profiles(unittest.TestCase):
         """A DTB the package tool takes is one the unit's image check takes:
         the AR9311 A/B boards' profiles say the images.c limit (0xf000)."""
         import re
-        for board, images in (('p1-air', 'p1-air'), ('p1-goggle', 'p1-air'),
+        for board, images in (('p1-air', 'p1-air'), ('p1-goggle', 'p1-air'), ('p1-gnd', 'p1-air'),
                               ('skyzone-' + 'steadydigital', 'skyzone-' + 'steadydigital')):
             with self.subTest(board):
                 source = (PKG/'backends'/images/'images.c').read_text()

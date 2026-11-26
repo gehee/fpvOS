@@ -23,6 +23,8 @@ BOARD_WINDOWS = {
     'ascent-vrx': ((0x24400000, 0x24c00000), (0x22080000, 0x220e0000), (0x26000000, 0x26800000)),
     # 148 MiB Linux ends at 0x29300000 (ramoops, then the media pool).
     'skyzone-steadydigital': ((0x24400000, 0x24c00000), (0x22080000, 0x220e0000), (0x26000000, 0x29000000)),
+    # Same 148 MiB Linux map as the goggles/SteadyDigital; codec pool at 0x29400000.
+    'betafpv-p1-nano-vrx': ((0x24400000, 0x24c00000), (0x22080000, 0x220e0000), (0x26000000, 0x29000000)),
 }
 WINDOWS = BOARD_WINDOWS['ascent-vrx']
 

@@ -118,7 +118,19 @@ int p1_stock(void)
     char model[128], cmdline[4096], version[1024];
     struct utsname u;
     if (p1_read("/proc/device-tree/model", model, sizeof(model)) || uname(&u)) return -1;
-    if (!strcmp(model,P1_MODEL) && !strncmp(u.release,"6.18.",5)) return 0;
+    /* fpvOS on this board: its device tree's model (any unit's, for a
+     * backend covering several). */
+    if ((!strcmp(model,P1_MODEL)
+#ifdef P1_MODEL_ALT
+         || !strcmp(model,P1_MODEL_ALT)
+#endif
+#ifdef P1_MODEL_ALT2
+         || !strcmp(model,P1_MODEL_ALT2)
+#endif
+#ifdef P1_MODEL_ANY
+         || !strcmp(model,P1_MODEL_ANY)     /* its RAM recovery on a stock unit */
+#endif
+        ) && !strncmp(u.release,"6.18.",5)) return 0;
     if (!P1_STOCK_BOOTSTRAP) return -1;
     /* Stock runs from either bank's userapp (mtd17 bank 0, mtd18 bank 1): a
      * vendor update may have left it on either. Its mounted root (ubiblock) is
