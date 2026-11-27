@@ -1,0 +1,78 @@
+#!/bin/sh
+# fpvos-diag: everything needed to tell why an install was refused or failed,
+# in one read-only report. Run it on the unit (fpvOS or its recovery):
+#   ssh root@<unit> fpvos-diag > fpvos-diag.txt
+#   ssh root@<unit> fpvos-diag --dump > fpvos-diag.txt   # adds boot-state, base64
+# It reads only: no flash is written, no service is stopped.
+PATH=/sbin:/bin:/usr/sbin:/usr/bin
+export PATH
+dump=0
+[ "${1:-}" = --dump ] && dump=1
+section() { printf '\n===== %s =====\n' "$1"; }
+show() { [ -r "$1" ] && { section "$1"; cat "$1"; }; }
+
+section "fpvos-diag $(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null)"
+for f in /etc/fpvos-version /etc/fpvos-recovery-root /etc/fpvos-installed-sha256 /etc/fpvos-stock-bootstrap; do
+    [ -r "$f" ] && echo "$f: $(cat "$f")"
+done
+[ -r /proc/device-tree/model ] && echo "model: $(tr -d '\0' < /proc/device-tree/model)"
+[ -r /proc/device-tree/compatible ] && echo "compatible: $(tr '\0' ' ' < /proc/device-tree/compatible)"
+echo "kernel: $(uname -a)"
+echo "uptime: $(cat /proc/uptime 2>/dev/null)"
+[ -e /run/fpvos-clean-boot ] && echo "clean boot marker: present"
+show /proc/cmdline
+show /etc/os-release
+
+section "updater"
+for f in /run/fpvos-update/status /run/fpvos-update/clean /run/fpvos-update-helper.log; do
+    [ -e "$f" ] && { echo "--- $f"; cat "$f" 2>/dev/null; }
+done
+fpvos-update nand preflight 2>&1; echo "preflight exit $?"
+
+section "GPT (boot-state)"
+fpvos-update nand gpt 2>&1; echo "gpt exit $?"
+
+section "MTD"
+cat /proc/mtd 2>/dev/null
+for m in /sys/class/mtd/mtd*; do
+    case "$m" in *ro) continue;; esac
+    [ -r "$m/name" ] || continue
+    echo "$(basename "$m") $(cat "$m/name") off=$(cat "$m/offset" 2>/dev/null) size=$(cat "$m/size") erase=$(cat "$m/erasesize") page=$(cat "$m/writesize") oob=$(cat "$m/oobsize") bad=$(cat "$m/bad_blocks" 2>/dev/null) ecc=$(cat "$m/ecc_failures" 2>/dev/null)/$(cat "$m/corrected_bits" 2>/dev/null)"
+done
+
+section "UBI"
+for u in /sys/class/ubi/ubi[0-9]*; do
+    [ -d "$u" ] || continue
+    case "$u" in *_*) echo "$(basename "$u") name=$(cat "$u/name" 2>/dev/null) type=$(cat "$u/type" 2>/dev/null) ebs=$(cat "$u/reserved_ebs" 2>/dev/null)";;
+                 *) echo "$(basename "$u") mtd=$(cat "$u/mtd_num" 2>/dev/null) ro=$(cat "$u/ro_mode" 2>/dev/null)";; esac
+done
+
+section "mounts"
+cat /proc/mounts
+[ -r /proc/1/mounts ] && ! cmp -s /proc/mounts /proc/1/mounts 2>/dev/null && { echo "--- /proc/1/mounts"; cat /proc/1/mounts; }
+
+section "USB and network"
+for g in /sys/kernel/config/usb_gadget/*; do
+    [ -d "$g" ] && echo "$(basename "$g") $(cat "$g/idVendor" 2>/dev/null):$(cat "$g/idProduct" 2>/dev/null) serial=$(cat "$g/strings/0x409/serialnumber" 2>/dev/null) udc=$(cat "$g/UDC" 2>/dev/null)"
+done
+ip addr 2>/dev/null || ifconfig -a 2>/dev/null
+
+section "processes"
+ps 2>/dev/null
+
+section "memory"
+cat /proc/meminfo 2>/dev/null | head -5
+
+section "kernel log (flash, USB, errors)"
+dmesg 2>/dev/null | grep -iE 'nand|mtd|ubi|ecc|gpt|usb|gadget|error|fail|oops|panic|bad' | tail -80
+section "kernel log (last 60 lines)"
+dmesg 2>/dev/null | tail -60
+
+if [ "$dump" = 1 ]; then
+    for m in /sys/class/mtd/mtd*; do
+        [ "$(cat "$m/name" 2>/dev/null)" = boot-state ] || continue
+        section "boot-state ($(basename "$m"), base64)"
+        base64 "/dev/$(basename "$m")" 2>/dev/null || echo "(unreadable)"
+    done
+fi
+section "end"

@@ -97,6 +97,8 @@ class P1Tests(unittest.TestCase):
         subprocess.run(common+[str(Path(__file__).with_name('p1_volume_sim.c')),'-Wl,--gc-sections','-Wl,--wrap=open','-Wl,--wrap=__open_2','-Wl,--wrap=opendir','-Wl,--wrap=access','-Wl,--wrap=ioctl','-o',str(cls.build/'volume')],check=True)
         (cls.build/'layout.c').write_text('#include <stdio.h>\n#include "'+str(BACKEND/'layout.h')+'"\nint main(void) { unsigned char g[2][AR9311_GPT_BYTES]; if (fread(g,1,sizeof(g),stdin)!=sizeof(g)) return 2; return !p1_layout_valid(g); }\n')
         subprocess.run(common+[str(cls.build/'layout.c'),'-o',str(cls.build/'layout')],check=True)
+        (cls.build/'why.c').write_text('#include <stdio.h>\n#include "'+str(BACKEND/'layout.h')+'"\nint main(void) { unsigned char g[2][AR9311_GPT_BYTES]; char why[160]; unsigned r=9,b=9; if (fread(g,1,sizeof(g),stdin)!=sizeof(g)) return 2; if (p1_layout_why(g,&r,&b,why,sizeof(why))) printf("ok %u %u\\n",r,b); else puts(why); return 0; }\n')
+        subprocess.run(common+[str(cls.build/'why.c'),'-o',str(cls.build/'why')],check=True)
 
     @classmethod
     def tearDownClass(cls): cls.temp.cleanup()
@@ -134,6 +136,25 @@ class P1Tests(unittest.TestCase):
         self.assertEqual(struct.unpack_from('<QQQQ',end,0x40000+512+24),(0x3ffff,1,0xc00,0x3ffde))
         self.assertEqual(struct.unpack_from('<Q',end,0x40000+512+72)[0],0x3ffdf)
         self.assertTrue(self.layout(end[:0x4400],end[0x40000:0x44400]))
+
+    def why(self,a,b):
+        return subprocess.run([str(self.build/'why')],input=a+b,capture_output=True,check=True).stdout.decode().strip()
+
+    def test_a_refused_layout_says_why_in_a_reply_sized_line(self):
+        erased=b'\xff'*0x4400
+        self.assertEqual(self.why(erased,record(last=0x3ffff)),'ok 1 1')
+        self.assertEqual(self.why(erased,erased),'GPT: 0 erased; 1 erased')
+        self.assertEqual(self.why(erased,record(last=0x40000)),'GPT: 0 erased; 1 disk ends 0x40000')
+        self.assertEqual(self.why(record(0),record(last=0x3ffff)),'GPT: records end 0x3f7ff and 0x3ffff')
+        parts=list(PARTS);parts[11]=('userapp1',0x4400200,0x2d00000,1)
+        self.assertEqual(self.why(erased,record(parts=parts)),'GPT 1: userapp1 0x4400200-0x7100200, not 0x4400000+0x2d00000')
+        self.assertEqual(self.why(erased,record(parts=PARTS[:-1])),'GPT 1: no usr_log partition')
+        parts=list(PARTS);parts[3]=('stock-x',0x860000,0x60000,1)
+        self.assertEqual(self.why(erased,record(parts=parts)),'GPT 1: unexpected partition stock-x')
+        parts=list(PARTS);parts[7]=('kernel1',0x1040000,0x600000,0)
+        self.assertEqual(self.why(erased,record(parts=parts)),'GPT 1: kernel/dtb/userapp banks 0/2/2')
+        damaged=bytearray(record());damaged[528]^=1
+        self.assertTrue(self.why(erased,damaged).startswith('GPT: 0 erased; 1 bad header/CRC'))
 
     def test_wrong_bank_geometry_names_and_torn_metadata_rejected(self):
         for index in range(len(PARTS)):

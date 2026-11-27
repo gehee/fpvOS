@@ -4,6 +4,10 @@
 #include "board.h"
 #include "bootstrap.h"
 #include "ar9311-banks.h"
+#include "layout.h"
+#include <dirent.h>
+#include <mtd/mtd-user.h>
+#include <sys/ioctl.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -188,6 +192,70 @@ static void hold_signals(void)
     signal(SIGHUP,SIG_IGN); signal(SIGINT,SIG_IGN); signal(SIGTERM,SIG_IGN); signal(SIGPIPE,SIG_IGN);
 }
 
+/* "nand gpt": both boot-state GPT records as they are, read with no check
+ * first (fpvos-diag; the preflight refuses exactly when this is wanted). */
+static int print_gpt(void)
+{
+    DIR *d = opendir("/sys/class/mtd");
+    struct dirent *e;
+    char path[256], text[64], extra;
+    unsigned n, number = 0;
+    int found = 0;
+    while (d && (e = readdir(d))) {
+        if (sscanf(e->d_name,"mtd%u%c",&n,&extra) != 1) continue;
+        snprintf(path,sizeof(path),"/sys/class/mtd/mtd%u/name",n);
+        FILE *f = fopen(path,"r");
+        if (!f) continue;
+        int match = fgets(text,sizeof(text),f) && !strcmp(text,"boot-state\n");
+        fclose(f);
+        if (match) { number = n; found++; }
+    }
+    if (d) closedir(d);
+    if (found != 1) { printf("boot-state: %d MTD partitions by that name\n",found); return 1; }
+    snprintf(path,sizeof(path),"/dev/mtd%u",number);
+    int fd = open(path,O_RDONLY|O_CLOEXEC);
+    if (fd < 0) { printf("boot-state: cannot open %s\n",path); return 1; }
+    static unsigned char records[2][AR9311_GPT_BYTES];
+    printf("boot-state is %s\n",path);
+    for (unsigned slot = 0; slot < 2; slot++) {
+        loff_t offset = slot*0x40000;
+        int bad = ioctl(fd,MEMGETBADBLOCK,&offset);
+        ssize_t got = pread(fd,records[slot],AR9311_GPT_BYTES,offset);
+        const unsigned char *g = records[slot], *h = g+512;
+        char why[48];
+        int valid = got == AR9311_GPT_BYTES && ar9311_gpt_valid(g,slot);
+        if (!valid) p1_gpt_problem(g,slot,why,sizeof(why));
+        printf("record %u @0x%x: %s%s%s%s\n",slot,slot*0x40000,valid ? "valid" : "INVALID",
+               valid ? "" : " (",valid ? "" : (got == AR9311_GPT_BYTES ? why : "read failed"),valid ? "" : ")");
+        if (bad) printf("  in a bad block (%d)\n",bad);
+        if (got != AR9311_GPT_BYTES) { memset(records[slot],0xff,AR9311_GPT_BYTES); continue; }
+        if (memcmp(h,"EFI PART",8)) continue;
+        printf("  generation %u  lba my 0x%llx alt 0x%llx usable 0x%llx-0x%llx entries 0x%llx x%u\n",
+               (unsigned)fpvos_get_le32(h+20),(unsigned long long)fpvos_get_le64(h+24),(unsigned long long)fpvos_get_le64(h+32),
+               (unsigned long long)fpvos_get_le64(h+40),(unsigned long long)fpvos_get_le64(h+48),
+               (unsigned long long)fpvos_get_le64(h+72),(unsigned)fpvos_get_le32(h+80));
+        for (unsigned i = 0; i < 128; i++) {
+            const unsigned char *x = g+1024+128*i;
+            int zero = 1, erased = 1;
+            for (unsigned j = 0; j < 128; j++) { zero &= !x[j]; erased &= x[j] == 0xff; }
+            if (zero || erased) continue;
+            char name[37] = {0};
+            for (unsigned j = 0; j < 36; j++) name[j] = x[57+2*j] ? '?' : (char)x[56+2*j];
+            printf("  %3u %-12s 0x%08llx-0x%08llx flags 0x%llx\n",i,name,
+                   (unsigned long long)fpvos_get_le64(x+32)*512,(unsigned long long)(fpvos_get_le64(x+40)+1)*512,
+                   (unsigned long long)fpvos_get_le64(x+48));
+        }
+    }
+    close(fd);
+    char why[160];
+    unsigned record, bank;
+    if (p1_layout_why(records,&record,&bank,why,sizeof(why)))
+        printf("layout: accepted, record %u, booting bank %u\n",record,bank);
+    else
+        printf("layout: refused: %s\n",why);
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     if (argc < 2 || geteuid()) return 2;
@@ -199,6 +267,7 @@ int main(int argc, char **argv)
     int lock = open(P1_WORK "/storage.lock",O_CREAT|O_RDWR|O_NOFOLLOW|O_CLOEXEC,0600);
     if (lock < 0 || flock(lock,LOCK_EX|LOCK_NB)) return 1;
     int rc = -1;
+    if (!strcmp(argv[1],"gpt") && argc == 2) { rc = print_gpt(); goto done; }
     if (p1_preflight()) goto done;
     if (!strcmp(argv[1],"preflight") && argc == 2) {
         puts("P1 NAND layout verified; stock bank and factory contents preserved"); rc = 0;

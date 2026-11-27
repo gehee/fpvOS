@@ -77,6 +77,7 @@ define FPVOS_UPDATE_INSTALL_TARGET_CMDS
 	$(FPVOS_UPDATE_INSTALL_BACKEND_CMDS)
 	$(INSTALL) -D -m 0755 $(@D)/src/run-receiver $(TARGET_DIR)/usr/sbin/fpvos-update-service
 	$(INSTALL) -D -m 0755 $(@D)/fpvos-update $(TARGET_DIR)/usr/sbin/fpvos-update
+	$(INSTALL) -D -m 0755 $(@D)/src/fpvos-diag $(TARGET_DIR)/usr/sbin/fpvos-diag
 	ln -sf fpvos-update $(TARGET_DIR)/usr/sbin/fpvos-update-receiver
 	ln -sf ../sbin/fpvos-update $(TARGET_DIR)/usr/libexec/fpvos-update-verify
 endef

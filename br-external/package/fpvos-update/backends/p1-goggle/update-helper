@@ -8,7 +8,7 @@ check_mounts() {
     awk '
       $3 ~ /^(rootfs|tmpfs|devtmpfs|proc|sysfs|devpts|configfs|debugfs|pstore)$/ { next }
       ($1 == "/dev/root" || $1 == "/dev/ubiblock0_0") && $2 == "/" && $3 == "squashfs" && $4 ~ /(^|,)ro(,|$)/ { next }
-      { bad=1 } END { exit bad }' "$mounts"
+      { print "flash in use: " $1 " on " $2; bad=1 } END { exit bad }' "$mounts" >&2
 }
 case "${1:-}" in
     clean)

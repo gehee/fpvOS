@@ -138,20 +138,108 @@ static long long now(void)
 	clock_gettime(CLOCK_MONOTONIC, &t);
 	return t.tv_sec * 1000LL + t.tv_nsec / 1000000;
 }
+/* The first line a checking helper (clean, verify, stock) wrote to stderr:
+ * why it refused, sent as the reply's reason in place of a generic one. Its
+ * whole stderr still reaches ours, and the last run's goes to HELPER_LOG. */
+#define HELPER_LOG "/run/fpvos-update-helper.log"
+static char helper_reason[60];
+static void keep_reason(char *line, int *have)
+{
+	while (*line == ' ' || *line == '\t')
+		line++;
+	if (*have || !*line)
+		return;
+	size_t i = 0;
+	for (; line[i] && i < sizeof(helper_reason) - 1; i++)
+		helper_reason[i] = line[i];
+	helper_reason[i] = 0;
+	*have = 1;
+}
 static int run_helper(const char *operation)
 {
+	int capture = !strcmp(operation, "clean") || !strcmp(operation, "verify") ||
+		      !strcmp(operation, "stock");
+	int pipes[2] = {-1, -1}, status;
+	helper_reason[0] = 0;
+	if (capture && pipe(pipes))
+		capture = 0;
 	pid_t p = fork();
-	int status;
-	if (p < 0)
+	if (p < 0) {
+		if (capture) {
+			close(pipes[0]);
+			close(pipes[1]);
+		}
 		return -1;
+	}
 	if (!p) {
+		if (capture) {
+			dup2(pipes[1], STDERR_FILENO);
+			close(pipes[0]);
+			close(pipes[1]);
+		}
 		execl(helper, helper, operation, staging, (char *)NULL);
 		_exit(127);
+	}
+	if (capture) {
+		/* Read until the helper exits, never past it: something it left
+		 * running may hold the pipe open. */
+		close(pipes[1]);
+		fcntl(pipes[0], F_SETFL, fcntl(pipes[0], F_GETFL) | O_NONBLOCK);
+		FILE *log = fopen(HELPER_LOG, "we");
+		char line[256];
+		size_t used = 0;
+		int have = 0, exited = 0;
+		for (;;) {
+			struct pollfd pfd = {pipes[0], POLLIN, 0};
+			if (!exited) {
+				pid_t w = waitpid(p, &status, WNOHANG);
+				if (w == p)
+					exited = 1;
+				else if (w < 0 && errno != EINTR)
+					break;
+			}
+			if (!exited)
+				poll(&pfd, 1, 100);
+			char buf[256];
+			ssize_t n = read(pipes[0], buf, sizeof(buf));
+			if (n > 0) {
+				if (write(STDERR_FILENO, buf, (size_t)n) < 0) {
+				}
+				if (log)
+					fwrite(buf, 1, (size_t)n, log);
+				for (ssize_t i = 0; i < n; i++) {
+					if (buf[i] == '\n' || used == sizeof(line) - 1) {
+						line[used] = 0;
+						keep_reason(line, &have);
+						used = 0;
+					}
+					if (buf[i] != '\n')
+						line[used++] = buf[i];
+				}
+				continue;
+			}
+			if (exited && (n == 0 || (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))))
+				break;
+			if (n < 0 && errno != EINTR && errno != EAGAIN && errno != EWOULDBLOCK)
+				break;
+		}
+		line[used] = 0;
+		keep_reason(line, &have);
+		if (log)
+			fclose(log);
+		close(pipes[0]);
+		if (exited)
+			return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 	}
 	while (waitpid(p, &status, 0) < 0)
 		if (errno != EINTR)
 			return -1;
 	return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
+/* A refusal's reason: the helper's own when it gave one. */
+static const char *reason_or(const char *generic)
+{
+	return helper_reason[0] ? helper_reason : generic;
 }
 static int check_md5(void)
 {
@@ -496,7 +584,7 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		int stock_result = run_helper("stock");
 		if (stock_result == 3) return ack(h, -1, "no stock firmware: the other bank holds fpvOS");
 		if (stock_result == 4) return ack(h, -1, "no intact stock firmware on the other bank");
-		if (stock_result) return ack(h, -1, "stock return unsupported or preparation failed");
+		if (stock_result) return ack(h, -1, reason_or("stock return unsupported or preparation failed"));
 		int result = ack(h, 0, "rebooting into stock firmware");
 		if (!result) reboot_after_ack();
 		return result;
@@ -532,10 +620,10 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 			 * mode. A failed clean in clean mode, or after a failure,
 			 * is kept. */
 			if (!clean && state >= 0)
-				return ack(h, -1, "clean-mode preparation failed");
+				return ack(h, -1, reason_or("clean-mode preparation failed"));
 			clean = prepared = 0;
 			state = -1;
-			snprintf(detail, sizeof(detail), "clean-mode preparation failed");
+			snprintf(detail, sizeof(detail), "%s", reason_or("clean-mode preparation failed"));
 			return ack(h, -1, detail);
 		}
 		clean = 1;
@@ -664,7 +752,7 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		if (!install_requested && run_helper("verify")) {
 			reset_transfer();
 			state = -1;
-			snprintf(detail, sizeof(detail), "package validation failed");
+			snprintf(detail, sizeof(detail), "%s", reason_or("package validation failed"));
 			return ack(h, -1, detail);
 		}
 		if (install_requested) {
@@ -759,8 +847,11 @@ int main(int argc, char **argv)
 			 * remain blocked until readiness actually succeeds. */
 			clean = prepared = 0;
 			state = -1;
-			snprintf(detail, sizeof(detail),
-				 "clean-mode startup failed (helper status %d)", clean_result);
+			if (helper_reason[0])
+				snprintf(detail, sizeof(detail), "%s", helper_reason);
+			else
+				snprintf(detail, sizeof(detail),
+					 "clean-mode startup failed (helper status %d)", clean_result);
 			fprintf(stderr, "%s\n", detail);
 		} else {
 			clean = 1;

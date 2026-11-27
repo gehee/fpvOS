@@ -608,6 +608,26 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         (self.bin / 'usb-mode').write_text('bridge\n')
         self.assertEqual(self.client.info()['detail'], 'bridge mode')
 
+    def test_a_refusal_carries_the_helpers_own_reason(self):
+        """The helper's first stderr line is the reply's reason, and its
+        whole stderr is kept for fpvos-diag; something it leaves running with
+        stderr open does not hold the reply."""
+        log = Path('/run/fpvos-update-helper.log')
+        (self.dir / 'helper').write_text(
+            '#!/bin/sh\n[ "$1" != clean ] || { echo "  GPT 1: no usr_log partition" >&2; echo "P1 preflight failed" >&2; '
+            'sleep 20 & exit 1; }\n')
+        start = time.monotonic()
+        with self.assertRaisesRegex(ValueError, 'GPT 1: no usr_log partition'):
+            self.client.clean()
+        self.assertLess(time.monotonic() - start, 5)
+        self.assertEqual(self.client.info()['detail'], 'normal mode')
+        if log.exists() and os.access(log, os.R_OK):
+            self.assertIn('P1 preflight failed', log.read_text())
+        # without a reason, the generic one
+        (self.dir / 'helper').write_text('#!/bin/sh\n[ "$1" != clean ] || exit 1\n')
+        with self.assertRaisesRegex(ValueError, 'clean-mode preparation failed'):
+            self.client.clean()
+
     def fixture(self):
         images = self.dir / 'images'
         images.mkdir()

@@ -46,7 +46,7 @@ for name in links.read_text().splitlines():
     path.symlink_to('/bin/busybox')
 (root / 'usr/bin/scp').symlink_to('/usr/sbin/dropbear')
 for name in ('usr/libexec/fpvos-update-backend', 'usr/sbin/fpvos-update-service',
-             'etc/init.d/S50dropbear'):
+             'usr/sbin/fpvos-diag', 'etc/init.d/S50dropbear'):
     shutil.copy2(target / name, root / name)
 usb = overlay_file('etc/init.d/S40ar9311-usb').read_text()
 usb = '\n'.join(line for line in usb.splitlines() if 'modprobe ' not in line) + '\n'

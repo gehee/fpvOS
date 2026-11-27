@@ -156,21 +156,25 @@ int p1_mtd(const char *name, unsigned offset, unsigned size, unsigned *number)
         if (sscanf(e->d_name,"mtd%u%c",&n,&extra) != 1) continue;
         snprintf(path,sizeof(path),"/sys/class/mtd/mtd%u/name",n);
         if (p1_read(path,text,sizeof(text)) || strcmp(text,name)) continue;
-        if (found++) { closedir(d); return -1; }
+        if (found++) { closedir(d); fprintf(stderr,"MTD partition %s twice\n",name); return -1; }
         *number = n;
         snprintf(path,sizeof(path),"/sys/class/mtd/mtd%u/offset",n);
         if (p1_read(path,text,sizeof(text))) {
-            if (!stock) { closedir(d); return -1; }
-        } else if (strtoul(text,NULL,0) != offset) { closedir(d); return -1; }
+            if (!stock) { closedir(d); fprintf(stderr,"%s: no offset in sysfs\n",name); return -1; }
+        } else if (strtoul(text,NULL,0) != offset) {
+            closedir(d); fprintf(stderr,"%s at %s, not 0x%x\n",name,text,offset); return -1;
+        }
     }
     closedir(d);
-    if (!found) return -1;
+    if (!found) { fprintf(stderr,"no MTD partition %s\n",name); return -1; }
     snprintf(path,sizeof(path),"/dev/mtd%u",*number);
     int fd = open(path,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
     struct mtd_info_user info;
-    if (fd < 0) return -1;
+    if (fd < 0) { fprintf(stderr,"%s: cannot open %s\n",name,path); return -1; }
     if (ioctl(fd,MEMGETINFO,&info) || info.type != MTD_NANDFLASH || info.size != size ||
         info.erasesize != 0x20000 || info.writesize != 2048 || info.oobsize != 128) {
+        fprintf(stderr,"%s: size 0x%x block 0x%x page %u oob %u type %u\n",name,
+                (unsigned)info.size,(unsigned)info.erasesize,(unsigned)info.writesize,(unsigned)info.oobsize,(unsigned)info.type);
         close(fd); return -1;
     }
     return fd;
@@ -188,11 +192,15 @@ int p1_gpt_read(unsigned char gpt[2][AR9311_GPT_BYTES])
         int rc = bad || p1_read_checked(fd,gpt[i],AR9311_GPT_BYTES,offset);
         close(fd);
         if (rc) {
-            if (!bad) fprintf(stderr,"P1: GPT record %u has an uncorrectable ECC error; SPL cannot boot past it\n",i);
+            if (!bad) fprintf(stderr,"GPT record %u: uncorrectable ECC error\n",i);
+            else fprintf(stderr,"GPT record %u: in a bad block\n",i);
             return -1;
         }
     }
-    return p1_layout_valid(gpt) ? 0 : -1;
+    char why[160];
+    if (p1_layout_why(gpt,NULL,NULL,why,sizeof(why))) return 0;
+    fprintf(stderr,"%s\n",why);
+    return -1;
 }
 
 /* The bank the unit boots (0 or 1). */
@@ -206,7 +214,15 @@ int p1_active_bank(unsigned *bank)
 int p1_preflight(void)
 {
     stock = p1_stock();
-    if (stock < 0) { fprintf(stderr,"Unrecognized P1 runtime\n"); return -1; }
+    if (stock < 0) {
+        char model[128] = "?";
+        struct utsname u;
+        p1_read("/proc/device-tree/model",model,sizeof(model));
+        if (uname(&u)) strcpy(u.release,"?");
+        fprintf(stderr,"unknown runtime: %s, kernel %s\n",model,u.release);
+        fprintf(stderr,"Unrecognized P1 runtime\n");
+        return -1;
+    }
     unsigned char gpt[2][AR9311_GPT_BYTES];
     if (p1_gpt_read(gpt)) { fprintf(stderr,"Unrecognized P1 partition layout/selection\n"); return -1; }
     return 0;
