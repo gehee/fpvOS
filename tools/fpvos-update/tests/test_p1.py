@@ -21,15 +21,16 @@ PARTS = [('vendor',0x180000,0x80000,1),('factory',0x200000,0x600000,1),
          ('usr_data',0x7100000,0x600000,1),('usr_log',0x7700000,0x600000,1)]
 
 
-def record(slot=1,generation=1,parts=PARTS):
+def record(slot=1,generation=1,parts=PARTS,last=0x3f7ff):
+    """A GPT record; last 0x3ffff is a P1 Nano VRX's stock (the whole 128 MiB)."""
     entries=bytearray(16384)
     for i,(name,start,size,active) in enumerate(parts):
         struct.pack_into('<QQQ',entries,i*128+32,start//512,(start+size)//512-1,active<<47)
         entries[i*128+56:i*128+56+len(name)*2]=name.encode('utf-16le')
     h=bytearray(512);h[:8]=b'EFI PART'
     struct.pack_into('<IIII',h,8,0x10000,92,0,generation)
-    struct.pack_into('<QQQQ',h,24,0x3f7ff if slot else 1,1 if slot else 0x3f7ff,0xc00,0x3f7de)
-    struct.pack_into('<QIII',h,72,0x3f7df if slot else 2,128,128,zlib.crc32(entries))
+    struct.pack_into('<QQQQ',h,24,last if slot else 1,1 if slot else last,0xc00,last-0x21)
+    struct.pack_into('<QIII',h,72,last-0x20 if slot else 2,128,128,zlib.crc32(entries))
     struct.pack_into('<I',h,16,zlib.crc32(h[:92]))
     return bytes(512)+h+entries
 
@@ -110,6 +111,30 @@ class P1Tests(unittest.TestCase):
         self.assertTrue(self.layout(record(0),record()))
         self.assertFalse(self.layout(erased,erased))
 
+    def test_a_whole_128_mib_disk_as_a_nano_vrx_stock_writes_it(self):
+        erased=b'\xff'*0x4400
+        self.assertTrue(self.layout(erased,record(last=0x3ffff)))
+        self.assertTrue(self.layout(record(0,last=0x3ffff),record(last=0x3ffff)))
+        # the two records describing different disks, or another size
+        self.assertFalse(self.layout(record(0),record(last=0x3ffff)))
+        self.assertFalse(self.layout(record(0,last=0x3ffff),record()))
+        for last in (0x3f7fe,0x3fffe,0x40000,0x3efff):
+            with self.subTest(last=hex(last)):
+                self.assertFalse(self.layout(erased,record(last=last)))
+        # a bank switch keeps the size: the new record at 0 says 0x3ffff too
+        d=self.flash_directory(last=0x3ffff);before=(d/'boot-state').read_bytes()
+        self.assertEqual(self.flash(d,'select',0),0)
+        after=(d/'boot-state').read_bytes()
+        self.assertEqual(after[0x40000:],before[0x40000:])
+        self.assertEqual(struct.unpack_from('<QQQQ',after,512+24),(1,0x3ffff,0xc00,0x3ffde))
+        self.assertEqual(struct.unpack_from('<Q',after,512+72)[0],2)
+        self.assertTrue(self.layout(after[:0x4400],after[0x40000:0x44400]))
+        self.assertEqual(self.flash(d,'select',1),0)
+        end=(d/'boot-state').read_bytes()
+        self.assertEqual(struct.unpack_from('<QQQQ',end,0x40000+512+24),(0x3ffff,1,0xc00,0x3ffde))
+        self.assertEqual(struct.unpack_from('<Q',end,0x40000+512+72)[0],0x3ffdf)
+        self.assertTrue(self.layout(end[:0x4400],end[0x40000:0x44400]))
+
     def test_wrong_bank_geometry_names_and_torn_metadata_rejected(self):
         for index in range(len(PARTS)):
             for field in (0,1,2,3):
@@ -169,9 +194,9 @@ class P1Tests(unittest.TestCase):
         self.assertIsNone(self.volume('data',data='unrelated'))
         self.assertIsNone(self.volume('app',app='userapp0'))
 
-    def flash_directory(self):
+    def flash_directory(self,last=0x3f7ff):
         temp=tempfile.TemporaryDirectory();self.addCleanup(temp.cleanup);d=Path(temp.name)
-        data=bytearray(b'\xff'*0x80000);data[0x40000:0x44400]=record()
+        data=bytearray(b'\xff'*0x80000);data[0x40000:0x44400]=record(last=last)
         (d/'boot-state').write_bytes(data)
         (d/'kernel0').write_bytes(b'\x55'*0x600000)
         (d/'dtb0').write_bytes(b'\x55'*0x60000)

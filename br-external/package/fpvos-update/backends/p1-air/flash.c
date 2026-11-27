@@ -58,9 +58,11 @@ int p1_select_bank(unsigned bank)
     unsigned slot = selected ^ 1;
     memcpy(next,records[selected],sizeof(next));
     fpvos_put_le32(next+532,generation+1);
-    fpvos_put_le64(next+536,slot ? 0x3f7ff : 1);
-    fpvos_put_le64(next+544,slot ? 1 : 0x3f7ff);
-    fpvos_put_le64(next+584,slot ? 0x3f7df : 2);
+    /* the disk size stock wrote (127 or 128 MiB) carries over */
+    unsigned long long last = ar9311_gpt_last(records[selected],selected);
+    fpvos_put_le64(next+536,slot ? last : 1);
+    fpvos_put_le64(next+544,slot ? 1 : last);
+    fpvos_put_le64(next+584,slot ? last - 0x20 : 2);
     for (unsigned i = 0; i < 128; i++) {
         unsigned char *e = next+1024+128*i;
         char name[37] = {0};

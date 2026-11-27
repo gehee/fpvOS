@@ -14,6 +14,8 @@ static inline int p1_layout(const unsigned char records[2][AR9311_GPT_BYTES], un
 
     }
     if (!valid[0] && !valid[1]) return 0;
+    /* both records describe the same disk */
+    if (valid[0] && valid[1] && ar9311_gpt_last(records[0], 0) != ar9311_gpt_last(records[1], 1)) return 0;
     if (valid[0] && valid[1] && fpvos_get_le32(records[0]+532) == fpvos_get_le32(records[1]+532) &&
         memcmp(records[0]+1024, records[1]+1024, 16384)) return 0;
     unsigned selected = valid[1] && (!valid[0] || fpvos_get_le32(records[1]+532) > fpvos_get_le32(records[0]+532));
