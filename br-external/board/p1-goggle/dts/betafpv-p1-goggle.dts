@@ -90,6 +90,23 @@
 };
 &watchdog { status = "okay"; };
 
+/* The battery-backed clock, a DS1307 at 0x68 on I2C0 as every stock P1
+ * ground tree has it: the kernel sets the system clock from it at boot, and
+ * the updater's SET_TIME writes it (in UTC).
+ */
+&i2c0 {
+	status = "okay";
+	clock-frequency = <400000>;
+	i2c-sda-hold-time-ns = <300>;
+	i2c-sda-falling-time-ns = <300>;
+	i2c-scl-falling-time-ns = <300>;
+
+	rtc@68 {
+		compatible = "dallas,ds1307";
+		reg = <0x68>;
+	};
+};
+
 &gpio {
 	status = "okay";
 	/* GPIO100 is the shared panel/SD I/O rail. Do not cycle it when

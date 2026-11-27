@@ -31,13 +31,13 @@ def compile_framework(destination):
         if name == 'verify':
             files.append(str(BACKEND / 'images.c'))
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
-                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
+                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DCLOCK_FILE="{destination / "clock"}"', f'-DRTC_DEVICE="{destination / "rtc"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
 
 
 def compile_receiver(destination, name, *flags, sources=()):
     """A receiver built as compile_framework's, with test-only FLAGS and SOURCES."""
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
-                    f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"',
+                    f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DCLOCK_FILE="{destination / "clock"}"', f'-DRTC_DEVICE="{destination / "rtc"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"',
                     *flags, '-I'+str(SRC), str(SRC / 'receiver.c'), str(destination / 'profile.c'),
                     *map(str, sources), '-o', str(destination / name)], check=True)
     return destination / name
@@ -317,6 +317,20 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
         out = subprocess.run(['sh', '-c', '. "$1"; echo "$ZONE $COUNTRY"', 'sh', str(kept)],
                              capture_output=True, text=True, check=True).stdout.strip()
         self.assertEqual(out, 'Europe/Paris FR')
+
+    def test_time_set_from_the_flasher(self):
+        """SET_TIME (201): the computer's clock in milliseconds; a unit with no
+        battery clock says the time holds until power-off; a time before 2024
+        or from 2100, or a payload not 8 bytes, is refused and sets nothing."""
+        ms = 1795000000123
+        reply = self.client.ack(201, struct.pack('<Q', ms))
+        self.assertEqual(bytes(reply[4:]).rstrip(b'\0').decode(), 'set until power-off: no battery clock')
+        self.assertEqual((self.bin / 'clock').read_text(), '1795000000.123\n')
+        (self.bin / 'clock').unlink()
+        for bad in (struct.pack('<Q', 1700000000000), struct.pack('<Q', 4102444800000), struct.pack('<I', 1795000000), b''):
+            with self.assertRaisesRegex(ValueError, 'invalid time'):
+                self.client.ack(201, bad)
+        self.assertFalse((self.bin / 'clock').exists())
 
     def test_normal_in_normal_mode_is_ok(self):
         self.assertEqual(self.mode('normal'), 'OK')

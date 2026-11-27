@@ -140,13 +140,21 @@
 	};
 };
 
-/* Stock enables I2C0 (HDMI bridge) and I2C4 (nothing answers there). */
+/* Stock enables I2C0 (HDMI bridge) and I2C4 (nothing answers there).
+ * I2C0 also has the battery-backed DS1307 at 0x68 that stock declares:
+ * the system clock comes from it at boot, and SET_TIME writes it (UTC).
+ */
 &i2c0 {
 	status = "okay";
 	clock-frequency = <400000>;
 	i2c-sda-hold-time-ns = <300>;
 	i2c-sda-falling-time-ns = <300>;
 	i2c-scl-falling-time-ns = <300>;
+
+	rtc@68 {
+		compatible = "dallas,ds1307";
+		reg = <0x68>;
+	};
 
 	/* The bridge runs its own firmware: it follows the DSI input and
 	 * does the DDC itself. The host resets it, asks it for hot-plug and

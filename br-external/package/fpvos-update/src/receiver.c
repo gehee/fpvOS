@@ -19,6 +19,8 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/ioctl.h>
+#include <linux/rtc.h>
 
 #include "board.h"
 #include "fpvos-bytes.h"
@@ -38,6 +40,11 @@
 #define location_file() LOCATION_FILE
 #else
 #define location_file() fpvos_board.location_file
+#endif
+/* SET_TIME's battery-backed clock; a test build writes the time it would set
+ * to CLOCK_FILE instead, and has no RTC_DEVICE unless it names one. */
+#ifndef RTC_DEVICE
+#define RTC_DEVICE "/dev/rtc0"
 #endif
 /* An upload with no data for this long is abandoned: the host went away
  * between chunks, and a stale transfer must not refuse clean, reboot and the
@@ -484,6 +491,45 @@ static int set_location(const unsigned char *h, uint32_t n)
 	return ack(h, 0, "OK");
 }
 
+/* SET_TIME (201), from the Flasher after a flash or from its Sync time button:
+ * the computer's clock, as milliseconds since 1970 UTC (little-endian, 8
+ * bytes). Sets the system clock, then the battery-backed one where the unit
+ * has it (the P1 ground units' DS1307), in UTC as the kernel reads it back at
+ * boot. Without one, the time holds until the unit is switched off, and the
+ * reply says so. */
+static int set_time(const unsigned char *h, uint32_t n)
+{
+	if (n != 8)
+		return ack(h, -1, "invalid time");
+	uint64_t ms = (uint64_t)fpvos_get_le32(payload) | (uint64_t)fpvos_get_le32(payload + 4) << 32;
+	/* 2024-01-01 to 2100-01-01: anything else is a computer's clock gone wrong. */
+	if (ms < 1704067200000ULL || ms >= 4102444800000ULL)
+		return ack(h, -1, "invalid time");
+	struct timespec ts = { .tv_sec = (time_t)(ms / 1000), .tv_nsec = (long)(ms % 1000) * 1000000L };
+#ifdef CLOCK_FILE
+	FILE *f = fopen(CLOCK_FILE, "w");
+	if (!f || fprintf(f, "%lld.%03ld\n", (long long)ts.tv_sec, ts.tv_nsec / 1000000L) < 0 || fclose(f))
+		return ack(h, -1, "clock not set");
+#else
+	if (clock_settime(CLOCK_REALTIME, &ts))
+		return ack(h, -1, "clock not set");
+#endif
+	int rtc = open(RTC_DEVICE, O_RDWR | O_CLOEXEC);
+	if (rtc < 0)
+		return ack(h, 0, "set until power-off: no battery clock");
+	struct tm tm;
+	struct rtc_time rt = {0};
+	time_t sec = ts.tv_sec;
+	gmtime_r(&sec, &tm);
+	rt.tm_sec = tm.tm_sec; rt.tm_min = tm.tm_min; rt.tm_hour = tm.tm_hour;
+	rt.tm_mday = tm.tm_mday; rt.tm_mon = tm.tm_mon; rt.tm_year = tm.tm_year;
+	rt.tm_wday = tm.tm_wday; rt.tm_yday = tm.tm_yday;
+	int bad = ioctl(rtc, RTC_SET_TIME, &rt);
+	close(rtc);
+	return bad ? ack(h, 0, "set until power-off: battery clock not written")
+		   : ack(h, 0, "set, and kept by the battery clock");
+}
+
 static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 {
 	uint32_t cmd = fpvos_get_le32(h + 12), seq = fpvos_get_le32(h + 24);
@@ -567,6 +613,11 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		if (file >= 0)
 			return ack(h, -1, "transfer active");
 		return set_location(h, n);
+	}
+	if (cmd == 0xc9) {
+		if (file >= 0)
+			return ack(h, -1, "transfer active");
+		return set_time(h, n);
 	}
 	if (cmd == 3 && (named(n, "normal") || named(n, "bridge")))
 		return usb_mode(h, (const char *)payload);
