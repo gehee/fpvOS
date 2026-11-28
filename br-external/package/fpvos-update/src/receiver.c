@@ -466,6 +466,14 @@ static int keep_location(const char *tz, const char *zone, const char *country)
 		if (!strcmp(old, line))
 			return 0;
 	}
+	/* its directory, on a board whose app has not made it yet (the VRX
+	 * Pro's kestrel-gnd keeps its own state elsewhere) */
+	snprintf(tmp, sizeof(tmp), "%s", location_file());
+	char *slash = strrchr(tmp, '/');
+	if (slash && slash != tmp) {
+		*slash = 0;
+		mkdir(tmp, 0755);
+	}
 	snprintf(tmp, sizeof(tmp), "%s.new", location_file());
 	if (!(f = fopen(tmp, "w")))
 		return -1;
@@ -518,6 +526,9 @@ static int set_time(const unsigned char *h, uint32_t n)
 	if (clock_settime(CLOCK_REALTIME, &ts))
 		return ack(h, -1, "clock not set");
 #endif
+	if (fpvos_board.clock_helper)
+		return run_helper("clock") ? ack(h, 0, "set until power-off: battery clock not written")
+					   : ack(h, 0, "set, and kept by the battery clock");
 	int rtc = open(RTC_DEVICE, O_RDWR | O_CLOEXEC);
 	if (rtc < 0)
 		return ack(h, 0, "set until power-off: no battery clock");

@@ -1,6 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0-or-later
 """Exercise receiver framing/state with a PTY, including corrupt/interrupted uploads."""
 import hashlib
+import json
 import importlib.util
 import os
 from pathlib import Path
@@ -331,6 +332,41 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
             with self.assertRaisesRegex(ValueError, 'invalid time'):
                 self.client.ack(201, bad)
         self.assertFalse((self.bin / 'clock').exists())
+
+    def test_time_kept_by_the_boards_helper(self):
+        """A board whose battery clock is its helper's (the VRX Pro's
+        pcf8563): SET_TIME sets the system clock, then runs the helper's
+        "clock", and says whether it kept the time."""
+        profile = json.loads((BACKEND / 'profile.json').read_text())
+        profile['battery_clock'] = 'helper'
+        (self.bin / 'helper-clock.json').write_text(json.dumps(profile))
+        subprocess.run([sys.executable, str(PKG / 'generate-profile.py'), str(self.bin / 'helper-clock.json'),
+                        str(self.bin / 'profile-clock.c')], check=True)
+        self.assertIn('.clock_helper = 1', (self.bin / 'profile-clock.c').read_text())
+        receiver = self.bin / 'receiver-clock'
+        if not receiver.exists():
+            subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{self.bin / "clean-boot"}"',
+                            f'-DUSB_MODE_FILE="{self.bin / "usb-mode"}"', f'-DLOCATION_FILE="{self.bin / "location"}"',
+                            f'-DCLOCK_FILE="{self.bin / "clock"}"', f'-DRTC_DEVICE="{self.bin / "rtc"}"',
+                            f'-DSTOCK_ROOT_FILE="{self.bin / "stock-root"}"', f'-DVERSION_FILE="{self.bin / "fpvos-version"}"',
+                            '-I' + str(SRC), str(SRC / 'receiver.c'), str(self.bin / 'profile-clock.c'), '-o', str(receiver)], check=True)
+        self.restart_with(receiver)
+        helper = self.dir / 'helper'
+        calls = self.dir / 'calls'
+        for code, said in ((0, 'set, and kept by the battery clock'), (1, 'set until power-off: battery clock not written')):
+            helper.write_text(f'#!/bin/sh\nprintf "%s\\n" "$1" >> "{calls}"\n[ "$1" != clock ] || exit {code}\n')
+            reply = self.client.ack(201, struct.pack('<Q', 1795000000123))
+            self.assertEqual(bytes(reply[4:]).rstrip(b'\0').decode(), said)
+        self.assertEqual(calls.read_text(), 'clock\nclock\n')
+        self.assertEqual((self.bin / 'clock').read_text(), '1795000000.123\n')
+
+    def restart_with(self, binary):
+        arguments = list(self.process.args)
+        self.process.terminate()
+        self.process.wait(timeout=3)
+        arguments[0] = str(binary)
+        self.process = subprocess.Popen(arguments)
+        self.client.info()
 
     def test_stock_root_reports_the_helpers_fingerprint(self):
         """STOCK_ROOT (202): the helper's stock-root writes the stock system's

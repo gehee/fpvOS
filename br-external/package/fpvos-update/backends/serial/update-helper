@@ -13,6 +13,12 @@ case "${1:-}" in
         sync
         /sbin/reboot
         ;;
+    clock)
+        # SET_TIME's battery clock: the VRX Pro's pcf8563, written from the
+        # system clock in the chip's own (stock's) zone by S36rtc
+        [ -x /etc/init.d/S36rtc ] || exit 1
+        exec /etc/init.d/S36rtc save
+        ;;
     *)
         echo "fpvos-update: no update over USB on this board" >&2
         exit 1

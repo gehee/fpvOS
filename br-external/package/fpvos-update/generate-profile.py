@@ -16,6 +16,7 @@ for name, value in (('board_id', str(p['board_id'])), ('hardware', string(p['har
                     ('legacy_install_destination', string(legacy + '.fwu' if legacy else '')),
                     ('legacy_verify_destination', string(legacy + '.verify' if legacy else '')),
                     ('location_file', string(p.get('location_file', ''))),
+                    ('clock_helper', '1' if p.get('battery_clock') == 'helper' else '0'),
                     ('names', '{' + ', '.join(map(string, p['names'])) + '}'),
                     ('limits', '{' + ', '.join(map(str, p['limits'])) + '}'),
                     ('counts', '{' + ', '.join(map(str, p['counts'])) + '}'),

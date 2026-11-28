@@ -24,7 +24,8 @@
 #
 # Nothing here WRITES the chip except the explicit Ascent_time.txt path at the
 # bottom, which is stock's own mechanism for setting the clock without a
-# network. A plain boot only ever reads.
+# network, and "save" - the fpvOS Flasher's Sync time, through the updater's
+# SET_TIME, once it has set the system clock. A plain boot only ever reads.
 
 # Offset and timezone live in one place, shared with S70kestrel.
 CONF=/etc/kestrel/time.conf
@@ -145,8 +146,16 @@ case "$1" in
     # stock lets you set the clock from a PC with no network.
     apply_time_file
     ;;
+  save)
+    # The system clock (UTC), into the chip as its wall clock, as stock reads it.
+    [ -e /dev/i2c-$BUS ] || { echo "rtc: no i2c-$BUS"; exit 1; }
+    set -- $(date -u -d "@$(( $(date -u +%s) + RTC_UTC_OFFSET_MIN * 60 ))" +'%Y %m %d %H %M %S') || exit 1
+    [ $# -eq 6 ] || exit 1
+    write_rtc "$@" >/dev/null 2>&1 || { echo "rtc: WARNING pcf8563 write failed"; exit 1; }
+    echo "rtc: pcf8563 set to $1-$2-$3 $4:$5:$6 (UTC+$((RTC_UTC_OFFSET_MIN / 60))h)"
+    ;;
   stop) ;;
   restart|reload) "$0" start ;;
-  *) echo "usage: $0 {start|stop|restart}"; exit 1 ;;
+  *) echo "usage: $0 {start|stop|restart|save}"; exit 1 ;;
 esac
 exit 0

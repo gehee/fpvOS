@@ -6,6 +6,8 @@
     "a4a2",
     "fpvos-ascent-vrx-pro"
   ],
+  "location_file": "/var/lib/kestrel/location",
+  "battery_clock": "helper",
   "names": [
     "none"
   ],
