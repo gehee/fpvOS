@@ -9,7 +9,6 @@
 #   ./build.sh air [config|kernel]   # the Ascent Lite and Lite+ air units, into ./output/ascent-lite
 #   ./build.sh ascent-vrx [config|kernel|all] # Ascent VRX, into ./output/ascent-vrx
 #   ./build.sh p1-goggle [config|kernel|all] # P1 goggles RAM bring-up
-#   ./build.sh p1-nano-vrx [config|kernel|all] # BETAFPV P1 Nano VRX (.fwu, experimental)
 #   ./build.sh p1-gnd [config|kernel|all|recovery]  # BETAFPV P1 goggles, goggles Pro + VRX, one image (.fwu each, experimental); recovery = slim HID-upload kernel
 #   ./build.sh skyzone-steadydigital [config|kernel|all] # Skyzone SteadyDigital (RAM)
 #   ./build.sh skyzone-steadydigital-flash [config|kernel|all|recovery] # Skyzone SteadyDigital flashable NAND image (.fwu); recovery = slim HID-upload kernel
@@ -76,7 +75,6 @@ ASCENT_VRX_PRO_OUT="$ROOT/output/ascent-vrx-pro"
 AIR_OUT="$ROOT/output/ascent-lite"
 ASCENT_VRX_OUT="$ROOT/output/ascent-vrx"
 P1_GOGGLE_OUT="$ROOT/output/p1-goggle"
-P1_NANO_VRX_OUT="$ROOT/output/p1-nano-vrx"
 P1_GND_OUT="$ROOT/output/p1-gnd"
 STEADYDIGITAL_OUT="$ROOT/output/skyzone-steadydigital"
 STEADYDIGITAL_FLASH_OUT="$ROOT/output/skyzone-steadydigital-flash"
@@ -96,15 +94,6 @@ case "${1:-all}" in
               make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_GOGGLE_OUT" p1goggle_defconfig
               make -C "$P1_GOGGLE_OUT" ;;
       *) echo "usage: $0 p1-goggle [config|kernel|all]" >&2; exit 1 ;;
-    esac ;;
-  p1-nano-vrx)
-    case "${2:-all}" in
-      config) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_NANO_VRX_OUT" p1nanovrx_defconfig ;;
-      kernel) make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_NANO_VRX_OUT" p1nanovrx_defconfig
-              make -C "$P1_NANO_VRX_OUT" linux-reconfigure ;;
-      all)    make -C "$BR" BR2_EXTERNAL="$EXT" O="$P1_NANO_VRX_OUT" p1nanovrx_defconfig
-              make -C "$P1_NANO_VRX_OUT" ;;
-      *) echo "usage: $0 p1-nano-vrx [config|kernel|all]" >&2; exit 1 ;;
     esac ;;
   p1-gnd)
     case "${2:-all}" in
@@ -205,5 +194,5 @@ case "${1:-all}" in
     make -C "$BR" BR2_EXTERNAL="$EXT" O="$ASCENT_VRX_PRO_OUT"
     make -C "$ASCENT_VRX_PRO_OUT" fpvos-bootchain-rebuild
     "$ROOT/boot/mk-sd-image.sh" ;;
-  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-goggle [config|kernel|all]|p1-nano-vrx [config|kernel|all]|p1-gnd [config|kernel|all|recovery]|p1-air [config|all]|p1-air-source [config|all|recovery]}" >&2; exit 1 ;;
+  *) echo "usage: $0 {[ascent-vrx-pro] {all|config|kestrel|image}|air [config|kernel|all]|ascent-vrx [config|kernel|all]|p1-goggle [config|kernel|all]|p1-gnd [config|kernel|all|recovery]|p1-air [config|all]|p1-air-source [config|all|recovery]}" >&2; exit 1 ;;
 esac

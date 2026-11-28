@@ -52,14 +52,6 @@ config BR2_PACKAGE_FPVOS_UPDATE_P1_GOGGLE
 	  environment and factory calibration. Initial installation requires
 	  RAM boot into fpvOS recovery.
 
-config BR2_PACKAGE_FPVOS_UPDATE_P1_NANO_VRX
-	bool "BETAFPV P1 Nano VRX NAND"
-	depends on BR2_FPVOS_BOARD_P1_NANO_VRX
-	help
-	  Install fpvOS in bank 0 with independent USB recovery. Preserve
-	  stock bank 1, SPL/U-Boot, environment and factory calibration.
-	  Initial installation requires RAM boot into fpvOS recovery.
-
 config BR2_PACKAGE_FPVOS_UPDATE_P1_GND
 	bool "BETAFPV P1 ground units NAND"
 	depends on BR2_FPVOS_BOARD_P1_GND

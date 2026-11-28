@@ -14,11 +14,10 @@ KESTREL_NATIVE_LICENSE_FILES = supervise.c
 # The board's runtime: static target executables and host-baked assets, no
 # machine settings. scripts/native-runtime.sh builds it from KESTREL_PIN and
 # AR_LIBRE_VERSION into output/kestrel-runtime/ (build.sh runs it when the
-# file there is not the pinned one). The P1 ground units (goggles, the Nano
-# VRX on its own image too, and the combined p1-gnd image) have their own
-# (its P1 panel reads their adc-keys); the Ascent VRX and the SteadyDigital
-# share the ascent one.
-KESTREL_NATIVE_BOARD = $(if $(BR2_FPVOS_BOARD_P1_GOGGLE)$(BR2_FPVOS_BOARD_P1_GND)$(BR2_FPVOS_BOARD_P1_NANO_VRX),p1goggle,ascent)
+# file there is not the pinned one). The P1 ground units (the goggles' own
+# image and the combined p1-gnd image) have their own (its P1 panel reads
+# their adc-keys); the Ascent VRX and the SteadyDigital share the ascent one.
+KESTREL_NATIVE_BOARD = $(if $(BR2_FPVOS_BOARD_P1_GOGGLE)$(BR2_FPVOS_BOARD_P1_GND),p1goggle,ascent)
 KESTREL_NATIVE_IMAGE ?= $(BR2_EXTERNAL_FPVOS_PATH)/../output/kestrel-runtime/runtime-$(KESTREL_NATIVE_BOARD).squashfs
 
 # The pin: the runtime the pins build, in runtime.hash (board, sha256,

@@ -35,15 +35,6 @@ config BR2_FPVOS_BOARD_P1_GOGGLE
 	  receiver and the NAND updater, which installs on the bank not
 	  holding stock (either bank) and preserves the stock bank.
 
-config BR2_FPVOS_BOARD_P1_NANO_VRX
-	bool "BETAFPV P1 Nano VRX (AR9311)"
-	depends on BR2_aarch64
-	select BR2_FPVOS_SOC_AR9311
-	help
-	  P1 Nano VRX receiver wiring: SDIO radio, HDMI bridge, the
-	  P1 ADC key ladder. The P1 A/B flash layout: fpvOS in bank
-	  0, the stock firmware kept in bank 1.
-
 config BR2_FPVOS_BOARD_P1_GND
 	bool "BETAFPV P1 ground units: goggles, VRX, Nano VRX (AR9311)"
 	depends on BR2_aarch64

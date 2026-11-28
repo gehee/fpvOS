@@ -28,7 +28,7 @@ endif
 # The P1 inittabs and update helpers run S43factory unconditionally: install it
 # on those boards with the radio itself, not only with calibration (it mounts
 # the factory volume read-only and is harmless without radio-calibrate).
-ifneq ($(BR2_FPVOS_BOARD_P1_AIR)$(BR2_FPVOS_BOARD_P1_GOGGLE)$(BR2_FPVOS_BOARD_P1_NANO_VRX)$(BR2_FPVOS_BOARD_P1_GND),)
+ifneq ($(BR2_FPVOS_BOARD_P1_AIR)$(BR2_FPVOS_BOARD_P1_GOGGLE)$(BR2_FPVOS_BOARD_P1_GND),)
 define AR9311_RADIO_INSTALL_FACTORY
 	$(INSTALL) -D -m 0755 $(@D)/S43factory $(TARGET_DIR)/etc/init.d/S43factory
 endef

@@ -1,26 +1,15 @@
 # BETAFPV P1 Nano VRX
 
-The `p1-nano-vrx` profile is a first, **untested** fpvOS image for the BETAFPV
-P1 Nano VRX (stock product `P1_GND_VRX`, hardware V2.3, board `c401`). It builds;
-it has not been booted on a unit. It is the P1 goggles platform with the panel
-replaced by an HDMI output, and the P1 Air's flash layout.
+The P1 HD VRX (Standard or Nano; stock product `P1_GND_VRX`, hardware V2.3,
+board `c401`) runs the P1 ground image, `./build.sh p1-gnd` (`board/p1-gnd`):
+one kernel and system for the VR04 goggles, the VR04 Pro goggles and this VRX,
+with a bundle per unit, `fpvos-p1-gnd-vrx-<version>.fwu`, carrying this
+folder's device tree. It is the P1 goggles platform with the panel replaced by
+an HDMI output, and the P1 Air's flash layout.
 
-```sh
-./build.sh p1-nano-vrx config
-KESTREL_NATIVE_IMAGE="$P1_RUNTIME_SQUASHFS" ./build.sh p1-nano-vrx all
-```
-
-Artifacts are in `output/p1-nano-vrx/images/`: `Image`,
-`betafpv-p1-nano-vrx.dtb`, `rootfs.cpio.gz`, the guarded `kernel.img`, and
-`fpvos-p1-nano-vrx.fwu` (board `P1NV`, 0x50314e56).
-
-Until the radio profile `betafpv-p1-nano-vrx.c` is in the pinned Open8030
-revision, point the build at a checkout that has it, in
-`output/p1-nano-vrx/local.mk`:
-
-```make
-OPEN8030_OVERRIDE_SRCDIR = /path/to/Open8030
-```
+This folder holds what is the VRX's own in that image: its device tree
+(`dts/betafpv-p1-nano-vrx.dts`) and its radio settings (`radio.json`, Open8030
+profile `betafpv-p1-nano-vrx.c`). Its own image (`p1nanovrx_defconfig`) is gone.
 
 ## What the board is
 
@@ -75,31 +64,17 @@ goggles.
 
 ## Flash and updates
 
-The updater backend `p1-nano-vrx` is the shared P1 backend, as on the P1 Air:
-fpvOS goes in the bank already holding fpvOS, else the bank stock is not
-running from; the other bank and whichever env/U-Boot pair the unit uses are
-left alone. Both banks hold stock when the unit ships, so installing fpvOS
-removes only the copy that is not running.
-
-First installation needs fpvOS's recovery running from RAM; there is no entry
-from stock (`P1_STOCK_BOOTSTRAP 0`), and none has been tried on stock 2.0.8.
-After that:
-
-```sh
-tools/fpvos-update/client.py --board p1-nano-vrx --port <port> info
-tools/fpvos-update/client.py --board p1-nano-vrx --port <port> clean
-tools/fpvos-update/client.py --board p1-nano-vrx --port <port> install output/p1-nano-vrx/images/fpvos-p1-nano-vrx.fwu
-```
-
-`stock` selects the preserved stock bank without rewriting it. Keep a NAND
-backup before the first write.
+The P1 ground image's updater (`fpvos-update` backend `p1-gnd`): fpvOS goes in
+the bank stock is not running from, and the stock bank is kept and selectable
+from the Flasher (Switch to stock). See `board/p1-gnd`. First installation
+needs fpvOS's recovery from RAM: the Flasher's preparation on Linux or
+ChromeOS, or the Stock Flasher / Recovery app on macOS and Windows.
 
 ## Kestrel
 
-Build Kestrel Ground with `KESTREL_HAL=ar9311` and `KESTREL_BOARD=p1goggle`
-(the keys are the goggles' ladder, under the goggles' evdev name `p1-goggle-keys`),
-package it with `tools/package_ascent.py` and pass the runtime as
-`KESTREL_NATIVE_IMAGE`. Settings and pairing are in RAM, as on the goggles.
+The P1 ground image carries kestrel-gnd's `p1goggle` runtime (the keys are the
+goggles' ladder, under the goggles' evdev name `p1-goggle-keys`). Settings and
+pairing are kept in stock's `usr_data` volume (`S46kestrel-state`).
 
 ## Not done
 

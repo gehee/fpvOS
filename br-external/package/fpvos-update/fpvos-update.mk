@@ -23,10 +23,6 @@ ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_GOGGLE),y)
 FPVOS_UPDATE_BOARD = p1-goggle
 FPVOS_UPDATE_DEPENDENCIES += host-dtc
 endif
-ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_NANO_VRX),y)
-FPVOS_UPDATE_BOARD = p1-nano-vrx
-FPVOS_UPDATE_DEPENDENCIES += host-dtc
-endif
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_GND),y)
 FPVOS_UPDATE_BOARD = p1-gnd
 FPVOS_UPDATE_DEPENDENCIES += host-dtc
@@ -118,10 +114,6 @@ endif
 
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_GOGGLE),y)
 include $(FPVOS_UPDATE_SITE)/backends/p1-goggle/backend.mk
-endif
-
-ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_NANO_VRX),y)
-include $(FPVOS_UPDATE_SITE)/backends/p1-nano-vrx/backend.mk
 endif
 
 ifeq ($(BR2_PACKAGE_FPVOS_UPDATE_P1_GND),y)
