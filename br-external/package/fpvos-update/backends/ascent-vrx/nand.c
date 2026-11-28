@@ -653,7 +653,9 @@ int main(int argc, char **argv)
 				parts[i].name);
 			return 1;
 		}
-	if (writable_ubi_detached()) {
+	/* stock-root only reads the stock bank: the settings volume fpvOS keeps
+	 * attached in normal mode (fpv_data, S46kestrel-state) may stay so. */
+	if (!is_stock_root && writable_ubi_detached()) {
 		fprintf(stderr, "unsafe UBI attachment; no writes\n");
 		return 1;
 	}
