@@ -1,4 +1,4 @@
 # Locally computed: the tarball Buildroot generates from the pinned commit
 # (update with FPVOS_USB_VERSION), and the licence file in it
-sha256  154a201e7b2da14ff74f645c68fd8b47029d322c59e7742deb60ff59370dacaa  fpvos-usb-ff5f32ac426b35a6b914bc68ac41799a2dd1d887-git4.tar.gz
+sha256  075737ef839431c7b7e611addcf7f358dd29bbd7b7867c6baff47ad428b67db5  fpvos-usb-4474fdfd1b880c385be95e6d4bc385b74d0e0991-git4.tar.gz
 sha256  8177f97513213526df2cf6184d8ff986c675afb514d4e68a404010521b880643  LICENSE
