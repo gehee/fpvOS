@@ -53,3 +53,6 @@ BR2_LINUX_KERNEL_PATCH="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/linux-pat
 BR2_LINUX_KERNEL_IMAGE=y
 BR2_LINUX_KERNEL_DTS_SUPPORT=y
 BR2_LINUX_KERNEL_CUSTOM_DTS_DIR="$(BR2_EXTERNAL_FPVOS_PATH)/board/common/ar9311/dts $(BR2_EXTERNAL_FPVOS_PATH)/board/ascent-vrx/dts"
+# Bridge mode (fpvOS_usb): the AR8030 on USB for another device, until a restart
+BR2_PACKAGE_FPVOS_USB=y
+BR2_PACKAGE_FPVOS_USB_BOARD="ascent-vrx"

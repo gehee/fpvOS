@@ -1,0 +1,14 @@
+#!/bin/sh
+# Bridge mode's board id (fpvOS_usb boards/p1-gnd): which P1 ground unit this
+# is, as p1-gnd-device tells it from the device tree, so a host loads the
+# right Open8030 image (the goggles' or the Nano VRX's). p1-gnd when unknown.
+CONF=${FPVOS_USB_CONF:-/etc/default/fpvos-usb}
+DEVICE=${P1_GND_DEVICE:-/usr/sbin/p1-gnd-device}
+[ "${1:-}" = start ] && [ -w "$CONF" ] || exit 0
+case "$("$DEVICE" 2>/dev/null)" in
+	goggles) id=p1-goggles ;;
+	goggles-pro) id=p1-goggles-pro ;;
+	nano-vrx) id=p1-nano-vrx ;;
+	*) id=p1-gnd ;;
+esac
+sed "s/^BOARD=.*/BOARD=$id/" "$CONF" > "$CONF.new" && mv "$CONF.new" "$CONF"

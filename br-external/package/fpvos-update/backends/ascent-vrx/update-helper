@@ -75,8 +75,9 @@ case "${1:-}" in
         trap 'exit 1' HUP INT TERM
         /usr/libexec/fpvos-update-verify "$2" "$work"
         ;;
-    normal)
-        # No bridge mode on this board yet: it is always in normal mode.
+    bridge|normal)
+        # fpvOS_usb's USB modes; normal exits 10 when only a reboot gets there.
+        exec /usr/sbin/fpvos-usb mode "$1"
         ;;
     stock-root)
         # The stock system's SHA-256, for a return to stock from Caddx's image

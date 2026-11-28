@@ -6,6 +6,7 @@
     "0104",
     "fpvos-p1-gnd"
   ],
+  "location_file": "/var/lib/kestrel/location",
   "names": [
     "kernel.img",
     "p1-gnd.dtb",
