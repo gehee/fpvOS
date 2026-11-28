@@ -166,11 +166,15 @@
 	status = "okay";
 };
 
-/* The SoC temperature, for the receiver's canopy (fpvOS ar9311_temp). The
- * supply voltage is not given: which SAR ADC channel carries it here is not
- * known. */
+/* The SoC temperature, for the receiver's canopy (fpvOS ar9311_temp), and
+ * the supply (RX SUPPLY): SAR ADC channel 1, through stock's own fit of the
+ * raw code (ar_ldy_gnd 18.21.10, fpv_gnd_fitting_raw_voltage for board 485:
+ * 53.53, 44.8 and 48.47 mV per code above -12415.2, -8260.26 and -10810.4 mV,
+ * split at codes 476 and 671). The SoC's ADC has no other driver here. */
 &soc_temp {
 	status = "okay";
+	artosyn,vin-channel = <1>;
+	artosyn,vin-fit = <476 53530 12415200>, <671 44800 8260260>, <1023 48470 10810400>;
 };
 
 &vpu {

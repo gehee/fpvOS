@@ -3,5 +3,5 @@
 # board, sha256, kestrel-gnd (KESTREL_PIN), ar_libre (AR_LIBRE_VERSION).
 # kestrel-native refuses any other file, and a line whose pins are not the
 # tree's. After moving either pin, rebuild both and put their sums here.
-ascent    9fcf009ea074c3b083bc3be66caeca2266b43cf127cb985a7201dffb3b8c028a  e3abff56a7c69f5203d3ab6d7ce81995a82f0a22  aa94f45394cc76be5fa2955f51bd003a532ac60c
-p1goggle  b6abebc0561523e8427a558d0be0cc270720e001e2145dcab23d04e983b23566  e3abff56a7c69f5203d3ab6d7ce81995a82f0a22  aa94f45394cc76be5fa2955f51bd003a532ac60c
+ascent    36145414486d349aa6e89f59982a466036b9873c52a38126a7a36ae8589b89bc  73df1622f8c342943a08a982b2f457bd351aca3a  aa94f45394cc76be5fa2955f51bd003a532ac60c
+p1goggle  c62a152209f6f79e8f5b0b9a521c365e6e009e52e91f2f2ad8aa89b329e4e20b  73df1622f8c342943a08a982b2f457bd351aca3a  aa94f45394cc76be5fa2955f51bd003a532ac60c

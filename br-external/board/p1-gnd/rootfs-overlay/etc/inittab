@@ -12,6 +12,7 @@
 ::sysinit:/sbin/modprobe artosyn_gpio
 ::sysinit:/sbin/modprobe mmc_block
 ::sysinit:/sbin/modprobe dw_mci-artosyn
+::sysinit:/sbin/modprobe ar9311_temp
 ::sysinit:/etc/init.d/S46kestrel-state start
 ::sysinit:/etc/init.d/S50dropbear start
 ::sysinit:/etc/init.d/S43factory start

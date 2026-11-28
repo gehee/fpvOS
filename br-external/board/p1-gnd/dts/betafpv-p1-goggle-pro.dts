@@ -82,6 +82,13 @@
 };
 &watchdog { status = "okay"; };
 
+/* The SoC temperature, for the receiver's canopy (fpvOS ar9311_temp). Its
+ * window overlaps the SAR ADC's (the keypad's channel 0): no supply channel
+ * is given here, so it never samples the ADC behind the keypad driver. */
+&soc_temp {
+	status = "okay";
+};
+
 /* The battery-backed clock, a DS1307 at 0x68 on I2C0 as every stock P1
  * ground tree has it: the kernel sets the system clock from it at boot, and
  * the updater's SET_TIME writes it (in UTC). The Pro's LT9711 (DisplayPort out)
@@ -260,3 +267,21 @@
 };
 
 &watchdog { status = "okay"; };
+
+/* The supply (RX SUPPLY): SAR ADC channel 1 through a 100k/5.1k divider, as
+ * stock reads it (arlink_fpv 2.0.8 hamingVrxGndGetVoltage: in_voltage1_input
+ * / 0.048525). Through the ADC's own driver, which the keypad's channel 0
+ * shares, so the two never sample at once; kestrel-gnd reads vin_hwmon. */
+/ {
+	vin_divider: vin-divider {
+		compatible = "voltage-divider";
+		io-channels = <&adc 1>;
+		#io-channel-cells = <0>;
+		output-ohms = <5100>;
+		full-ohms = <105100>;
+	};
+	vin-hwmon {
+		compatible = "iio-hwmon";
+		io-channels = <&vin_divider>;
+	};
+};

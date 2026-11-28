@@ -17,6 +17,12 @@
 // two points (its adc.sh: code 425 = 887 mV, 573 = 1180 mV), offset by the
 // channel's own reading of the on-chip reference (code 425 there), taken at
 // probe, as the vendor does.
+//
+// With "artosyn,vin-fit" instead of the ratio, the supply comes from the raw
+// code by the board's own piecewise-linear fit, as stock's receiver does it on
+// the Ascent VRX (ar_ldy_gnd's fpv_gnd_fitting_raw_voltage, board 485):
+// triplets <last-code slope-uV-per-code offset-uV>, the first whose last code
+// is at or above the reading applies: mV = (code * slope - offset) / 1000.
 #include <linux/hwmon.h>
 #include <linux/io.h>
 #include <linux/module.h>
@@ -52,6 +58,8 @@ struct ar9311_temp {
 	u32 vin_channel;
 	u32 vin_ratio;			/* per mille, 0: no in0 */
 	int vin_ref;			/* the channel's reference code */
+	u32 vin_fit[3][3];		/* <last code, uV per code, uV offset> */
+	int vin_fits;			/* 0: the ratio applies */
 };
 
 static int cmp_u16(const void *a, const void *b)
@@ -103,8 +111,16 @@ static int ar9311_adc_code(struct ar9311_temp *t, u32 channel, bool ref)
 
 static long ar9311_vin_mv(struct ar9311_temp *t)
 {
-	long pin_uv = ADC_REF_MV * 1000L +
-		      (long)(ar9311_adc_code(t, t->vin_channel, false) - t->vin_ref) * ADC_SLOPE_UV;
+	long code = ar9311_adc_code(t, t->vin_channel, false), pin_uv;
+	int i;
+
+	if (t->vin_fits) {
+		for (i = 0; i < t->vin_fits - 1 && code > t->vin_fit[i][0]; i++)
+			;
+		pin_uv = code * (long)t->vin_fit[i][1] - (long)t->vin_fit[i][2];
+		return pin_uv <= 0 ? 0 : pin_uv / 1000;
+	}
+	pin_uv = ADC_REF_MV * 1000L + (code - t->vin_ref) * ADC_SLOPE_UV;
 
 	return pin_uv <= 0 ? 0 : pin_uv * t->vin_ratio / 1000000;
 }
@@ -180,6 +196,7 @@ static int ar9311_temp_probe(struct platform_device *pdev)
 	struct ar9311_temp *t;
 	struct resource *r;
 	struct device *hw;
+	int n;
 
 	t = devm_kzalloc(dev, sizeof(*t), GFP_KERNEL);
 	if (!t)
@@ -195,20 +212,36 @@ static int ar9311_temp_probe(struct platform_device *pdev)
 	writel(readl(t->regs + CFG) | CFG_BITS, t->regs + CFG);
 
 	mutex_init(&t->adc_lock);
+	n = of_property_count_u32_elems(dev->of_node, "artosyn,vin-fit");
+	if (n > 0 && n % 3 == 0 && n <= 9 &&
+	    !of_property_read_u32_array(dev->of_node, "artosyn,vin-fit", &t->vin_fit[0][0], n)) {
+		t->vin_fits = n / 3;
+		t->vin_ratio = 1000;	/* in0 shown; the fit gives its value */
+	}
 	if (!of_property_read_u32(dev->of_node, "artosyn,vin-channel", &t->vin_channel) &&
-	    !of_property_read_u32(dev->of_node, "artosyn,vin-ratio-permille", &t->vin_ratio) &&
-	    t->vin_ratio) {
+	    (t->vin_fits ||
+	     (!of_property_read_u32(dev->of_node, "artosyn,vin-ratio-permille", &t->vin_ratio) && t->vin_ratio))) {
 		if (t->vin_channel > 7 || resource_size(r) < ADC_WINDOW) {
 			dev_warn(dev, "vin: channel %u or a window of %#llx unusable, no in0\n",
 				 t->vin_channel, (unsigned long long)resource_size(r));
 			t->vin_ratio = 0;
+			t->vin_fits = 0;
 		} else {
 			ar9311_adc_init(t);
-			dev_info(dev, "vin: channel %u, reference code %d, x%u.%03u\n",
-				 t->vin_channel, t->vin_ref, t->vin_ratio / 1000, t->vin_ratio % 1000);
+			if (t->vin_fits)
+				dev_info(dev, "vin: channel %u, raw-code fit of %d segments\n",
+					 t->vin_channel, t->vin_fits);
+			else
+				dev_info(dev, "vin: channel %u, reference code %d, x%u.%03u\n",
+					 t->vin_channel, t->vin_ref, t->vin_ratio / 1000, t->vin_ratio % 1000);
 		}
 	}
 
+	/* a fit with no channel to read: no in0 */
+	if (t->vin_fits && of_property_read_u32(dev->of_node, "artosyn,vin-channel", &t->vin_channel)) {
+		t->vin_fits = 0;
+		t->vin_ratio = 0;
+	}
 	hw = devm_hwmon_device_register_with_info(dev, "ar9311_temp", t, &ar9311_temp_chip, NULL);
 	return PTR_ERR_OR_ZERO(hw);
 }

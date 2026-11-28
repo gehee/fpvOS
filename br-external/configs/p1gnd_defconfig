@@ -61,3 +61,5 @@ BR2_ROOTFS_POST_IMAGE_SCRIPT="$(BR2_EXTERNAL_FPVOS_PATH)/board/p1-gnd/post-image
 # Bridge mode (fpvOS_usb): the AR8030 on USB for another device, until a restart
 BR2_PACKAGE_FPVOS_USB=y
 BR2_PACKAGE_FPVOS_USB_BOARD="p1-gnd"
+# The SoC temperature (hwmon ar9311_temp), for the receiver's canopy
+BR2_PACKAGE_AR9311_TEMP=y
