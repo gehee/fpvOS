@@ -21,6 +21,7 @@
 #include <sys/utsname.h>
 #include <unistd.h>
 #include "layout.h"
+#include "stock-root.h"
 
 #define BLOCK 0x20000U
 #define PAGE 2048U
@@ -577,6 +578,47 @@ done:
 	}
 	return result;
 }
+static int bad_block(int fd, off_t at)
+{
+	loff_t where = at;
+	return ioctl(fd, MEMGETBADBLOCK, &where) != 0;
+}
+/* stock-root: the SHA-256 of the stock system on the stock bank (fpvOS's
+ * read-only vendor-rootfs), printed and kept in WORK/stock-root for the
+ * receiver's STOCK_ROOT. */
+static int stock_root(void)
+{
+	struct part vendor = {"vendor-rootfs", stock_bank ? 0x26a0000 : 0x11a0000, 0x1500000, -1};
+	if (open_part(&vendor, 0)) {
+		fprintf(stderr, "stock bank: vendor-rootfs not found\n");
+		return -1;
+	}
+	const char *squashfs = WORK "/stock-root.sqfs";
+	FILE *out = fopen(squashfs, "we");
+	int result = out ? ar9311_stock_root(vendor.fd, vendor.size, bad_block, out) : -1;
+	if (out)
+		fclose(out);
+	close(vendor.fd);
+	char hex[80] = {0};
+	if (!result) {
+		FILE *sum = popen("sha256sum " WORK "/stock-root.sqfs", "r");
+		if (!sum || !fgets(hex, sizeof(hex), sum) || strspn(hex, "0123456789abcdef") != 64)
+			result = -1;
+		if (sum)
+			pclose(sum);
+	}
+	unlink(squashfs);
+	if (result) {
+		fprintf(stderr, "stock bank: could not fingerprint its system\n");
+		return -1;
+	}
+	hex[64] = 0;
+	FILE *f = fopen(WORK "/stock-root.new", "we");
+	if (!f || fprintf(f, "%s\n", hex) < 0 || fclose(f) || rename(WORK "/stock-root.new", WORK "/stock-root"))
+		return -1;
+	printf("%s\n", hex);
+	return 0;
+}
 int main(int argc, char **argv)
 {
 	if (argc < 2 || argc > 3 || !board() || geteuid()) {
@@ -587,8 +629,9 @@ int main(int argc, char **argv)
 	int is_boot = !strcmp(argv[1], "boot");
 	int is_clean = !strcmp(argv[1], "clean");
 	int is_preflight = !strcmp(argv[1], "preflight");
-	if ((!is_install && !is_boot && !is_clean && !is_preflight) || (is_install != (argc == 3)) ||
-	    (stock_runtime && (is_boot || is_clean)))
+	int is_stock_root = !strcmp(argv[1], "stock-root");
+	if ((!is_install && !is_boot && !is_clean && !is_preflight && !is_stock_root) || (is_install != (argc == 3)) ||
+	    (stock_runtime && (is_boot || is_clean || is_stock_root)))
 		return 2;
 	umask(077);
 	mkdir(WORK, 0700);
@@ -604,7 +647,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	for (unsigned i = 1; i < 4; i++)
-		if (open_part(&parts[i], !is_preflight && (i == 3 || (is_install && i != 0)))) {
+		if (open_part(&parts[i], !is_preflight && !is_stock_root && (i == 3 || (is_install && i != 0)))) {
 			fprintf(stderr,
 				"NAND geometry/name/offset/bad-block preflight failed: %s\n",
 				parts[i].name);
@@ -624,6 +667,8 @@ int main(int argc, char **argv)
 		printf("Gnd485 %s NAND layout verified; stock=userapp%u fpvOS=userapp%u; no writes\n",
 		       stock_runtime ? "stock" : "fpvOS", stock_bank, stock_bank ^ 1);
 		result = 0;
+	} else if (is_stock_root) {
+		result = stock_root();
 	} else if (is_install) {
 		signal(SIGHUP, SIG_IGN);
 		signal(SIGINT, SIG_IGN);

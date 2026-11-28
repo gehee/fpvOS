@@ -31,13 +31,13 @@ def compile_framework(destination):
         if name == 'verify':
             files.append(str(BACKEND / 'images.c'))
         subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
-                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DCLOCK_FILE="{destination / "clock"}"', f'-DRTC_DEVICE="{destination / "rtc"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
+                        f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DCLOCK_FILE="{destination / "clock"}"', f'-DRTC_DEVICE="{destination / "rtc"}"', f'-DSTOCK_ROOT_FILE="{destination / "stock-root"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"', '-I'+str(SRC), *files, '-o', str(destination/name)], check=True)
 
 
 def compile_receiver(destination, name, *flags, sources=()):
     """A receiver built as compile_framework's, with test-only FLAGS and SOURCES."""
     subprocess.run(['cc', '-Wall', '-Wextra', '-Werror', '-O2', f'-DCLEAN_BOOT_MARKER="{destination / "clean-boot"}"',
-                    f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DCLOCK_FILE="{destination / "clock"}"', f'-DRTC_DEVICE="{destination / "rtc"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"',
+                    f'-DUSB_MODE_FILE="{destination / "usb-mode"}"', f'-DLOCATION_FILE="{destination / "location"}"', f'-DCLOCK_FILE="{destination / "clock"}"', f'-DRTC_DEVICE="{destination / "rtc"}"', f'-DSTOCK_ROOT_FILE="{destination / "stock-root"}"', f'-DVERSION_FILE="{destination / "fpvos-version"}"',
                     *flags, '-I'+str(SRC), str(SRC / 'receiver.c'), str(destination / 'profile.c'),
                     *map(str, sources), '-o', str(destination / name)], check=True)
     return destination / name
@@ -331,6 +331,24 @@ if [ "$1" = install ]; then echo '100 4 installed' > "{self.dir / 'stage/status'
             with self.assertRaisesRegex(ValueError, 'invalid time'):
                 self.client.ack(201, bad)
         self.assertFalse((self.bin / 'clock').exists())
+
+    def test_stock_root_reports_the_helpers_fingerprint(self):
+        """STOCK_ROOT (202): the helper's stock-root writes the stock system's
+        SHA-256, sent whole (64 hex characters after the status); a helper
+        without stock-root (exit 2) is 'not available'; its reason otherwise."""
+        helper = self.dir / 'helper'
+        kept = self.bin / 'stock-root'
+        digest = 'ab' * 32
+        helper.write_text(f'#!/bin/sh\n[ "$1" = stock-root ] || exit 0\nprintf "%s\\n" {digest} > "{kept}"\n')
+        reply = self.client.ack(202, b'')
+        self.assertEqual(bytes(reply[:4]), bytes(4))
+        self.assertEqual(bytes(reply[4:68]).decode(), digest)
+        helper.write_text('#!/bin/sh\nexit 2\n')
+        with self.assertRaisesRegex(ValueError, 'not available on this unit'):
+            self.client.ack(202, b'')
+        helper.write_text('#!/bin/sh\necho "stock bank: not UBI" >&2\nexit 1\n')
+        with self.assertRaisesRegex(ValueError, 'stock bank: not UBI'):
+            self.client.ack(202, b'')
 
     def test_normal_in_normal_mode_is_ok(self):
         self.assertEqual(self.mode('normal'), 'OK')

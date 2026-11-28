@@ -41,6 +41,10 @@
 #else
 #define location_file() fpvos_board.location_file
 #endif
+/* STOCK_ROOT's answer, from the board helper's stock-root. */
+#ifndef STOCK_ROOT_FILE
+#define STOCK_ROOT_FILE "/run/fpvos-update/stock-root"
+#endif
 /* SET_TIME's battery-backed clock; a test build writes the time it would set
  * to CLOCK_FILE instead, and has no RTC_DEVICE unless it names one. */
 #ifndef RTC_DEVICE
@@ -165,7 +169,7 @@ static void keep_reason(char *line, int *have)
 static int run_helper(const char *operation)
 {
 	int capture = !strcmp(operation, "clean") || !strcmp(operation, "verify") ||
-		      !strcmp(operation, "stock");
+		      !strcmp(operation, "stock") || !strcmp(operation, "stock-root");
 	int pipes[2] = {-1, -1}, status;
 	helper_reason[0] = 0;
 	if (capture && pipe(pipes))
@@ -530,6 +534,30 @@ static int set_time(const unsigned char *h, uint32_t n)
 		   : ack(h, 0, "set, and kept by the battery clock");
 }
 
+/* STOCK_ROOT (202): the SHA-256 of the stock system the unit keeps (the
+ * Gnd485's stock bank), as 64 hex characters after the status, for the Flasher
+ * to pick the Caddx image whose kernel and device tree go with it. A board
+ * whose helper has no stock-root says it is not available. */
+static int stock_root_reply(const unsigned char *h)
+{
+	unlink(STOCK_ROOT_FILE);
+	int r = run_helper("stock-root");
+	if (r == 2)
+		return ack(h, -1, "not available on this unit");
+	char hex[80] = {0};
+	FILE *f = r ? NULL : fopen(STOCK_ROOT_FILE, "re");
+	if (f) {
+		if (!fgets(hex, sizeof(hex), f))
+			hex[0] = 0;
+		fclose(f);
+	}
+	if (strspn(hex, "0123456789abcdef") != 64 || (hex[64] && hex[64] != '\n'))
+		return ack(h, -1, reason_or("stock system not readable"));
+	unsigned char body[68] = {0};
+	memcpy(body + 4, hex, 64);
+	return reply(h, body, sizeof(body));
+}
+
 static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 {
 	uint32_t cmd = fpvos_get_le32(h + 12), seq = fpvos_get_le32(h + 24);
@@ -613,6 +641,11 @@ static int dispatch(const unsigned char *h, uint32_t n, uint32_t crc)
 		if (file >= 0)
 			return ack(h, -1, "transfer active");
 		return set_location(h, n);
+	}
+	if (cmd == 0xca && !n) {
+		if (file >= 0)
+			return ack(h, -1, "transfer active");
+		return stock_root_reply(h);
 	}
 	if (cmd == 0xc9) {
 		if (file >= 0)

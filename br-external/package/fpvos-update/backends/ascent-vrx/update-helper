@@ -74,9 +74,13 @@ case "${1:-}" in
     normal)
         # No bridge mode on this board yet: it is always in normal mode.
         ;;
+    stock-root)
+        # The stock system's SHA-256, for a return to stock from Caddx's image
+        exec /usr/sbin/ar9311-nandctl stock-root
+        ;;
     reboot)
         sync
         if [ "$stock" = 1 ]; then /bin/reboot -f; else /sbin/reboot; fi
         ;;
-    *) echo 'Usage: update-helper {clean|verify|install|reboot} PACKAGE' >&2; exit 2 ;;
+    *) echo 'Usage: update-helper {clean|verify|install|reboot|stock-root} PACKAGE' >&2; exit 2 ;;
 esac
