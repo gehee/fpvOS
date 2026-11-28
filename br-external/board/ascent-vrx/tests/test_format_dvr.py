@@ -12,7 +12,9 @@ import time
 import unittest
 
 BOARD = Path(__file__).resolve().parents[1]
-SCRIPT = BOARD/'rootfs-overlay/usr/sbin/fpvos-format-dvr'
+# shared by the AR9311 receivers (common/ar9311's overlay): the Ascent VRX,
+# the SteadyDigital and the P1 ground units
+SCRIPT = BOARD.parent/'common/ar9311/rootfs-overlay/usr/sbin/fpvos-format-dvr'
 
 
 @unittest.skipUnless(shutil.which('flock') and shutil.which('setsid'), 'needs flock and setsid')
